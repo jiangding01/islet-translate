@@ -132,6 +132,8 @@ export interface ProtocolMap {
    * `selectionText` and the menu's `frameId` are set; from the shortcut both are absent.
    */
   'selection.open'(args: { selectionText?: string; frameId?: number }): Result<null>;
+  /** background → content (frameId 0): the open-palette shortcut opens or closes the palette. */
+  'palette.toggle'(): Result<null>;
 }
 
 export const { sendMessage, onMessage } = defineExtensionMessaging<ProtocolMap>();

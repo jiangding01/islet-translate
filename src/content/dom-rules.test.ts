@@ -1,6 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isProtected, isSingleLineLocked, protectedAncestor, type StyleReader } from './dom-rules';
+import {
+  HOST_TAGS,
+  isProtected,
+  isSingleLineLocked,
+  protectedAncestor,
+  SKIP_TAGS,
+  type StyleReader,
+} from './dom-rules';
 
 /** happy-dom's own handle on the window; the page's hostname follows its URL. */
 const setURL = (url: string) =>
@@ -187,5 +194,12 @@ describe('isSingleLineLocked', () => {
     ['a run with no white-space known', 'run', {}, false],
   ] as const)('%s: %s', (_name, kind, style, expected) => {
     expect(isSingleLineLocked({ kind, root }, read(style))).toBe(expected);
+  });
+});
+
+describe('our interface hosts', () => {
+  it('are all skipped: every HOST_TAGS entry is in SKIP_TAGS', () => {
+    expect(HOST_TAGS).toEqual(['ET-ISLE', 'ET-SELECTION', 'ET-PALETTE']);
+    for (const tag of HOST_TAGS) expect(SKIP_TAGS.has(tag)).toBe(true);
   });
 });

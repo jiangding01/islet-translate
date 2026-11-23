@@ -16,7 +16,7 @@
 | `[data-et-only]`（加在原文元素上） | 只看译文：这个元素的**直接子节点**中，除 `et-tr` 以外的都不显示，包括直接文本节点和其他元素 |
 | `et-tr[data-et-state]` | 非译文内容，属于插件界面，导出时整个删除。目前有 `data-et-state="error"`（翻译失败占位，文字随界面语言变化，如「未译出 · 重试」）、`data-et-state="loading"`（加载点，无文字，`aria-hidden`）与 `data-et-state="skipped"`（过长未翻译的段末提示，文字随界面语言变化，无按钮） |
 | `et-tr` 上的 `lang` | 译文 `et-tr` 的 `lang` 是目标语言（目标语言代码，如 `zh-CN`）；带 `data-et-state` 的占位是插件界面，其 `lang` 为界面语言 |
-| `et-isle`、`et-selection` 元素，以及带 `data-et` 属性的元素 | 插件界面（灵岛、划词卡片），内容在 closed shadow DOM 里，克隆后是空元素，导出时可整个删除 |
+| `et-isle`、`et-selection`、`et-palette` 元素，以及带 `data-et` 属性的元素 | 插件界面（灵岛、划词卡片、指令台），内容在 closed shadow DOM 里，克隆后是空元素，导出时可整个删除。`et-palette` 通常是 `<html>` 的直接子元素，网页有模态对话框（`showModal`）打开时会挂在该对话框里 |
 
 **补充说明**：
 

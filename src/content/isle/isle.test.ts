@@ -707,6 +707,39 @@ describe('selection card layering', () => {
       card.remove();
     }
   });
+  it('leaves Escape to an open palette as well', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    const palette = document.createElement('et-palette');
+    palette.setAttribute('data-open', '');
+    document.documentElement.append(palette);
+    try {
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(t.root().getAttribute('data-view')).toBe('isle');
+      palette.removeAttribute('data-open');
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(t.root().getAttribute('data-view')).toBe('dot');
+    } finally {
+      palette.remove();
+    }
+  });
+  it('finds an open palette inside a modal dialog too', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    const dialog = document.createElement('dialog');
+    const palette = document.createElement('et-palette');
+    palette.setAttribute('data-open', '');
+    dialog.append(palette);
+    document.body.append(dialog);
+    try {
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(t.root().getAttribute('data-view')).toBe('isle');
+    } finally {
+      dialog.remove();
+    }
+  });
   it('publishes the toolbar’s rectangle on the host once still, for the card to keep clear of', async () => {
     const rectAttr = (t: Awaited<ReturnType<typeof setup>>) =>
       t.host()?.getAttribute('data-et-rect')?.split(',').map(Number);

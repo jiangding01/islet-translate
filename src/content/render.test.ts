@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { createGetMessage, loadLocales } from '../../scripts/i18n-messages.mjs';
 import { discoverUnits } from './discover';
-import { ISLE_TAG, OWN_ATTR, OWN_TAG, SELECTION_TAG, type StyleReader } from './dom-rules';
+import {
+  ISLE_TAG,
+  OWN_ATTR,
+  OWN_TAG,
+  PALETTE_TAG,
+  SELECTION_TAG,
+  type StyleReader,
+} from './dom-rules';
 import { uiLocale } from './i18n';
 import { createRenderer } from './render';
 
@@ -1089,10 +1096,11 @@ describe('renderer: DOM contract', () => {
   });
 
   it('keeps the documented tag and attribute names for the plugin UI hosts', () => {
-    expect([OWN_TAG, ISLE_TAG, SELECTION_TAG, OWN_ATTR]).toEqual([
+    expect([OWN_TAG, ISLE_TAG, SELECTION_TAG, PALETTE_TAG, OWN_ATTR]).toEqual([
       'ET-TR',
       'ET-ISLE',
       'ET-SELECTION',
+      'ET-PALETTE',
       'data-et',
     ]);
   });

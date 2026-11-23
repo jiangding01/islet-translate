@@ -1,6 +1,6 @@
 import type { ConfigV1 } from '@/lib/config/types';
 import { isObviouslyTargetScript } from '@/lib/languages';
-import { ISLE_TAG, SELECTION_TAG } from '../dom-rules';
+import { HOST_TAGS } from '../dom-rules';
 import type { SelectionSnapshot } from '../runtime-contract';
 import { composedRange } from './extract';
 import { normalizeSelectionText } from './open';
@@ -37,10 +37,10 @@ export interface SelectionWatchDeps {
   onClear(): void;
 }
 
-/** Inside the page isle or the selection card (shared with the hold watch). */
+/** Inside the page isle, the selection card or the palette (shared with the hold watch). */
 export function isOwnNode(node: Node | null): boolean {
   for (let current = node; current; current = current.parentNode) {
-    if (current.nodeName === ISLE_TAG || current.nodeName === SELECTION_TAG) return true;
+    if (HOST_TAGS.includes(current.nodeName)) return true;
   }
   return false;
 }

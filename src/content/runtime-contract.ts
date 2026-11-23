@@ -1,6 +1,7 @@
-import type { ConfigV1 } from '@/lib/config/types';
+import type { ConfigV1, Engine, PageMode } from '@/lib/config/types';
+import type { Result } from '@/lib/errors';
 import type { DetectedLanguages } from '@/lib/languages';
-import type { EngineOptions, PageState, PageStatus } from '@/lib/messaging/protocol';
+import type { EngineOptions, PageState, PageStatus, ProtocolMap } from '@/lib/messaging/protocol';
 import type { PageSession } from './session';
 
 // The seam between the always-loaded bootstrap and the on-demand page runtime.
@@ -75,3 +76,57 @@ export interface SelectionRuntime {
 }
 
 export type SelectionRuntimeFactory = (deps: SelectionRuntimeDeps) => SelectionRuntime;
+
+/** The palette runtime registers its factory under `Symbol.for(PALETTE_RUNTIME_KEY)`. */
+export const PALETTE_RUNTIME_KEY = 'islet-translate.palette-runtime';
+
+/**
+ * The bootstrap's page actions: the `page.*` messages (panel, shortcut) run exactly these, and
+ * the palette is lent the same table (docs/plans/m3c.md decision 2). None loads the page
+ * runtime except `start` and `toggle`; without a session the others answer the idle state.
+ */
+export interface PageActions {
+  getState(): Promise<PageState>;
+  /** Answers as soon as the session is running; discovery continues in the page. */
+  start(args?: { engine?: Engine }): Promise<PageState>;
+  stop(): Promise<PageState>;
+  toggle(): Promise<PageState>;
+  setMode(mode: PageMode): Promise<PageState>;
+  retryFailed(): Promise<PageState>;
+}
+
+/** What a message's `Result` carries when it worked. */
+export type Reply<K extends keyof ProtocolMap> =
+  ReturnType<ProtocolMap[K]> extends Result<infer T> ? T : never;
+
+/**
+ * The background messages the palette may send: an explicit allow-list, widened one message
+ * at a time by the PRs that need them (`options.open`, `shortcuts.get` in M3c PR2).
+ */
+export type PaletteMessage = 'engine.options';
+
+/** A background message, unwrapped: resolves to the reply's data, rejects with its error. */
+export type Send = <K extends PaletteMessage>(
+  type: K,
+  ...data: Parameters<ProtocolMap[K]>
+) => Promise<Reply<K>>;
+
+/** What the bootstrap lends the palette runtime. */
+export interface PaletteRuntimeDeps {
+  getConfig(): Promise<ConfigV1>;
+  /** Every background message the palette needs goes through this one function. */
+  send: Send;
+  /** The bootstrap's page action table. */
+  page: PageActions;
+}
+
+export interface PaletteRuntime {
+  /** Opens the palette, or closes it when it is open (the shortcut pressed again). */
+  toggle(): void;
+  /** Closes it if it is open, handing focus and the selection back to the page. */
+  close(): void;
+  /** Removes everything it added; the runtime is unusable afterwards. */
+  dispose(): void;
+}
+
+export type PaletteRuntimeFactory = (deps: PaletteRuntimeDeps) => PaletteRuntime;

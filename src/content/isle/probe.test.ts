@@ -121,6 +121,24 @@ describe('findObstacles', () => {
     }
   });
 
+  it('looks through the palette host as well', () => {
+    const bubble = document.createElement('div');
+    const icon = document.createElement('span');
+    bubble.append(icon);
+    document.body.append(bubble);
+    const palette = document.createElement('et-palette');
+    document.documentElement.append(palette);
+    try {
+      const { env, fake } = setup((_x, y) => (y >= 440 && y <= 500 ? [palette, icon] : [palette]));
+      fake(bubble, { position: 'fixed', rect: { top: 440, bottom: 500, left: 920, right: 980 } });
+      expect(
+        findObstacles(env, 'right', VP, { depths: [21, 36], offset: 480, length: 200 }),
+      ).toEqual([{ lo: 440, hi: 500, center: 50, depth: 60 }]);
+    } finally {
+      palette.remove();
+    }
+  });
+
   it('samples leftward of the right end for the bottom dock', () => {
     const chat = document.createElement('div');
     document.body.append(chat);

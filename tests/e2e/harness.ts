@@ -123,8 +123,14 @@ export interface Harness {
   reloadExtension(): Promise<void>;
   /** A trusted click (CDP input) at a selector's centre or at viewport coordinates. */
   trustedClick(target: string | Point): Promise<void>;
-  /** A raw trusted input event (CDP `Input.dispatchKeyEvent` / `Input.dispatchMouseEvent`). */
-  input(method: 'Input.dispatchKeyEvent' | 'Input.dispatchMouseEvent', params: Json): Promise<void>;
+  /**
+   * A raw trusted input event (CDP `Input.dispatchKeyEvent` / `Input.dispatchMouseEvent`), or
+   * text committed as an input method would (`Input.insertText`).
+   */
+  input(
+    method: 'Input.dispatchKeyEvent' | 'Input.dispatchMouseEvent' | 'Input.insertText',
+    params: Json,
+  ): Promise<void>;
   errors: string[];
   unmocked: string[];
   assertNoErrors(): void;

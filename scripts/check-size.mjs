@@ -37,7 +37,9 @@ const entries = [
     // First-screen bootstrap and selection watcher; the session and the card live in the
     // on-demand modules below. Raised from 6KB in M3a (selection watch, approved).
     // Raised to 7.5KB (2026-11-20, user approved, M3b plan): the hold-to-toggle watch.
-    budget: 7.5 * KB,
+    // Raised to 7.75KB (2026-11-23, user approved, M3c plan): the palette loader, the page
+    // action table, the card/palette exclusion and the hold watch's own-host check.
+    budget: 7.75 * KB,
     files: manifest.content_scripts?.flatMap((script) => script.js ?? []) ?? [],
   },
   {
@@ -49,7 +51,9 @@ const entries = [
     // status-note layout rule (one line, not squeezed in a flex box) took it to 24.03KB.
     // Raised to 27KB (2026-11-20, user approved, M3b plan): the auto-start language check
     // moved here from the content script, then the in-page shortcuts follow.
-    budget: 27 * KB,
+    // Raised to 28KB (2026-11-23, user approved, M3c plan): the isle's Escape yields to the
+    // palette (PR1), then region translate/exclude and the isle's palette entry (PR4–PR6).
+    budget: 28 * KB,
     files: runtimeFiles('page-runtime'),
   },
   {
@@ -59,6 +63,14 @@ const entries = [
     // when UK/US phonetics took it to 18.02KB. Raise explicitly, never quietly.
     budget: 19 * KB,
     files: runtimeFiles('selection-runtime'),
+  },
+  {
+    name: 'palette-runtime',
+    // The command palette (M3c). Budget 15KB (2026-11-23, user approved, M3c plan): about
+    // 8KB in PR1, then quick translate (PR3) and the region picker (PR4). Raise explicitly,
+    // never quietly.
+    budget: 15 * KB,
+    files: runtimeFiles('palette-runtime'),
   },
   {
     name: 'background',

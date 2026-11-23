@@ -6,6 +6,9 @@ import {
   IDLE_PAGE_STATE,
   type PageRuntimeDeps,
   type PageRuntimeFactory,
+  type PaletteRuntime,
+  type PaletteRuntimeDeps,
+  type PaletteRuntimeFactory,
   type SelectionRuntime,
   type SelectionRuntimeDeps,
   type SelectionRuntimeFactory,
@@ -87,12 +90,19 @@ function fakeSelectionRuntime(): SelectionRuntime {
   return { showDot: vi.fn(), hideDot: vi.fn(), open: vi.fn(), close: vi.fn(), dispose: vi.fn() };
 }
 
+function fakePaletteRuntime(): PaletteRuntime {
+  return { toggle: vi.fn(), close: vi.fn(), dispose: vi.fn() };
+}
+
+const paletteDeps: Omit<PaletteRuntimeDeps, 'page'> = { getConfig: vi.fn(), send: vi.fn() };
+
 interface SetupOptions {
   top?: SelectionSnapshot;
   hasFocus?: boolean;
   loadSelection?: () => Promise<SelectionRuntimeFactory>;
   alive?: () => boolean;
   onContextLost?: () => void;
+  loadPalette?: () => Promise<PaletteRuntimeFactory>;
 }
 
 function setup(loadFactory?: () => Promise<PageRuntimeFactory>, options: SetupOptions = {}) {
@@ -103,6 +113,9 @@ function setup(loadFactory?: () => Promise<PageRuntimeFactory>, options: SetupOp
   const selectionRuntime = fakeSelectionRuntime();
   const createSelection = vi.fn<SelectionRuntimeFactory>(() => selectionRuntime);
   const loadSelection = vi.fn(options.loadSelection ?? (async () => createSelection));
+  const paletteRuntime = fakePaletteRuntime();
+  const createPalette = vi.fn<PaletteRuntimeFactory>(() => paletteRuntime);
+  const loadPalette = vi.fn(options.loadPalette ?? (async () => createPalette));
   const bootstrap = createBootstrap({
     onMessage: ((type: string, handler: Handler) => {
       handlers.set(type, handler);
@@ -118,6 +131,7 @@ function setup(loadFactory?: () => Promise<PageRuntimeFactory>, options: SetupOp
       alive: options.alive,
       onContextLost: options.onContextLost,
     },
+    palette: { loadFactory: loadPalette, runtime: paletteDeps },
   });
   const send = (type: string, data?: unknown) => {
     const handler = handlers.get(type);
@@ -133,6 +147,9 @@ function setup(loadFactory?: () => Promise<PageRuntimeFactory>, options: SetupOp
     selectionRuntime,
     createSelection,
     loadSelection,
+    paletteRuntime,
+    createPalette,
+    loadPalette,
   };
 }
 
@@ -581,5 +598,134 @@ describe('selection runtime', () => {
       ok: false,
       error: { code: 'network/page-unreachable' },
     });
+  });
+});
+
+describe('palette runtime', () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const paletteDepsOf = (t: ReturnType<typeof setup>) => {
+    const deps = t.createPalette.mock.calls[0]?.[0];
+    if (!deps) throw new Error('palette not created');
+    return deps;
+  };
+
+  it('is not loaded until palette.toggle, then loads once and toggles each time', async () => {
+    const t = setup();
+    await t.send('page.getState');
+    expect(t.loadPalette).not.toHaveBeenCalled();
+    expect(await t.send('palette.toggle')).toEqual({ ok: true, data: null });
+    await t.send('palette.toggle');
+    expect(t.loadPalette).toHaveBeenCalledOnce();
+    expect(t.paletteRuntime.toggle).toHaveBeenCalledTimes(2);
+    // Lent the content script's deps plus the bootstrap's page actions.
+    const deps = paletteDepsOf(t);
+    expect(deps.getConfig).toBe(paletteDeps.getConfig);
+    expect(deps.send).toBe(paletteDeps.send);
+    expect(Object.keys(deps.page).sort()).toEqual(
+      ['getState', 'retryFailed', 'setMode', 'start', 'stop', 'toggle'].sort(),
+    );
+  });
+
+  it('page actions lent to the palette give the same results as the page messages', async () => {
+    const message = setup();
+    const lent = setup();
+    await lent.send('palette.toggle');
+    const page = paletteDepsOf(lent).page;
+
+    // No session yet: both answer idle without loading.
+    expect((await message.send('page.getState')) as Result<PageState>).toEqual({
+      ok: true,
+      data: await page.getState(),
+    });
+    expect(message.load).not.toHaveBeenCalled();
+    expect(lent.load).not.toHaveBeenCalled();
+    expect(await message.send('page.stop')).toEqual({ ok: true, data: await page.stop() });
+
+    // start loads and starts; then each action reaches the same session method.
+    expect(await message.send('page.start', { engine: 'google' })).toEqual({
+      ok: true,
+      data: await page.start({ engine: 'google' }),
+    });
+    expect(message.session.start).toHaveBeenCalledWith({ engine: 'google' });
+    expect(lent.session.start).toHaveBeenCalledWith({ engine: 'google' });
+    expect(await message.send('page.setMode', 'translation')).toEqual({
+      ok: true,
+      data: await page.setMode('translation'),
+    });
+    expect(await message.send('page.retryFailed')).toEqual({
+      ok: true,
+      data: await page.retryFailed(),
+    });
+    expect(await message.send('page.toggle')).toEqual({ ok: true, data: await page.toggle() });
+    for (const t of [message, lent]) {
+      expect(t.session.setMode).toHaveBeenCalledWith('translation');
+      expect(t.session.retryFailed).toHaveBeenCalledOnce();
+      expect(t.session.toggle).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('opening the palette closes the card and the dot', async () => {
+    const t = setup();
+    t.bootstrap.showDot(snapshot);
+    await flush();
+    await t.send('palette.toggle');
+    await flush();
+    expect(t.selectionRuntime.close).toHaveBeenCalledOnce();
+    expect(t.selectionRuntime.hideDot).toHaveBeenCalledOnce();
+    expect(t.paletteRuntime.toggle).toHaveBeenCalledOnce();
+  });
+
+  it('does not load the selection runtime just to close it', async () => {
+    const t = setup();
+    await t.send('palette.toggle');
+    expect(t.loadSelection).not.toHaveBeenCalled();
+  });
+
+  it('opening the card closes a loaded palette first, and never loads one', async () => {
+    const t = setup(undefined, { top: snapshot });
+    await t.send('selection.open', { selectionText: 'Hello world', frameId: 0 });
+    expect(t.loadPalette).not.toHaveBeenCalled();
+
+    await t.send('palette.toggle');
+    await t.send('selection.open', { selectionText: 'Other', frameId: 2 });
+    await flush();
+    expect(t.paletteRuntime.close).toHaveBeenCalledOnce();
+    expect(t.selectionRuntime.open).toHaveBeenLastCalledWith({ source: 'Other' });
+  });
+
+  it('once the extension context is gone: no load, a page-unreachable answer, an open palette closed', async () => {
+    let alive = true;
+    const t = setup(undefined, { alive: () => alive });
+    await t.send('palette.toggle');
+    alive = false;
+    expect(await t.send('palette.toggle')).toMatchObject({
+      ok: false,
+      error: { code: 'network/page-unreachable' },
+    });
+    await flush();
+    expect(t.paletteRuntime.toggle).toHaveBeenCalledOnce();
+    expect(t.paletteRuntime.close).toHaveBeenCalled();
+
+    const never = setup(undefined, { alive: () => false });
+    expect(await never.send('palette.toggle')).toMatchObject({ ok: false });
+    expect(never.loadPalette).not.toHaveBeenCalled();
+  });
+
+  it('reports page-unreachable when the palette cannot load, and tries again next time', async () => {
+    let fail = true;
+    const create = vi.fn<PaletteRuntimeFactory>(fakePaletteRuntime);
+    const t = setup(undefined, {
+      loadPalette: async () => {
+        if (fail) throw new Error('Failed to fetch');
+        return create;
+      },
+    });
+    expect(await t.send('palette.toggle')).toMatchObject({
+      ok: false,
+      error: { code: 'network/page-unreachable' },
+    });
+    fail = false;
+    expect(await t.send('palette.toggle')).toEqual({ ok: true, data: null });
+    expect(create).toHaveBeenCalledOnce();
   });
 });

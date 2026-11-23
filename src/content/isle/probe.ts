@@ -1,5 +1,5 @@
 import type { IsleDock } from '@/lib/config/types';
-import { SELECTION_TAG } from '../dom-rules';
+import { PALETTE_TAG, SELECTION_TAG } from '../dom-rules';
 import {
   DOT_SIZE,
   edgeLength,
@@ -39,8 +39,9 @@ const BANNER_MAX_SHARE = 0.3;
 
 function topmost(env: ProbeEnv, x: number, y: number): Element | undefined {
   for (const element of env.elementsFromPoint(x, y)) {
-    // Neither the isle nor the selection card is an obstacle or a background.
-    if (element !== env.host && element.nodeName !== SELECTION_TAG) return element;
+    // Neither the isle, the selection card nor the palette is an obstacle or a background.
+    const name = element.nodeName;
+    if (element !== env.host && name !== SELECTION_TAG && name !== PALETTE_TAG) return element;
   }
   return undefined;
 }

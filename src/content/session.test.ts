@@ -1674,6 +1674,32 @@ describe('page session: subscribe', () => {
     expect(port.calls).toHaveLength(1);
   });
 
+  it('keeps a palette host out of translation and of rescans, even inside a dialog in the body', async () => {
+    const { session, show, port, dirtyRounds } = setup('<p>Palette skip paragraph.</p>');
+    const dialog = document.createElement('dialog');
+    dialog.open = true;
+    const palette = document.createElement('et-palette');
+    palette.textContent = 'Palette light text';
+    dialog.append(palette);
+    document.body.append(dialog);
+    await session.start();
+    show();
+    await vi.waitFor(() => expect(port.calls).toHaveLength(1));
+    const sent = port.calls.flatMap((call) => call.payload.items.map((item) => item.text));
+    expect(sent.join(' ')).not.toContain('Palette light');
+    await wait(30);
+    dirtyRounds.length = 0;
+    // The palette mounts into an open modal dialog: its comings and goings cost no rescan.
+    const next = document.createElement('et-palette');
+    next.attachShadow({ mode: 'open' }).innerHTML = '<p>Palette inner text</p>';
+    dialog.append(next);
+    await wait(30);
+    next.append(document.createElement('p'));
+    await wait();
+    expect(dirtyRounds).toEqual([]);
+    expect(port.calls).toHaveLength(1);
+  });
+
   it('keeps a selection card host out of translation, even inside the body', async () => {
     const { session, show, port } = setup('<p>Card skip paragraph.</p>');
     const card = document.createElement('et-selection');

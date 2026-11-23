@@ -88,6 +88,11 @@ assert.deepEqual(
   { default: 'Alt+Shift+S', mac: 'MacCtrl+Shift+S' },
   'Missing or changed translate-selection shortcut',
 );
+assert.deepEqual(
+  manifest.commands?.['open-palette']?.suggested_key,
+  { default: 'Alt+Shift+K', mac: 'MacCtrl+Shift+K' },
+  'Missing or changed open-palette shortcut',
+);
 
 // The on-demand runtimes: the only web accessible resources, reachable only by the content
 // script through a dynamic URL.
@@ -97,6 +102,7 @@ assert.deepEqual(
   [
     { resources: ['page-runtime.js'], matches: WAR_MATCHES, use_dynamic_url: true },
     { resources: ['selection-runtime.js'], matches: WAR_MATCHES, use_dynamic_url: true },
+    { resources: ['palette-runtime.js'], matches: WAR_MATCHES, use_dynamic_url: true },
   ],
   'Missing or changed web_accessible_resources',
 );
@@ -106,6 +112,7 @@ assert.deepEqual(
 const RUNTIME_KEYS = {
   'page-runtime.js': 'islet-translate.page-runtime',
   'selection-runtime.js': 'islet-translate.selection-runtime',
+  'palette-runtime.js': 'islet-translate.palette-runtime',
 };
 // The one allowed read of the extension ID: wxt/browser picking `browser` or `chrome`.
 // If WXT rewrites this shim the check fails loudly; inspect the new form before exempting it.

@@ -25,7 +25,8 @@ export default defineConfig({
     // Popover (114) and @starting-style (117) in the UI; 130 for dynamic-URL web
     // accessible resources (`use_dynamic_url`) that serve the on-demand page runtime.
     minimum_chrome_version: '130',
-    // page-runtime.js and selection-runtime.js are imported by the content script only.
+    // page-runtime.js, selection-runtime.js and palette-runtime.js are imported by the content
+    // script only.
     // The dynamic URL keeps pages from fetching them by extension ID
     // (see docs/plans/m2b-lazy-runtime-and-isle.md).
     web_accessible_resources: [
@@ -36,6 +37,11 @@ export default defineConfig({
       },
       {
         resources: ['selection-runtime.js'],
+        matches: ['http://*/*', 'https://*/*'],
+        use_dynamic_url: true,
+      },
+      {
+        resources: ['palette-runtime.js'],
         matches: ['http://*/*', 'https://*/*'],
         use_dynamic_url: true,
       },
@@ -54,6 +60,12 @@ export default defineConfig({
       'translate-selection': {
         suggested_key: { default: 'Alt+Shift+S', mac: 'MacCtrl+Shift+S' },
         description: '__MSG_manifest_commands_translateSelection__',
+      },
+      // Not Alt+K: on Windows and Linux Chrome fires access keys with Alt, and MediaWiki's `k`
+      // is "Related changes". See docs/plans/m3c.md, section "快捷键".
+      'open-palette': {
+        suggested_key: { default: 'Alt+Shift+K', mac: 'MacCtrl+Shift+K' },
+        description: '__MSG_manifest_commands_openPalette__',
       },
     },
     icons: {

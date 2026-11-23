@@ -144,6 +144,13 @@ describe('commands', () => {
     expect(send).toHaveBeenCalledWith('page.toggle', undefined, { tabId: 5, frameId: 0 });
   });
 
+  it('open-palette sends palette.toggle to the top frame', async () => {
+    const { handlers, send } = setup();
+    handlers.onCommand('open-palette', { id: 5 });
+    await flush();
+    expect(send).toHaveBeenCalledWith('palette.toggle', undefined, { tabId: 5, frameId: 0 });
+  });
+
   it('uses the active tab when the command has none, and does nothing without one', async () => {
     const withTab = setup({ activeTabId: 8 });
     withTab.handlers.onCommand('translate-selection', undefined);

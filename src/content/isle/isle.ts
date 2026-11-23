@@ -7,9 +7,10 @@ import {
 } from '@/lib/config/types';
 import type { EngineOptions, PageState } from '@/lib/messaging/protocol';
 import isleTokens from '@/styles/tokens-isle.css?inline';
-import { ISLE_TAG, SELECTION_TAG } from '../dom-rules';
+import { ISLE_TAG, PALETTE_TAG, SELECTION_TAG } from '../dom-rules';
 import { errorText } from '../error-text';
 import { message, type NoArgKey, pluralMessage, uiLocale } from '../i18n';
+import { hasRetry, isActive } from '../page-state';
 import type { PageRuntimeDeps } from '../runtime-contract';
 import type { PageSession } from '../session';
 import { engineMark, SVG_NS, showMark } from '../svg-icon';
@@ -117,15 +118,6 @@ const TIP_FADE_MS = 120;
 /** Above the button, and inside the viewport by this much. */
 const TIP_GAP = 6;
 const TIP_EDGE = 8;
-
-function isActive(state: PageState): boolean {
-  return state.phase !== 'idle' && !state.halted && state.scope !== 'units';
-}
-
-/** Failed paragraphs or an engine-level error: the dot turns coral and "Retry" shows. */
-function hasRetry(state: PageState): boolean {
-  return state.failed > 0 || !!state.engineError;
-}
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -1289,10 +1281,12 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   const onKeyDown = (event: KeyboardEvent) => {
     // Only closes; the page still sees the key (no preventDefault).
     if (event.key !== 'Escape' || !isOpen() || !trusted(event)) return;
-    // The selection card above closes first: one Escape closes only the top layer.
+    // The selection card or the palette above closes first: one Escape closes only the top layer.
+    // The palette can sit inside a modal dialog, so it is looked for anywhere.
     for (const child of doc.documentElement.children) {
       if (child.nodeName === SELECTION_TAG && child.hasAttribute('data-open')) return;
     }
+    if (doc.querySelector(`${PALETTE_TAG.toLowerCase()}[data-open]`)) return;
     if (view === 'list') setView('isle');
     else close();
   };
