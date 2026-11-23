@@ -5,7 +5,7 @@
 
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
-- 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」已合入 `main`（分支 `feat/m3c-palette`，实施记录见方案「PR1 实施记录」）。
+- 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」已合入 `main`（#70，实施记录见方案「PR1 实施记录」）。
 - 下一步：**M3c PR2**（分支 `feat/m3c-palette-extras`）：后台窄消息 `options.open`、`shortcuts.get` 及 sender 校验，`options.open` 指令，列表行尾显示实际快捷键（`.kb` 样式已留好）；`Send` 白名单随之加入这两条。
 
 ## 1. 目标与范围
@@ -14,7 +14,7 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main`（已合入 M3c PR1，分支 `feat/m3c-palette`）；本文随该 PR 修改。
+- 分支 / HEAD：`main`（已合入 M3c PR1 #70）；本文随该 PR 修改。
 - 未提交改动：无。
 - 验证状态：截至 M3c PR1 `npm run check` 通过，单测 1876 个（85 个文件），e2e 67 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
 - 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.55 / 7.75（余 0.20，**改引导层或常驻监听前必须先评估**）、page-runtime 26.03 / 28（余约 2.0，M3c PR4–PR6 还要用）、selection-runtime 18.19 / 19、palette-runtime 8.89 / 15（PR3、PR4 还要用）、background 57.59 / 60、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。

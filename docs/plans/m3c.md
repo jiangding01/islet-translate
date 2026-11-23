@@ -251,7 +251,7 @@ PR1 的范围：
 - `isle.ts` 的 Esc 让步；`hold/watch.ts` 把自己的宿主当作正在输入。
 - `ET-PALETTE` 加入 `isOwnNode` 和 DOM 约定。
 
-## PR1 实施记录（分支 `feat/m3c-palette`）
+## PR1 实施记录（#70，分支 `feat/m3c-palette`）
 - **范围**：按「PR1 的范围」实现，视觉按 Design 原型 PaletteM3c 画板定稿（输入行、列表、二级列表、halted、位置、动画；结果区、区域选择、列表脚注「以 / 开头只搜索指令」留给 PR3/PR4）。
 - **代码**：
   - 新按需模块 `src/entrypoints/palette-runtime.ts`（WAR、`check-build` 的 WAR / `RUNTIME_KEYS` 断言、`check-size` 条目同步）。
