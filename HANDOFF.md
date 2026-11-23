@@ -6,7 +6,7 @@
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
 - 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）已合入 `main`（实施记录见方案「PR1 实施记录」「PR2 实施记录」）。
-- 下一步：**M3c PR3 快速翻译框**（方案 `docs/plans/m3c.md`「拆分」表第 3 行；占位文案由「输入指令」改为方案定稿的「输入指令，或输入要翻译的文字」）。PR2（设置入口与快捷键显示，#71）已实现，实施记录见方案「PR2 实施记录」。
+- 下一步：**M3c PR6 灵岛 ⌘ 入口与铰链位置**（方案 `docs/plans/m3c.md`「拆分」表第 6 行；2026-11-23 用户同意顺序调整为 PR1 → PR2 → PR6 → PR3 → PR4 → PR5）。PR1/PR2 真机验收与补丁（`fix/palette-polish`）已完成，记录见方案「PR1/PR2 真机验收与补丁」。PR3 做时占位文案由「输入指令」改为方案定稿的「输入指令，或输入要翻译的文字」。
 
 ## 1. 目标与范围
 - 目标：做近乎原生、少打扰的沉浸式双语阅读（界面方向「隐中生岛」+ 琥珀主题，见 `docs/plans/ui-isle-direction.md`）；差异化针对竞品痛点：免费额度不透明与订阅弹窗打扰、大页面卡顿、排版错乱与悬停结果消失、429 只能手动换引擎、每页默认浮球。**从 M2 起每个批次的方案都要有「差异化」一节**。
@@ -14,12 +14,12 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main`（已合入 M3c PR1 #70、PR2 #71）；本文随 PR2 修改。
+- 分支 / HEAD：`main`（已合入 M3c PR1 #70、PR2 #71）；本文随补丁 `fix/palette-polish` 修改。
 - 未提交改动：无。
-- 验证状态：截至 M3c PR2 `npm run check` 通过，单测 1893 个（86 个文件），e2e 69 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
-- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.55 / 7.75（余 0.20，**改引导层或常驻监听前必须先评估**）、page-runtime 26.03 / 28（余约 2.0，M3c PR4–PR6 还要用）、selection-runtime 18.19 / 19、palette-runtime 9.06 / 15（PR3、PR4 还要用）、background 57.78 / 60、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
+- 验证状态：截至 M3c 补丁 `fix/palette-polish` `npm run check` 通过，单测 1901 个（87 个文件），e2e 69 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
+- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.55 / 7.75（余 0.20，**改引导层或常驻监听前必须先评估**）、page-runtime 26.03 / 28（余约 2.0，M3c PR4–PR6 还要用）、selection-runtime 18.19 / 19、palette-runtime 9.12 / 15（PR3、PR4 还要用）、background 57.78 / 60、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
 - 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
-- 路线图：**M3c 指令台与灵岛键盘（方案 `docs/plans/m3c.md` 已批准，6 个 PR，PR1、PR2 已完成）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**；批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
+- 路线图：**M3c 指令台与灵岛键盘（方案 `docs/plans/m3c.md` 已批准，6 个 PR，PR1、PR2 及真机验收补丁已完成，后续顺序 PR6 → PR3 → PR4 → PR5）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**；批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
 
 ## 3. 已定决策
 - 优先级：先做完整翻译能力（M0–M6），可选打磨放 M7，账户放 M8 —— 用户 2026-11-13 拍板。
@@ -37,7 +37,7 @@
 - 「仅看译文」、翻译占位符、标签保护等实现细节以各 `docs/plans/*.md` 为准，这里不重复。
 
 ## 4. 待办
-1. M3c 后续 PR（方案 `docs/plans/m3c.md`「拆分」表，PR3–PR6 都只依赖 PR1、彼此独立；PR2 已完成）：PR3 快速翻译框 → PR4 翻译一个区域 → PR5 不翻译一个区域 → PR6 从灵岛 ⌘ 打开指令台。视觉按 Design 原型 PaletteM3c 画板；每个 PR 的实施记录补到方案里，新增文案先问用户。
+1. M3c 后续 PR（方案 `docs/plans/m3c.md`「拆分」表，PR3–PR6 都只依赖 PR1、彼此独立；PR2 已完成；2026-11-23 起顺序为）：PR6 从灵岛 ⌘ 打开指令台 → PR3 快速翻译框 → PR4 翻译一个区域 → PR5 不翻译一个区域。视觉按 Design 原型 PaletteM3c 画板；每个 PR 的实施记录补到方案里，新增文案先问用户。
 2. M3c 之后按路线图做 M3e 本地引擎；开工前先实测 Translator / LanguageDetector API 在 Service Worker 中是否可用。
 3. 每批收尾评估是否发 0.x（节奏：主题批次收尾后发版；M3c 收尾是下一个发版点）。
 4. 仍有效的已知限制与后续项（按住 Ctrl 手势、渲染层一帧空窗、冷却计时、观察项等）见 [`docs/known-issues.md`](docs/known-issues.md)，动到相关代码前先读。
