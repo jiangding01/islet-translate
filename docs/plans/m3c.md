@@ -430,7 +430,7 @@ PR1 的范围：
   - 真实快捷键无法在 CDP 里按，e2e 用 `palette.toggle` 消息代替；三平台注册、升级用户能否拿到默认键、Gmail / GitHub / YouTube 捕获阶段截键，均待真机验收。
   - 网页在 window/document 捕获阶段注册的按键监听仍会先收到按键（方案「最脆弱的假设」第 1 条）。
 
-## PR2 实施记录（分支 `feat/m3c-palette-extras`）
+## PR2 实施记录（#71，分支 `feat/m3c-palette-extras`）
 - **范围**：决定 3 的两条后台窄消息、指令表的 `options.open`、列表行尾的实际快捷键。
 - **代码**：
   - 新增 `src/lib/messaging/palette-handlers.ts`（`createPaletteHandlers`，依赖注入 `openOptionsPage` / `getAllCommands`，便于单测）；`background.ts` 只负责注册。`options.open` 调 `runtime.openOptionsPage()` 回 `null`；`shortcuts.get` 调 `commands.getAll()`，只取 `translate-page`、`translate-selection`、`open-palette`，缺失或未分配补空串。两条都要求 `sender.tab?.id` 存在且 `frameId === 0`，否则 `validation/invalid-payload`（同 `page.status`）；不读写存储。
