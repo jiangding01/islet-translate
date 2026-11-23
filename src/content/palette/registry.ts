@@ -17,6 +17,8 @@ export interface CommandApi {
   page: PageActions;
   /** Shows the engine list in place of the commands; the palette stays open. */
   engines(): void;
+  /** Closes the palette, then asks the background to open the settings page. */
+  openSettings(): void;
 }
 
 export interface Command {
@@ -87,6 +89,15 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['engine', 'service', 'switch'],
     when: () => true,
     run: (_ctx, { engines }) => engines(),
+  },
+  {
+    id: 'options.open',
+    title: () => message('palette.openSettings'),
+    keywords: ['settings', 'options', 'preferences'],
+    when: () => true,
+    // Below every other command in every context (the others' rank is 0 to 2).
+    rank: () => -1,
+    run: (_ctx, { openSettings }) => openSettings(),
   },
 ];
 

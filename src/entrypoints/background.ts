@@ -8,6 +8,7 @@ import { createMenuHandlers, rebuildContextMenus } from '@/lib/context-menu';
 import { withUserMessage } from '@/lib/error-messages';
 import { appError, fail, toAppError } from '@/lib/errors';
 import { handle } from '@/lib/messaging/handle';
+import { createPaletteHandlers } from '@/lib/messaging/palette-handlers';
 import {
   onMessage,
   type PageStatus,
@@ -119,6 +120,13 @@ export default defineBackground(() => {
       return null;
     }),
   );
+  // The palette's two narrow messages: top frame of a tab only, read or navigate only.
+  const palette = createPaletteHandlers({
+    openOptionsPage: () => browser.runtime.openOptionsPage(),
+    getAllCommands: () => browser.commands.getAll(),
+  });
+  onMessage('options.open', ({ sender }) => palette['options.open'](sender));
+  onMessage('shortcuts.get', ({ sender }) => palette['shortcuts.get'](sender));
   browser.tabs.onUpdated.addListener((tabId, change) => {
     if (change.status === 'loading') void icon.reset(tabId);
   });

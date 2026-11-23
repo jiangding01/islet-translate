@@ -85,6 +85,13 @@ export interface EngineOptions {
   options: EngineOption[];
 }
 
+/** The keys the palette shows, as `commands.getAll()` reports them; empty when unassigned. */
+export interface PaletteShortcuts {
+  'translate-page': string;
+  'translate-selection': string;
+  'open-palette': string;
+}
+
 /** Status the content script reports so the toolbar icon can show its dot. */
 export type PageStatus = 'idle' | 'running' | 'done' | 'error';
 
@@ -125,6 +132,10 @@ export interface ProtocolMap {
   'engine.options'(): Result<EngineOptions>;
   /** content → background: drives the toolbar icon's status dot for the sender tab. */
   'page.status'(status: PageStatus): Result<null>;
+  /** content → background (top frame): opens the settings page. Navigation only. */
+  'options.open'(): Result<null>;
+  /** content → background (top frame): the keys actually in effect for the palette's rows. */
+  'shortcuts.get'(): Result<PaletteShortcuts>;
   /** extension pages → background: "总是翻译此站". */
   'site.setAlways'(args: { origin: string; always: boolean }): Result<SiteMemory>;
   /**

@@ -379,3 +379,5 @@ palette:
   switchEngine: 切换翻译服务…
   # 页面未翻译时显示，下一步再选引擎。
   translateWith: 用…翻译此页
+  # 始终可用，在新标签页打开设置页。
+  openSettings: 打开设置

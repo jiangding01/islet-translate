@@ -12,21 +12,21 @@ const ids = (ctx: PaletteContext, query = '') => listCommands(ctx, query).map((c
 describe('availability and order (empty input)', () => {
   // Quick translate (PR3) adds the seventh context: its result is not part of PR1's context.
   it.each([
-    ['idle', {}, ['page.translate', 'engine.switch']],
+    ['idle', {}, ['page.translate', 'engine.switch', 'options.open']],
     [
       'a whole-page session in bilingual mode',
       { phase: 'running', engine: 'google' },
-      ['page.restore', 'view.translationOnly', 'engine.switch'],
+      ['page.restore', 'view.translationOnly', 'engine.switch', 'options.open'],
     ],
     [
       'a finished session showing translations only',
       { phase: 'done', mode: 'translation' },
-      ['page.restore', 'view.bilingual', 'engine.switch'],
+      ['page.restore', 'view.bilingual', 'engine.switch', 'options.open'],
     ],
     [
       'failed paragraphs (retry first)',
       { phase: 'done', failed: 3 },
-      ['retry.failed', 'page.restore', 'view.translationOnly', 'engine.switch'],
+      ['retry.failed', 'page.restore', 'view.translationOnly', 'engine.switch', 'options.open'],
     ],
     [
       'an engine-level error (retry first)',
@@ -34,12 +34,12 @@ describe('availability and order (empty input)', () => {
         phase: 'running',
         engineError: appError('provider', 'provider/unauthorized', 'x'),
       },
-      ['retry.failed', 'page.restore', 'view.translationOnly', 'engine.switch'],
+      ['retry.failed', 'page.restore', 'view.translationOnly', 'engine.switch', 'options.open'],
     ],
     [
       'held paragraphs only (a local session)',
       { phase: 'done', scope: 'units' },
-      ['page.translate', 'page.restore', 'engine.switch'],
+      ['page.translate', 'page.restore', 'engine.switch', 'options.open'],
     ],
     ['a halted session: nothing at all', { phase: 'running', halted: true }, []],
   ] as [string, Partial<PageState>, string[]][])('%s', (_label, state, expected) => {
@@ -56,6 +56,15 @@ describe('availability and order (empty input)', () => {
 
 describe('matching', () => {
   const running = ctxOf({ phase: 'running' });
+
+  it('finds “打开设置” by its title and English keywords, and keeps it last', () => {
+    expect(COMMANDS.find((c) => c.id === 'options.open')?.title(running)).toBe('打开设置');
+    expect(ids(running, '设置')).toEqual(['options.open']);
+    expect(ids(running, 'Settings')).toEqual(['options.open']);
+    expect(ids(ctxOf({}), 'options')).toEqual(['options.open']);
+    // 翻译 is in two titles; the settings command is not one of them.
+    expect(ids(ctxOf({ phase: 'done', failed: 2 }), '').at(-1)).toBe('options.open');
+  });
 
   it('normalizes: trimmed, lower case, a leading slash only filters', () => {
     expect(normalizeQuery('  /Retry ')).toBe('retry');
@@ -90,7 +99,7 @@ describe('running', () => {
       setMode: vi.fn(async () => IDLE_PAGE_STATE),
       retryFailed: vi.fn(async () => IDLE_PAGE_STATE),
     };
-    return { page, engines: vi.fn() };
+    return { page, engines: vi.fn(), openSettings: vi.fn() };
   }
   const run = (id: string, ctx = ctxOf({ phase: 'running' })) => {
     const a = api();
@@ -107,6 +116,9 @@ describe('running', () => {
     const engine = run('engine.switch');
     expect(engine.engines).toHaveBeenCalledOnce();
     expect(engine.page.start).not.toHaveBeenCalled();
+    const settings = run('options.open');
+    expect(settings.openSettings).toHaveBeenCalledOnce();
+    expect(settings.engines).not.toHaveBeenCalled();
   });
 
   it('swallows a rejected action (the isle and the panel report the session)', async () => {
