@@ -19,7 +19,7 @@
 - 验证状态：截至 M3b PR6（#67）`npm run check` 通过，单测 1788 个（80 个文件），e2e 62 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。以上为历史记录的数字，非本次实测。
 - 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.36 / 7.5（余 0.14，**改引导层或常驻监听前必须先评估**）、page-runtime 26.00 / 27（余约 1.0）、selection-runtime 18.17 / 19、background 57.52 / 60、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
 - 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
-- 路线图：**M3c 指令台与灵岛键盘 → M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**；批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
+- 路线图：**M3c 指令台与灵岛键盘（方案 `docs/plans/m3c.md` 已批准，6 个 PR）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**；批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
 
 ## 3. 已定决策
 - 优先级：先做完整翻译能力（M0–M6），可选打磨放 M7，账户放 M8 —— 用户 2026-11-13 拍板。

@@ -1,0 +1,414 @@
+# M3c 指令台与灵岛键盘：范围与拆分
+
+> 状态：**第 2 稿已获用户批准**（2026-11-23，含体积预算 content 7.75 KB、page-runtime 28 KB、palette-runtime 15 KB，以及「新增文案」一节的文案方向；路线图变更同步到方向文档第 7 节与 HANDOFF）。第 1 稿经过 Opus 对抗式审查，结论是「改后可批准」：阻断 2 项、重要 9 项、建议 9 项，已逐条处理，处理记录见附录 A。本文只记范围、拆分与决定，各 PR 的实施记录在实现时补到对应小节。
+
+## 结论
+M3c 拆成 6 个可以独立合并的小 PR：
+1. 指令台本体：新增按需模块 `palette-runtime.js`，新增快捷键 `⌃⇧K`（Windows/Linux 上是 `Alt+Shift+K`），建立指令注册表。
+2. 设置入口与快捷键显示。
+3. 快速翻译框。
+4. 翻译一个区域。
+5. 不翻译一个区域。
+6. 从灵岛 ⌘ 打开指令台。
+
+灵岛本身仍然只响应指针，不进入网页的 Tab 顺序。键盘用户统一从指令台进入：灵岛上的每个操作都有对应的指令，「灵岛键盘」由指令台来实现。
+
+## 范围来源与核对
+- `docs/plans/ui-isle-direction.md`：
+  - 第 1 节「所有操作都是指令」。
+  - 第 2 节第 2 条：指令台用 `⌃⇧K`，界面上显示实际生效的快捷键。
+  - 第 2 节第 10 条：键盘与读屏。
+  - 第 4 节第 3、4 条：快速翻译框、按情境排序。
+  - 第 7 节「M3（交互）」一行。
+- `docs/plans/m3b.md`：
+  - 第 15 行：按住切换在 M3c 登记为 `paragraph.toggle`。
+  - 第 28 行：区域选择器移到 M3c，不做 CSS 路径记忆。
+  - 「不做」：右键菜单不加项。
+  - 第 5 节：局部会话不做全量扫描，按住有 2 万字上限。
+- `docs/plans/m3a-selection.md:179`：Esc 一次只关一层。
+- `docs/plans/m2b-lazy-runtime-and-isle.md`：
+  - 按需模块必须是单文件、零 import，不能出现扩展地址。
+  - 偏差记录：「焦点进入灵岛内部留到 M3 随指令台补齐」。
+- `docs/plans/m3d.md:38`：常驻层要加逻辑时，先瘦身再谈预算。
+- **与既定约定的偏离**（批准时一并确认）：
+  1. 方向文档第 5 节第 1 条要求「小点、灵岛、指令台是同一个 DOM 元素」，第 8 条要求「挂在同一个 Shadow 宿主下」。本方案改为：指令台单独用一个宿主 `ET-PALETTE`，只在视觉上贴着灵岛，并用同一组弹簧参数（300/30）拉出。原因：
+     - page-runtime 只剩约 1 KB 余量；
+     - 零层，也就是页面还没翻译时，也必须能打开指令台，而灵岛只在整页会话期间挂载（`isle.ts:121-123`）；
+     - 要把灵岛改成能装下任意内容的形变容器，就得重写 `isle.ts` 的挂载状态机，风险远大于收益。
+  2. 方向文档第 2 节第 10 条要求「灵岛展开后焦点进入灵岛内部」。本方案改由指令台承担键盘操作，理由见决定 4。这一条同时了结 M2b 留下的那处偏差。
+  3. 方向文档第 7 节把磁吸生长、`⌥` 偷看原文、段落「原」按钮的生长动效排在 M3。本方案不在 M3c 做这三项，**另行排期**。批准后同步修改方向文档第 7 节和 HANDOFF 路线图，原因见「不做」。
+  4. `m3b.md` 第 15 行写的「登记为 `paragraph.toggle`」不做：按住切换需要指针坐标，指令台里没有这个输入。批准后在 m3b.md 该处加注。
+  5. `docs/dom-contract.md:19` 列出了插件自己的宿主。PR1 补上 `et-palette`，PR4 补上 `et-pick`，按约定在 CHANGELOG 标「DOM 约定变更」。
+- 已核对、不冲突的：
+  - HANDOFF「默认快捷键不用 Option 组合」。
+  - `m3d.md` 决定 5：区域排除只在页面生命周期内有效，不持久化。
+  - commands 配额：上限 4 个，现有 2 个，本批再用 1 个。
+
+## 借鉴 FluentRead（本地 `/Users/jiangding/FluentRead`，只借思路）
+| 机制 | FluentRead 做法 | 本批取舍 |
+|---|---|---|
+| 命令面板 | 没有。快捷键全部是页面内的 keydown，页面失焦或焦点在输入框里时都不生效 | 用 `chrome.commands`，在网页输入框里也能打开，这是差异化 |
+| 区域选择 | `section-translation/content/picker.ts`：<br>• 悬停高亮块；↑ 扩大、↓ 缩回、Enter 确认、Esc 退出（`:896-917`）；正在编辑时让出按键（`:907-911`）<br>• 拦截 mousedown/mouseup/click/dblclick/auxclick 和 pointerover/mouseover，右键退出（`:73-75,890`）<br>• 只认 `isTrusted`；悬停有稳定窗，到期后复验 | 照搬键位、完整的拦截列表、右键退出、可信事件校验和到期复验<br>不做「记住此区域」 |
+| 悬浮球键盘 | `FloatingBall.vue:26-100`：按钮 `tabindex=0`，focusin 时展开 | 不学，因为违背「不往网页 Tab 顺序插焦点」 |
+| 输入框就地翻译 | 在可编辑区连按三次空格，原地写回 | 不在本批（见「不做」） |
+
+## 差异化
+- 针对「每页默认显示浮球、需要逐站关闭」：
+  - 指令台不常驻，按 `⌃⇧K` 才出现；
+  - 零层页面上不留痕迹。
+- 针对竞品的快捷键在输入框里失效：
+  - 走 `chrome.commands`，焦点在网页输入框里也能打开；
+  - 关闭后把焦点和选区原样还给网页；
+  - 指令台里打的字不会触发网页快捷键（决定 4）。
+- 同一个入口既能「找功能」，也能「临时翻一句」；翻译方向会自动反转（决定 7），中文用户打中文，得到的是英文。
+
+## 架构
+
+```
+chrome.commands "open-palette" ──► background（context-menu.ts onCommand）
+                                      │ tabs.sendMessage(frameId 0) "palette.toggle"
+灵岛 ⌘（PR6）──► page-runtime ──deps.openPalette()──┐
+                                                   ▼
+                   content bootstrap（常驻）：palette.toggle → 按需加载 palette-runtime（失联判断同划词）
+                                                   │ PaletteRuntimeDeps（通用 send + 动作表）
+            ┌──────────────────────────────────────┼──────────────────────┐
+            ▼                                      ▼                      ▼
+  动作表（bootstrap，与消息处理共用）      后台窄消息（PR2）：        region（PR4/PR5）
+  start/stop/toggle/setMode/              options.open、shortcuts.get   session.region(kind, el)
+  retryFailed/state；closeCard
+```
+
+依赖都是单向的：palette-runtime 只认 bootstrap 借给它的 deps，不 import 其他按需模块，也不读扩展地址。
+
+## 关键决定
+
+**决定 1：指令台是第三个按需模块 `palette-runtime.js`；常驻层预算申请 7.75 KB**
+- 沿用 `runtime-contract.ts` 的工厂约定：
+  - 注册键：`Symbol.for('islet-translate.palette-runtime')`。
+  - 接口：`PaletteRuntime { toggle(args), close(), dispose() }`。
+  - 依赖：`PaletteRuntimeDeps`，所有后台消息都走一个通用的 `send`。
+- 常驻层增加以下几项：`palette.toggle` 消息处理、加载器（失败与失联走 `isContextLost`）、动作表、打开指令台前关闭卡片。
+- 审查实测（附录 A 的 I1）：
+  - 抽出通用加载器只省 −9 B（gzip 已经压掉了重复代码），瘦身走不通；
+  - 最小实现会到 7.53–7.57 KB。
+  - 因此**申请把 content 提到 7.75 KB**，PR1 合并时生效，并附上实测值。
+
+**决定 2：注册表在 palette-runtime 里，内核动作在 bootstrap 里只写一份**
+- bootstrap 现在逐条注册 `page.*` 消息（`bootstrap.ts:141-173`）。改为先建一张动作表，再用它注册消息，指令台通过 deps 调用同一张表。面板、快捷键、指令台从此走同一份实现。
+- 灵岛按钮和按住手势仍然直接调用会话。它们调的是同一组方法，为了形式上统一去改动 page-runtime 不值得。
+- 每条指令只有这些字段：
+  - `id`；
+  - `title`（i18n key）；
+  - `keywords`（英文别名）；
+  - `when(ctx)` / `rank(ctx)` / `run(ctx)`。
+- `ctx` 是 `state()` 加上「最近一次快速翻译的结果」。
+- `state().halted` 为真时，所有指令都不可用，列表只显示一行「扩展已更新，请刷新页面」，复用现有的 `page-unreachable` 文案。
+
+**决定 3：后台只加两条窄消息，内容脚本不写配置**
+- 删掉第 1 稿里的「停靠到…」指令：设置页已经有这一项（`GeneralPage.tsx:407`），内容脚本写配置还会多一条路径。
+- 新增 `options.open`：后台调用 `runtime.openOptionsPage()`。
+- 新增 `shortcuts.get`：后台调用 `commands.getAll()`，返回实际生效的键。注册失败的键是空串，空串不显示。
+- 两条消息都校验 `sender.tab` 且 `frameId === 0`，做法同 `page.status`（`background.ts:115`）。它们只读或只做导航，不改任何存储。
+
+**决定 4：键盘、焦点与按键隔离**
+- **打开时**：
+  - 记下 `document.activeElement`（深入 open shadow；焦点在 iframe 里时就是 iframe 元素本身）和当前选区；
+  - 把焦点移进指令台的输入框。
+- **关闭时**：
+  - 焦点和选区还回原处；
+  - 原元素已经不在文档里时，不再还焦点。
+- **按键隔离（阻断项 B1）**：指令台在封闭 Shadow 里，按键冒泡到 document/window 时，事件目标被改写成宿主，网页的快捷键库会以为用户不在输入框里，于是在 GitHub 打 `s`、在 YouTube 打 `k`、在 Gmail 打 `e` 都会触发网页动作。处理办法：
+  - 在 Shadow 内的输入框和根节点上，对 `keydown`、`keypress`、`keyup`、`beforeinput`、`input` 调用 `stopPropagation`，Esc 也一样。
+  - 网页在 window/document **捕获阶段**注册的监听会先收到按键，这一层拦不住，作为残余风险写进「最脆弱的假设」。
+- **指令台内部**：
+  - 输入框是 `role=combobox`，列表是 `role=listbox`，当前项用 `aria-activedescendant` 指出。
+  - ↑↓ 只移动高亮；Tab 和 Shift+Tab 留在指令台内。
+  - 结果和状态通过 `aria-live="polite"` 播报。
+- **输入法**：`isComposing` 或 `keyCode === 229` 时，Enter 和 ↑↓ 都交给输入法处理。
+- **再按一次快捷键**会关闭指令台，即 `toggle`。
+- **网页别处按下指针**时关闭指令台，与灵岛 `isle.ts:1284-1288` 的行为一致。
+- **按住手势**：焦点在自己的宿主（`isOwnNode(activeElement)`）里时，`hold/watch.ts` 的 `isTypingFocus` 视为正在输入。这样在指令台里按住 Ctrl，不会切换指针下的段落。这是常驻层改动，体积已计入决定 1 的申请。
+- **灵岛按钮**保持 `tabindex=-1` 和 `keepFocus`：灵岛上的每个操作都有对应的指令，所以键盘能完成全部灵岛操作。
+
+**决定 5：Esc 只有一层：指令台、划词卡片、区域选择三者互斥**
+- 打开指令台时，bootstrap 先关闭卡片和小点（`selection.close()` 加 `hideDot()`）。
+- 卡片因快捷键或右键菜单打开时，bootstrap 先关闭指令台。
+- 进入区域选择时，指令台已经关闭。
+- 同一时刻只有一个浮层开着，所以不需要排层级，也不用改 `card.ts`。
+- 灵岛展开着、同时又打开了指令台时：灵岛的 `onKeyDown`（`isle.ts:1290-1298`）在发现 `ET-PALETTE[data-open]` 时让步，规则与它现在让给 `ET-SELECTION` 一样。这是 PR1 对 page-runtime 唯一的改动。
+- 宿主标签 `ET-PALETTE`、`ET-PICK` 加进 `dom-rules.ts:130-131` 和 `isOwnNode`（`selection/watch.ts:41-46`）。
+- Shadow 模式沿用 `env.shadowMode ?? 'closed'`。
+
+**决定 6：位置**
+- 灵岛可见时（PR6）：从灵岛朝页面内侧拉出，顶边对齐灵岛。
+- 灵岛不可见时：
+  - 停靠在左侧或右侧：从该侧边缘拉出，竖直位置在视口 30% 处；
+  - 停靠在底部：在右下角向上拉出。
+- 宽度为 `min(420px, 100vw - 32px)`。
+- 开启 `prefers-reduced-motion` 时直接到位，只保留不超过 120 ms 的透明度变化。
+- 材质只引用 `tokens-isle.css`。
+- PR1 开工前，先在 Design 原型里新增「指令台 M3c」画板，覆盖：亮暗两种宿主、三种停靠、零层和灵岛旁两种位置、快速翻译结果态、区域选择遮罩。由我们出终稿并自行决定，实现后附截图汇报。
+
+**决定 7：快速翻译的方向会自动反转（重要项 I6）**
+- 翻译前，先用 bootstrap 借出的 `detectLanguage`（与划词卡片同源）判断输入的语言：
+  - 输入**是**目标语言时，改为译成英文；
+  - 目标语言本身就是英文时，译成浏览器的界面语言；
+  - 界面语言也是英文时，提示「已经是目标语言」，不发请求。
+- 请求带上 `target` 和 `force`。协议已经支持这两个字段（`protocol.ts:155,164`），后台不用改。
+- 不新增配置项。
+
+## 指令表
+| id | 标题（zh_CN，待确认） | 可用条件 | 情境排序 | 执行 | PR |
+|---|---|---|---|---|---|
+| `page.translate` | 翻译此页 | 空闲，或局部会话 | 空闲时排第一 | `start()` | 1 |
+| `page.restore` | 显示原文（结束翻译） | `phase !== 'idle'`，**包括局部会话** | — | `stop()`（同时清掉局部译文） | 1 |
+| `view.bilingual` / `view.translationOnly` | 双语对照 / 只看译文 | 整页进行中，且不是当前模式 | — | `setMode` | 1 |
+| `retry.failed` | 重试失败的段落 | `failed > 0` 或有 `engineError`（与 `isle.ts:126-128` 的 `hasRetry` 一致） | 排第一 | `retryFailed()` | 1 |
+| `engine.switch` | 整页进行中：切换翻译服务…<br>空闲时：用…翻译此页 | 总是可用 | — | 进入二级列表（`engine.options`），选中后调用 `start({engine})` | 1 |
+| `options.open` | 打开设置 | 总是可用 | 排最后 | `options.open` | 2 |
+| `region.translate` | 选择要翻译的区域 | 空闲，或局部会话 | — | 进入区域选择 | 4 |
+| `region.exclude` | 选择不翻译的区域 | 整页进行中 | — | 进入区域选择 | 5 |
+
+- 匹配规则：
+  - 去掉首尾空白，不区分大小写；
+  - 对标题和 `keywords` 做子串匹配；
+  - 标题前缀命中排在子串命中之前，再按情境分和表中顺序排。
+- PR2 起，列表每行右侧显示该操作的实际快捷键，例如「翻译此页 ⌃⇧A」。
+
+## 输入语义（重要项 I5）
+- **输入为空**：按情境排序列出全部可用指令。Enter 执行高亮项，默认高亮第一项。
+- **以 `/` 开头**：只做指令过滤。Enter 执行高亮项。
+- **其他输入**（PR3 起）：
+  - 列表第一行固定是「翻译“…”」，下面是匹配到的指令。
+  - **Enter 永远执行翻译**；要执行指令，必须先用 ↓ 选中它。
+  - 这样无论是打「翻译」两个字，还是英文界面里打 `Show`、`Retry`，都不会误触整页翻译或结束翻译。
+  - PR3 合并之前，没有翻译行，Enter 执行高亮的第一条匹配指令。PR1 到 PR3 都会在 v0.5.0 之前合并，用户不会经历这次行为变化。
+- **翻译结果**：
+  - 流式显示在列表上方（方向文档第 4 节第 3 条），可以选中文字。
+  - 出结果后，「复制译文」排在第一位，焦点仍在输入框里，按 ↓ 再按 Enter 即可复制。
+- **请求层**：
+  - 复用 `src/content/selection/request.ts` 的 `createCardRequests`：2000 字上限、SW 重启后重试一次、丢弃迟到帧。
+  - palette-runtime 自己建 Port，做法同 `selection-runtime.ts:19-21`。
+- 不做朗读、音标、固定。
+
+## 区域选择器（PR4 翻译区域；PR5 不翻译区域）
+- **进入**：
+  - 执行区域指令后关闭指令台，但**不把焦点还给网页**：焦点留在 `ET-PICK` 宿主里一个隐藏元素上，选择结束后才还。
+  - 遮罩本身 `pointer-events:none`，只画高亮框和一行提示「↑ 扩大 · ↓ 缩小 · Enter 确认 · Esc 取消」。
+- **拦截（重要项 I4）**：选择期间，在 window 捕获阶段做以下处理，都只对可信事件生效：
+  - 键盘：对 `keydown` 和 `keyup` 调用 `preventDefault` 加 `stopImmediatePropagation`，防止网页滚动或提交表单。
+  - 鼠标：对 `mousedown`、`mouseup`、`click`、`dblclick`、`auxclick`、`pointerover`、`mouseover`、`contextmenu` 做同样处理；右键等于退出。
+  - 按住监听和划词监听都挂在 document 捕获阶段（`hold/watch.ts:154-172`、`selection/watch.ts:288-298`），会排在 window 之后，所以自然收不到事件。**常驻层不用改。**
+  - 残余风险：网页如果比我们更早在 window 捕获阶段注册了监听，仍会先收到事件，记为已知限制。
+- **候选块**：
+  - 取指针下文本节点所在的最近块级祖先，块级判断用 `isInlineElement` 取反；
+  - 纯键盘操作时，从视口中心那一点开始取；
+  - 跳过自己的宿主、`body`/`html` 和受保护区域。
+- **扩缩**：
+  - ↑ 换成父级块，并把当前块压栈，最多到 `body` 的子级；↓ 出栈。
+  - 指针移到别处时清空栈。
+  - 悬停有 80 ms 稳定窗，到期后用 `elementsFromPoint` 复验。
+- **高亮框位置**：滚动或缩放时，在 rAF 里重算。
+- **体量上限（阻断项 B2）**：
+  - `region('translate')` 沿用按住的 2 万字上限（`session.ts:1033-1041` 的 `holdBlock` 同一计数口径）。
+  - 超过上限时，高亮框变成珊瑚色，提示「区域太大，可直接翻译此页」，Enter 不生效。
+  - 局部会话可以用 `page.restore`（PR1）一次撤销。
+- **会话接口**：page-runtime 新增一个方法 `region(kind, root): Promise<PageState>`。
+  - **`translate`（PR4）**：
+    - 没有会话时，建立局部会话（`scope:'units'`），把 `root` 内的单元全部加入；
+    - 已有局部会话时，追加到其中；
+    - 单元发现和渲染走 `toggleAt` 的同一路径，只是起点从一个坐标换成一个根元素。
+  - **`exclude`（PR5，重要项 I3）**：
+    - 只在整页会话里可用。
+    - 把 `root` 记入 `excludedRoots: WeakSet<Element>`。判断与 `isExcluded` 并列，放在 `want`、`register` 和渲染批次过滤（`session.ts:406-408,430-436`）三处。
+    - 排除时，像 `toggleAt` 那样取消该区域内 pending、sent、queued 的段（`session.ts:1101-1107`），并移除已经插入的译文和加载点。
+    - **SPA 路由变化或 `stop()` 时清空**，避免换页后复用同一个容器时，留下无痕迹的「漏译」。
+    - 在已排除的区域内按住某段：**解除整个区域的排除**，这块区域恢复翻译。这样就不需要第二套反向集合。
+  - bootstrap 动作表新增 `region`。
+
+## 拆分（按顺序；PR2–PR6 都只依赖 PR1，彼此独立）
+| 顺序 | 分支 | 范围 | 新文案 | 合并后能用的功能 |
+|---|---|---|---|---|
+| 1 | `feat/m3c-palette` | 见下方 | 快捷键描述 1 条、指令标题约 6 条、占位与空结果 3 条 | `⌃⇧K` 打开指令台；键盘能完成灵岛上的全部操作 |
+| 2 | `feat/m3c-palette-extras` | `options.open`、`shortcuts.get` 及其 sender 校验；`options.open` 指令；列表显示实际快捷键 | 1 条 | 从指令台打开设置，并能看到各项快捷键 |
+| 3 | `feat/m3c-quick-translate` | 输入语义、方向反转、流式结果区、复制、过长与错误提示 | 约 4 条 | 临时翻译一句 |
+| 4 | `feat/m3c-region-translate` | 区域选择器、拦截、2 万字上限、`region('translate')`、`ET-PICK` 及其 DOM 约定 | 约 4 条 | 只翻译选中的区域 |
+| 5 | `feat/m3c-region-exclude` | `region('exclude')`、`excludedRoots` 的三处判断、取消在途请求、路由和 `stop` 时清空、按住时解除 | 约 2 条 | 整页翻译时排除一个区域 |
+| 6 | `feat/m3c-isle-entry` | 灵岛 ⌘ 按钮（悬停提示显示实际快捷键）；`PageRuntimeDeps.openPalette` 与 `isleRect`；指令台打开期间灵岛保持展开，并且不把指令台内的点击当作外部点击；失联后 ⌘ 隐藏 | 1 条 | 用指针从灵岛进入指令台 |
+
+PR1 的范围：
+- 原型画板。
+- `palette-runtime` 模块和 WAR，同步修改：
+  - `wxt.config.ts` 的 WAR；
+  - `check-size.mjs` 的条目；
+  - `check-build.mjs:98-99` 的断言和 `RUNTIME_KEYS`。
+- `open-palette` 快捷键：
+  - 改 `wxt.config.ts`、`context-menu.ts` 的 `onCommand` 和 `MenuDeps.send` 联合类型；
+  - 在 `check-build.mjs:81-90` 补上默认键断言。
+- bootstrap：动作表、加载器与失联处理、和卡片互斥。
+- 注册表，包括表中标为 PR1 的 5 条指令。
+- 焦点与按键隔离。
+- `isle.ts` 的 Esc 让步；`hold/watch.ts` 把自己的宿主当作正在输入。
+- `ET-PALETTE` 加入 `isOwnNode` 和 DOM 约定。
+
+### 测试
+**单测**
+- 注册表的 `when`、`rank` 与匹配排序：表驱动，覆盖空闲、整页、有失败、`engineError`、局部会话、`halted`、快速翻译之后七种情境。
+- 输入语义：
+  - `/` 前缀；
+  - 非 `/` 输入时 Enter 永远执行翻译；
+  - ↓ 选中指令后再按 Enter；
+  - 输入法组合期间按 Enter。
+- 方向反转的四个分支。
+- 焦点恢复：原元素已被移除；原来有选区；原焦点在 iframe 里。
+- 按键隔离：Shadow 内的按键不会到达 document 的冒泡阶段监听。
+- 互斥：
+  - 打开指令台时关闭卡片和小点；
+  - 卡片打开时关闭指令台；
+  - 灵岛的 Esc 让步给指令台。
+- bootstrap：
+  - 消息路径和 deps 路径得到相同结果；
+  - 失联后不再加载，只给出刷新提示。
+- 后台：两条窄消息校验 sender，空快捷键不显示。
+- PR4：
+  - 候选块的选取；
+  - ↑↓ 栈；
+  - 到期复验；
+  - 2 万字上限；
+  - 已有局部会话时追加单元。
+- PR5：
+  - 已登记的单元滚入视口后不会翻译；
+  - 在途段被取消；
+  - 路由变化和 `stop` 时清空；
+  - 按住时解除排除。
+
+**e2e**
+- 真实的 `chrome.commands` 按键在 CDP 里触发不了，所以用 `h.tell('palette.toggle')` 代替。
+- PR1：
+  - 打开后焦点在输入框；
+  - 在输入框里打 `s`，页面在冒泡阶段收不到；
+  - 打「只看」后按 Enter，切换到只看译文；
+  - Esc 关闭后，焦点回到原来的页面输入框；
+  - 划词卡片开着时打开指令台，卡片会被关闭。
+- PR3：
+  - 在 mock 引擎下打英文句子，按 Enter 后译文流式出现；
+  - 打中文时，请求的 `target` 是 `en`；
+  - `/` 前缀不发请求。
+- PR4：
+  - 用键盘进入区域选择，↑ 扩大，Enter 后只有该区域被翻译；
+  - 选择期间点击链接不会跳转，焦点在页面输入框里时 ↑ 不会移动光标；
+  - 选中超出上限的区域时，按 Enter 无效。
+- PR5：排除一个区域后滚动，区域内已登记的段不出现译文。
+- PR6：点 ⌘ 后指令台贴着灵岛，在指令台里点击时灵岛不会收起。
+
+**手测**（每个 PR 都要真机验收）
+- 快捷键：
+  - 三个平台都能注册；
+  - 0.4.0 升级上来的用户能否拿到默认键。
+- 网站：
+  - Gmail（开启快捷键）、GitHub、YouTube 上打字不会触发网页快捷键；
+  - 维基百科上 `Alt+Shift+K` 不和 accesskey 冲突。
+- 带焦点陷阱的对话框、`showModal` 对话框、全屏页面（见下节）。
+- 亮暗两种宿主、三种停靠位置。
+- 4 倍 CPU 降速下，拉出动画的帧率。
+
+## 新增文案（需用户确认，PR1–PR6 合计约 20 条，三种语言同步）
+- 快捷键描述：「打开指令台」（manifest，在 `chrome://extensions/shortcuts` 里显示）。
+- 输入框占位：「输入指令，或输入要翻译的文字」。
+- 列表提示：
+  - 空结果：「没有匹配的指令」；
+  - `/` 提示：「以 / 开头只搜索指令」。
+- 指令标题：见指令表。
+- PR3：
+  - 「翻译“{text}”」「复制译文」「已复制」「已经是目标语言」；
+  - 过长和错误提示复用现有文案。
+- PR4：
+  - 遮罩提示「↑ 扩大 · ↓ 缩小 · Enter 确认 · Esc 取消」；
+  - 「区域太大，可直接翻译此页」；
+  - 读屏播报「已翻译该区域」。
+- PR5：读屏播报「该区域不再翻译」。
+- PR6：⌘ 按钮的 `aria-label`「指令台（{shortcut}）」。
+
+## 快捷键
+- macOS：`MacCtrl+Shift+K`（方向文档定稿）。
+- Windows / Linux：`Alt+Shift+K`。
+  - 不用 `Alt+K`：Chrome 在这两个平台上用 Alt 触发 accesskey，MediaWiki 的 `k` 是「相关更改」。当初 `Alt+S` 就是因为同类冲突放弃的（`wxt.config.ts:52-53`）。
+  - `Alt+Shift+K` 与现有的 `Alt+Shift+S` 写法一致。
+- 注册失败时（被其他扩展或系统占用），`shortcuts.get` 读到空串，界面上不显示这个键。用户可以在 `chrome://extensions/shortcuts` 里自己绑定，也能从灵岛 ⌘（PR6）进入。
+
+## 体积（需用户批准）
+- **content**：7.5 → **7.75 KB**（PR1 合并时生效）。依据是审查实测：瘦身只省 9 B，最小实现在 7.53–7.57 KB，再加上互斥、失联处理和按住判断。
+- **page-runtime**：27 → **28 KB**（PR1 起生效）。PR1、PR4、PR5、PR6 都会改动它：Esc 让步、`region` 的两种用法、⌘ 与铰链联动，合计估算约 1.3–1.8 KB。
+- **palette-runtime**：新增预算 **15 KB**。估算 PR1 约 8 KB，PR3 约 +2.5 KB，PR4 约 +3.5 KB（引入 `dom-rules`、完整拦截列表、栈与稳定窗）。按实测落地，超出就再申请。
+- **background**：两条窄消息约 +0.3 KB，在 60 KB 预算内。
+
+## 最脆弱的假设
+1. **指令台的输入框拿到焦点后，网页不会把焦点抢回去，也不会在捕获阶段截走按键。**
+   - 会出问题的情形：
+     - 带焦点陷阱的网页对话框（例如 focus-trap 库）发现焦点落到容器外，会把它拉回去；
+     - 网页在 window/document 捕获阶段监听按键，会先于我们的 `stopPropagation` 收到按键。
+   - 应对：
+     - 指令台打开期间，在 window 捕获阶段监听 `focusin`，焦点被移出时收回一次；
+     - 100 ms 内被连续抢走两次，就放弃并关闭指令台；
+     - 捕获阶段截键的情况无法根治，手测时在 Gmail、GitHub、YouTube 上确认没有误触，有问题就作为已知限制写进 known-issues。
+2. **`showModal` 对话框与全屏。**
+   - 指令台宿主在 top layer 之下，会被遮住并变成 inert；同一层里的任何提示条也一样会被遮住。
+   - 处理：
+     - 检测到 `dialog:modal` 时，把宿主临时挂进该对话框的子树；手测验证焦点和点击是否正常，未实测，PR1 验证；
+     - 不可行时，模态对话框打开期间不打开指令台，写进已知限制；
+     - 全屏时与灵岛一致，不显示指令台。
+3. **新的默认快捷键能在三个平台上注册成功，升级用户也能拿到。** 不成立时按「快捷键」一节的兜底处理。
+
+## 不做
+- **指令台与灵岛合成同一个 DOM 元素或同一个宿主**：见偏离第 1 条。
+- **灵岛按钮进入 Tab 顺序或 focusin 展开**：违背「不往网页 Tab 顺序插焦点」。
+- **「停靠到…」指令**：设置页已有，少一条内容脚本写配置的路径。
+- **「收入生词本」等情境指令**：生词本在 M5，届时登记 `vocab.add`。
+- **磁吸生长、`⌥` 偷看原文、段落「原」按钮的生长动效**：
+  - `⌥` 偷看原文与 `page.holdKey = 'alt'` 冲突，需要另行设计；
+  - 另外两项是动效打磨，与键盘无关。
+  - 三项都另行排期，批准后同步修改方向文档第 7 节和 HANDOFF 路线图。
+- **区域记忆（CSS 路径）**：与 `m3d.md` 决定 5 一致。
+- **输入框就地翻译**（FluentRead 的连按三次空格）：不在 M3c，需要时另开一批，并兼容富文本编辑器。
+- **右键菜单加「打开指令台」**：理由同 m3b。
+- **在子 frame 里打开指令台**：快捷键消息只发给顶层 frame；焦点在子 frame 时，指令台在顶层打开，关闭后对 iframe 元素调用 `focus()` 交还焦点。
+
+## 回滚
+6 个 PR 只改代码，外加一个快捷键声明和两条只读或导航用的后台消息：
+- 不新增配置字段；
+- 不写存储；
+- 没有数据迁移。
+
+回滚任何一个 PR 都不会留下不兼容的状态。
+
+## 验证
+- 每个 PR 合并前：
+  - `npm run check`（含体积与 i18n）全绿；
+  - `npm run test:e2e` 全绿；
+  - check skill 审查到没有阻断问题；
+  - 用户真机验收。
+- 6 个 PR 全部合并后，评估发 v0.5.0。
+
+## 附录 A：第 1 稿审查处理记录（Opus 对抗式审查，2026-11-23）
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| B1 | 在指令台里打的字会冒泡到网页，触发网页的快捷键 | 采纳：Shadow 内对按键与输入事件 `stopPropagation`；捕获阶段的残余风险写进最脆弱的假设，并加入手测网站（决定 4） |
+| B2 | 区域翻译没有上限，局部译文也没有撤销入口 | 采纳：沿用 2 万字上限；`page.restore` 对局部会话也可用 |
+| I1 | 抽通用加载器省不出空间 | 采纳实测结果：申请 content 7.75 KB；deps 改为通用 `send` |
+| I2 | Esc 层级的前提有误，要改 `card.ts` 和 `isle.ts` | 改为三者互斥（决定 5），不改 `card.ts`；`isle.ts` 的 Esc 让步计入 PR1 |
+| I3 | `exclude` 只在 discover 里判断，挡不住已登记的单元 | 判断放进 `want`/`register`/渲染过滤三处，并取消在途段；路由变化和 `stop` 时清空；按住时解除整个区域的排除 |
+| I4 | 区域选择期间焦点还给了网页，拦截列表也不全 | 焦点留在 `ET-PICK` 内，用完整拦截列表，右键退出；常驻层零改动 |
+| I5 | 输入前缀会高亮指令，容易误触 | 非 `/` 输入时 Enter 永远执行翻译 |
+| I6 | 快速翻译只能译成目标语言 | 方向反转（决定 7），使用协议已有的 `target` 和 `force` |
+| I7 | 灵岛铰链漏了两套状态机的联动 | 写进 PR6 的范围与体积 |
+| I8 | `showModal` 下提示条同样会被遮住 | 改为挂进对话框子树，或模态期间不打开，写进最脆弱的假设 |
+| I9 | 扩展重载后旧页面上指令台的行为没定义 | 加载走 `isContextLost`；`halted` 时显示刷新提示；失联后隐藏 ⌘ |
+| S1 | 引用行号有误 | 已逐处更正 |
+| S2 | 有未声明的偏离 | 补上同宿主偏离、路线图变更、DOM 约定 |
+| S3 | PR1 过大，PR3 应拆开 | 拆成 6 个 PR |
+| S4 | `isle.dock` 可删；窄消息要校验 sender | 删掉 `isle.dock`；两条窄消息校验 sender |
+| S5 | `Alt+K` 与 accesskey 冲突，还缺 build 断言 | 改用 `Alt+Shift+K`；补 build 断言；按快捷键可开可关 |
+| S6 | 部分指令的可用条件有误 | `retry` 与 `hasRetry` 一致；`halted` 时禁用；`engine.switch` 标题按状态区分；底部停靠的位置另行规定 |
+| S7 | 在指令台里按住 Ctrl 会切换段落 | `isTypingFocus` 把自己的宿主算作正在输入 |
+| S8 | 体积估算偏乐观 | page-runtime 一开始就申请 28 KB；palette-runtime 预算改为 15 KB |
+| S9 | iframe 里关闭后焦点回不去 | 改为对 iframe 元素调用 `focus()` 交还焦点 |
