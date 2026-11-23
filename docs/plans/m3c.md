@@ -445,7 +445,7 @@ PR1 的范围：
 - **实测**（e2e 观察）：macOS 上 `commands.getAll()` 返回 `⌃⇧A` 这样的符号写法，指令台原样显示。
 - **与方案的偏差**：无。
 
-## PR1/PR2 真机验收与补丁（分支 `fix/palette-polish`）
+## PR1/PR2 真机验收与补丁（#72，分支 `fix/palette-polish`）
 - **验收结果**（用户真机，2026-11-23）：Gmail、Wikipedia、GitHub 页面的输入框里，Esc 关闭、焦点归还、打字不触发网页快捷键均正常；Mac 上 `⌃⇧K` 默认键绑定正常；PR2 的快捷键显示与「打开设置」正常。
 - **发现的问题与修复**：
   - 「原 / 译 / 双」字形方框文字不居中：`.pf` 改为 flex 居中、`box-sizing:border-box`，字重 600。
