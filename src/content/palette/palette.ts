@@ -1,5 +1,10 @@
 import type { Engine, IsleDock } from '@/lib/config/types';
-import type { EngineOption, EngineOptions, PageState } from '@/lib/messaging/protocol';
+import type {
+  EngineOption,
+  EngineOptions,
+  PageState,
+  PaletteShortcuts,
+} from '@/lib/messaging/protocol';
 import isleTokens from '@/styles/tokens-isle.css?inline';
 import { PALETTE_TAG } from '../dom-rules';
 import { message, type NoArgKey, uiLocale } from '../i18n';
@@ -61,6 +66,8 @@ interface Row {
   current?: boolean;
   /** Opens a second list: an arrow at the end. */
   more?: boolean;
+  /** The key bound to the command, shown in the shortcut slot. */
+  kb?: string;
   run(): void;
 }
 
@@ -106,6 +113,7 @@ const PATH = {
     'M2.5 4h7M6 2.5V4M4.2 4c.5 2.4 2.1 4.3 4.3 5.2M7.8 4C7.2 6.6 5.5 8.6 2.8 9.8M8.6 13.5l2.6-6.3 2.6 6.3M9.5 11.6h3.4',
   retry: 'M13 8a5 5 0 1 1-1.5-3.6M13 2.6v3h-3',
   engine: 'M3 5.5h9.5M10.5 3.3l2.2 2.2-2.2 2.2M13 10.5H3.5M5.5 8.3l-2.2 2.2 2.2 2.2',
+  settings: 'M3 5h10M3 11h10M6 3v4M10 9v4',
   back: 'M10 3.5 5.5 8l4.5 4.5',
   more: 'M6 3.5 10.5 8 6 12.5',
   check: 'M3.5 8.4l3 3 6-6.4',
@@ -126,6 +134,12 @@ const COMMAND_ICONS: Record<string, string> = {
   'page.translate': PATH.translate,
   'retry.failed': PATH.retry,
   'engine.switch': PATH.engine,
+  'options.open': PATH.settings,
+};
+/** The commands that show their bound key, and the manifest command each one reads. */
+const SHORTCUT_OF: Record<string, keyof PaletteShortcuts> = {
+  'page.translate': 'translate-page',
+  'page.restore': 'translate-page',
 };
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
@@ -165,6 +179,8 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
   let view: 'commands' | 'engines' = 'commands';
   /** The engine list: undefined while it loads, 'failed' when it could not be read. */
   let engines: EngineOptions | 'failed' | undefined;
+  /** The keys in effect, read once per opening; all empty until the answer arrives or fails. */
+  let shortcuts: Partial<PaletteShortcuts> = {};
   let rows: Row[] = [];
   let active = -1;
   let saved: SavedFocus = { element: null };
@@ -340,8 +356,26 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     );
   }
 
+  /** The shortcuts, read once per opening; a failed read shows no keys. */
+  function loadShortcuts() {
+    const opened = epoch;
+    shortcuts = {};
+    deps.send('shortcuts.get').then(
+      (value) => {
+        if (opened !== epoch) return;
+        shortcuts = value;
+        render(true);
+      },
+      () => {},
+    );
+  }
+
   const api: CommandApi = {
     page: deps.page,
+    openSettings() {
+      close();
+      deps.send('options.open').catch(() => {});
+    },
     engines() {
       view = 'engines';
       if (!els) return;
@@ -384,6 +418,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     const zh = uiLocale().startsWith('zh');
     return listCommands(current, query).map((command): Row => {
       const glyph = GLYPHS[command.id];
+      const shortcutName = SHORTCUT_OF[command.id];
       return {
         label: command.title(current),
         icon: () => {
@@ -397,6 +432,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
             ? current.state.failed
             : undefined,
         more: command.id === 'engine.switch',
+        kb: shortcutName ? shortcuts[shortcutName] : undefined,
         trail:
           command.id === 'engine.switch'
             ? engineOption(usingEngine(current.state))?.name
@@ -463,8 +499,8 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     if (row.trail) item.append(node('span', { class: row.more ? 'tr' : 'nt' }, row.trail));
     if (row.current) item.append(icon('ok', '0 0 16 16', [PATH.check]));
     if (row.more) item.append(icon('ch', '0 0 16 16', [PATH.more]));
-    // The shortcut slot (PR2 fills it; empty strings are hidden).
-    item.append(node('span', { class: 'kb' }));
+    // The shortcut slot: an empty one is hidden by the stylesheet.
+    item.append(node('span', { class: 'kb' }, row.kb ?? ''));
     return item;
   }
 
@@ -851,6 +887,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       }
     }
     loadEngines();
+    loadShortcuts();
     const opened = epoch;
     Promise.all([
       deps.page.getState().catch(() => ({ ...IDLE_PAGE_STATE })),

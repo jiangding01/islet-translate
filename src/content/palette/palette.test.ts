@@ -19,6 +19,7 @@ interface SetupOptions {
   dock?: IsleDock;
   reduced?: boolean;
   engines?: () => Promise<EngineOptions>;
+  shortcuts?: () => Promise<Record<string, string>>;
 }
 
 let palette: PaletteRuntime | undefined;
@@ -48,7 +49,13 @@ async function setup(options: SetupOptions = {}) {
     setMode: vi.fn(answer),
     retryFailed: vi.fn(answer),
   };
-  const send = vi.fn(options.engines ?? (async () => ENGINES));
+  const engineReply = options.engines ?? (async () => ENGINES);
+  const shortcutReply = options.shortcuts ?? (async () => ({}));
+  const send = vi.fn((type: string) => {
+    if (type === 'engine.options') return engineReply();
+    if (type === 'shortcuts.get') return shortcutReply();
+    return Promise.resolve(null);
+  });
   palette = createPalette({
     deps: {
       getConfig: async () => ({ page: { isleDock: options.dock ?? 'right' } }) as ConfigV1,
@@ -132,7 +139,7 @@ describe('opening', () => {
     expect(p.host()?.getAttribute('lang')).toBe('zh-CN');
     expect(p.root().activeElement).toBe(p.input());
     expect(p.input().placeholder).toBe('输入指令');
-    expect(p.titles()).toEqual(['翻译此页', '用…翻译此页']);
+    expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
     // The first row is highlighted and announced to the combobox.
     expect(p.selected()).toBe('翻译此页');
     expect(p.input().getAttribute('aria-activedescendant')).toBe('o0');
@@ -234,12 +241,17 @@ describe('keys', () => {
   it('↓ then Enter runs the next command; the highlight wraps', async () => {
     const p = await setup({ state: { phase: 'running' } });
     await p.open();
-    expect(p.titles()).toEqual(['显示原文（结束本次翻译）', '只看译文', '切换翻译服务…']);
+    expect(p.titles()).toEqual([
+      '显示原文（结束本次翻译）',
+      '只看译文',
+      '切换翻译服务…',
+      '打开设置',
+    ]);
     p.key('ArrowDown');
     expect(p.selected()).toBe('只看译文');
     p.key('ArrowUp');
     p.key('ArrowUp');
-    expect(p.selected()).toBe('切换翻译服务…');
+    expect(p.selected()).toBe('打开设置');
     p.key('ArrowDown');
     p.key('ArrowDown');
     p.key('Enter');
@@ -630,5 +642,102 @@ describe('review round 2', () => {
     } finally {
       document.removeEventListener('keydown', seen);
     }
+  });
+});
+
+describe('shortcuts and settings', () => {
+  const kbs = (p: Awaited<ReturnType<typeof setup>>) =>
+    [...p.root().querySelectorAll('.o')].map((el) => el.querySelector('.kb')?.textContent ?? '');
+
+  it('shows the translate-page key on “翻译此页” and “显示原文” only', async () => {
+    const idle = await setup({
+      shortcuts: async () => ({
+        'translate-page': 'Alt+A',
+        'translate-selection': 'Alt+Shift+S',
+        'open-palette': 'Alt+Shift+K',
+      }),
+    });
+    await idle.open();
+    expect(idle.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
+    expect(kbs(idle)).toEqual(['Alt+A', '', '']);
+    palette?.dispose();
+
+    const running = await setup({
+      state: { phase: 'running' },
+      shortcuts: async () => ({ 'translate-page': 'MacCtrl+Shift+A' }),
+    });
+    await running.open();
+    expect(running.titles()[0]).toBe('显示原文（结束本次翻译）');
+    expect(kbs(running)).toEqual(['MacCtrl+Shift+A', '', '', '']);
+  });
+
+  it('hides the slot when the key is an empty string', async () => {
+    const p = await setup({ shortcuts: async () => ({ 'translate-page': '' }) });
+    await p.open();
+    expect(kbs(p)).toEqual(['', '', '']);
+  });
+
+  it('opens and lists the commands when the shortcuts cannot be read', async () => {
+    const p = await setup({ shortcuts: () => Promise.reject(new Error('gone')) });
+    await p.open();
+    expect(p.host()?.hasAttribute('data-open')).toBe(true);
+    expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
+    expect(kbs(p)).toEqual(['', '', '']);
+  });
+
+  it('drops an answer that arrives after the palette was closed and opened again', async () => {
+    let late: ((value: Record<string, string>) => void) | undefined;
+    const answers = [
+      new Promise<Record<string, string>>((resolve) => {
+        late = resolve;
+      }),
+      Promise.resolve({ 'translate-page': 'Alt+B' }),
+    ];
+    const p = await setup({ shortcuts: () => answers.shift() as Promise<Record<string, string>> });
+    await p.open();
+    palette?.close();
+    settle();
+    await p.open();
+    expect(kbs(p)).toEqual(['Alt+B', '', '']);
+    late?.({ 'translate-page': 'Alt+STALE' });
+    await flush();
+    expect(kbs(p)).toEqual(['Alt+B', '', '']);
+  });
+
+  it('closes on “打开设置” and asks the background to open the page', async () => {
+    const p = await setup();
+    await p.open();
+    p.type('设置');
+    expect(p.titles()).toEqual(['打开设置']);
+    p.key('Enter');
+    await flush();
+    expect(p.host()?.hasAttribute('data-open')).toBe(false);
+    expect(p.send).toHaveBeenCalledWith('options.open');
+    expect(p.page.start).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when the settings page cannot be opened', async () => {
+    const p = await setup();
+    p.send.mockImplementation(((type: string) =>
+      type === 'options.open'
+        ? Promise.reject(new Error('gone'))
+        : type === 'engine.options'
+          ? Promise.resolve(ENGINES)
+          : Promise.resolve({})) as never);
+    await p.open();
+    p.type('设置');
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    p.key('Enter');
+    await flush();
+    process.off('unhandledRejection', unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(p.host()?.hasAttribute('data-open')).toBe(false);
+  });
+
+  it('offers no settings command once the session halted', async () => {
+    const p = await setup({ state: { phase: 'running', halted: true } });
+    await p.open();
+    expect(p.titles()).toEqual([]);
   });
 });

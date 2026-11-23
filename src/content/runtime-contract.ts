@@ -101,9 +101,9 @@ export type Reply<K extends keyof ProtocolMap> =
 
 /**
  * The background messages the palette may send: an explicit allow-list, widened one message
- * at a time by the PRs that need them (`options.open`, `shortcuts.get` in M3c PR2).
+ * at a time by the PRs that need them.
  */
-export type PaletteMessage = 'engine.options';
+export type PaletteMessage = 'engine.options' | 'options.open' | 'shortcuts.get';
 
 /** A background message, unwrapped: resolves to the reply's data, rejects with its error. */
 export type Send = <K extends PaletteMessage>(

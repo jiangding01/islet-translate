@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type Harness, launch, trackTests, waitFor } from './harness';
 import { type Ok, type PageState, prepare } from './support';
 
-// M3c PR1: the command palette. A real `chrome.commands` key cannot be pressed through CDP,
+// M3c PR1 and PR2: the command palette. A real `chrome.commands` key cannot be pressed through CDP,
 // so `palette.toggle` is sent the way the background sends it for the shortcut. Keys and
 // text are real CDP input. Chinese UI: the commands are matched by their zh_CN titles.
 
@@ -122,6 +122,64 @@ describe('command palette', () => {
     await waitFor(async () => (await cardView()) === 'card', { message: 'the card to open' });
     await openPalette();
     await waitFor(async () => (await cardView()) !== 'card', { message: 'the card to close' });
+    h.assertNoErrors();
+  });
+  it('shows the translate-page key the browser reports on the “翻译此页” row', async () => {
+    await h.openPage('e2e-article.html');
+    // Whatever the platform and the browser made of the suggested key: never a literal here.
+    const expected = await h.sw<string>(
+      `chrome.commands.getAll().then((all) => all.find((c) => c.name === 'translate-page')?.shortcut ?? '')`,
+    );
+    await openPalette();
+    const row = () =>
+      h.shadow<{ title: string; kb: string } | null>(
+        HOST,
+        `(root) => {
+          const o = [...root.querySelectorAll('.o')].find((el) => el.querySelector('.tt')?.textContent === '翻译此页');
+          return o ? { title: '翻译此页', kb: o.querySelector('.kb')?.textContent ?? '' } : null;
+        }`,
+      );
+    // The key arrives a moment after the list: wait for it when there is one to show.
+    if (expected) {
+      await waitFor(async () => (await row())?.kb === expected, {
+        message: `the row to show ${expected}`,
+      });
+    } else {
+      await waitFor(row, { message: 'the row' });
+      expect((await row())?.kb).toBe('');
+    }
+    // The row's slot is visible exactly when there is a key.
+    const shown = await h.shadow<boolean>(
+      HOST,
+      `(root) => {
+        const o = [...root.querySelectorAll('.o')].find((el) => el.querySelector('.tt')?.textContent === '翻译此页');
+        return !!o && getComputedStyle(o.querySelector('.kb')).display !== 'none';
+      }`,
+    );
+    expect(shown).toBe(expected !== '');
+    h.assertNoErrors();
+  });
+
+  it('opens the settings page on “打开设置”', async () => {
+    await h.openPage('e2e-article.html');
+    await openPalette();
+    await h.input('Input.insertText', { text: '设置' });
+    await waitFor(
+      async () =>
+        (await h.shadow<string>(HOST, `(root) => root.querySelector('.o .tt')?.textContent`)) ===
+        '打开设置',
+      { message: 'the settings command to be the first match' },
+    );
+    // Not a leftover from an earlier step: the page below must be the one this Enter opens.
+    expect(
+      await h.sw<number>(
+        `chrome.tabs.query({ url: chrome.runtime.getURL('options.html') }).then((tabs) => tabs.length)`,
+      ),
+    ).toBe(0);
+    await press(ENTER, '\r');
+    await waitFor(async () => !(await isOpen()), { message: 'the palette to close' });
+    const options = await h.waitForExtPage('options.html');
+    await options.close();
     h.assertNoErrors();
   });
 });
