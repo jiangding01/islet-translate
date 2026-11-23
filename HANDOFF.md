@@ -1,4 +1,4 @@
-<!-- handoff: head=5a6d9d5 branch=feat/m3c-palette updated=2026-11-23 by=claude-opus-5-5 -->
+<!-- handoff: head=5eeb1a7 branch=main updated=2026-11-23T19:02:35+08:00 by=claude-opus-5-5 -->
 # HANDOFF：译屿 / Islet Translate
 
 > 本文给接手的 Agent 或开发者用，按顺序读完即可开工。与其他文档冲突时，以本文和第 2 节「文档地位」表中的权威文档为准。本文只写现状，不写流水账：进度写进 `CHANGELOG.md` 和 [`docs/history.md`](docs/history.md)。
@@ -6,7 +6,7 @@
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
 - 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）已合入 `main`（实施记录见方案「PR1 实施记录」「PR2 实施记录」）。
-- 下一步：**M3c PR6 灵岛 ⌘ 入口与铰链位置**（方案 `docs/plans/m3c.md`「拆分」表第 6 行；2026-11-23 用户同意顺序调整为 PR1 → PR2 → PR6 → PR3 → PR4 → PR5）。PR1/PR2 真机验收与补丁（#72）已完成，记录见方案「PR1/PR2 真机验收与补丁」。PR3 做时占位文案由「输入指令」改为方案定稿的「输入指令，或输入要翻译的文字」。
+- 下一步：**M3c PR6 灵岛 ⌘ 入口与铰链位置**（方案 `docs/plans/m3c.md`「拆分」表第 6 行；2026-11-23 用户同意顺序调整为 PR1 → PR2 → PR6 → PR3 → PR4 → PR5）。PR1/PR2 真机验收与补丁（#72）已完成并通过补丁验收，记录见方案「PR1/PR2 真机验收与补丁」。PR3 做时占位文案由「输入指令」改为方案定稿的「输入指令，或输入要翻译的文字」。
 
 ## 1. 目标与范围
 - 目标：做近乎原生、少打扰的沉浸式双语阅读（界面方向「隐中生岛」+ 琥珀主题，见 `docs/plans/ui-isle-direction.md`）；差异化针对竞品痛点：免费额度不透明与订阅弹窗打扰、大页面卡顿、排版错乱与悬停结果消失、429 只能手动换引擎、每页默认浮球。**从 M2 起每个批次的方案都要有「差异化」一节**。
