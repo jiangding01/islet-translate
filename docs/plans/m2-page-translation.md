@@ -1,6 +1,6 @@
 # M2 整页翻译方案
 
-> 状态：**M2a 已合并**（PR #4；真机验收修复 PR #6，分段边界改为按计算样式判断，见 HANDOFF 第 5 节）（2026-11-14 批准，已吸收 Fable 5.2 对抗式审查的 15 项意见，见附录 C；面板与设置页按已确认的原型 PanelM2、StyleSetting 实现）。M2b 灵岛另开分支 · 2026-11-14 · 分支 `feat/m2-page-translation`
+> 状态：**M2a 已合并**（PR #4；真机验收修复 PR #6，分段边界改为按计算样式判断，见 `docs/history.md` 第 2 节）（2026-11-14 批准，已吸收 Fable 5.2 对抗式审查的 15 项意见，见附录 C；面板与设置页按已确认的原型 PanelM2、StyleSetting 实现）。M2b 灵岛另开分支 · 2026-11-14 · 分支 `feat/m2-page-translation`
 > 依据（按优先级）：`docs/reviews/2026-11-13-final-plan.md`（第 1、7 节 M2）→ `docs/plans/ui-isle-direction.md`（界面方向、动效、琥珀 token）→ `docs/reviews/2026-11-13-ui-ux-design.md`（3.5 译文样式、4.2 进度、6.2 隔离、6.3 性能预算）→ `HANDOFF.md`（第 5 节留给 M2 的约定）→ `docs/design/02-page-translation.md`（旧方案，功能参考）。机制参考 FluentRead（只借鉴思路，不搬代码），见附录 A。
 
 ## 1. 目标与完成标准
