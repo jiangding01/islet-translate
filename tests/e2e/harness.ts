@@ -555,6 +555,9 @@ async function start(
       google.count = 0;
     },
     async openPage(fixture) {
+      // The test window is not the one the OS focuses: without this `document.hasFocus()` is
+      // false, and the palette (like the selection shortcut) would not open.
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, page());
       // A marker on the old document tells a reload of the same URL apart.
       await evaluate('window.__etStale = true');
       await cdp.send('Page.navigate', { url: `${origin}/${fixture}` }, page());

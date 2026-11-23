@@ -357,7 +357,7 @@ node scripts/screenshots/shoot.mjs --ui zh_CN --article en
 | ✅ 已完成 | v0.3.0（GitHub Release） |
 | ✅ 已完成 | M3b 段落级交互 |
 | ✅ 已完成 | v0.4.0（GitHub Release） |
-| 进行中 | M3c 指令台与控制条键盘操作（PR1 指令台本体、PR2 设置入口与快捷键显示已完成） |
+| 进行中 | M3c 指令台与控制条键盘操作（PR1 指令台本体、PR2 设置入口与快捷键显示已完成；下一步 PR6 灵岛 ⌘ 入口，再做 PR3 至 PR5） |
 | 之后 | M3e Chrome 内置本地引擎 |
 | 之后 | M4 专家风格、术语库、输入翻译、卡片多引擎对比 |
 | 之后 | M5 YouTube 字幕、文章精翻、生词本、双语导出 |

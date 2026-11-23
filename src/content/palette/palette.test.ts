@@ -123,9 +123,12 @@ beforeEach(() => {
   frames = [];
   document.body.innerHTML = '<input id="field"><button id="other">x</button>';
   (document.getElementById('field') as HTMLElement).focus();
+  // The page holds the focus unless a test says the browser's own UI does.
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   palette?.dispose();
   palette = undefined;
   for (const element of document.querySelectorAll('et-palette')) element.remove();
@@ -144,6 +147,34 @@ describe('opening', () => {
     expect(p.selected()).toBe('翻译此页');
     expect(p.input().getAttribute('aria-activedescendant')).toBe('o0');
     expect(p.root().querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('指令台');
+  });
+
+  it('stays shut while the focus is in the browser UI (address bar, devtools)', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const p = await setup();
+    await p.open();
+    expect(p.host()).toBeNull();
+    expect(document.activeElement?.id).toBe('field');
+  });
+
+  it('opens once the page has the focus again', async () => {
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const p = await setup();
+    await p.open();
+    expect(p.host()).toBeNull();
+    hasFocus.mockReturnValue(true);
+    await p.open();
+    expect(p.host()?.hasAttribute('data-open')).toBe(true);
+  });
+
+  it('an open palette still closes when the focus has left the page', async () => {
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const p = await setup();
+    await p.open();
+    expect(p.host()?.hasAttribute('data-open')).toBe(true);
+    hasFocus.mockReturnValue(false);
+    palette?.toggle();
+    expect(p.host()?.hasAttribute('data-open')).toBe(false);
   });
 
   it('the shortcut pressed again closes it', async () => {
@@ -395,9 +426,7 @@ describe('the page around it', () => {
     const p = await setup({ state: { phase: 'running', halted: true } });
     await p.open();
     expect(p.root().querySelector('.r')?.hasAttribute('data-halted')).toBe(true);
-    expect(p.root().querySelector('.hs')?.textContent).toBe(
-      '无法连接页面，请刷新网页后重试。Chrome 商店等受限页面无法使用。',
-    );
+    expect(p.root().querySelector('.hs')?.textContent).toBe('需要刷新这个网页');
     expect(p.input().hidden).toBe(true);
     expect(p.titles()).toEqual([]);
     expect(document.activeElement?.id).toBe('field');

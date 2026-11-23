@@ -236,6 +236,8 @@ chrome.commands "open-palette" ──► background（context-menu.ts onCommand�
 | 5 | `feat/m3c-region-exclude` | `region('exclude')`、`excludedRoots` 的三处判断、取消在途请求、路由和 `stop` 时清空、按住时解除 | 约 2 条 | 整页翻译时排除一个区域 |
 | 6 | `feat/m3c-isle-entry` | 灵岛 ⌘ 按钮（悬停提示显示实际快捷键）；`PageRuntimeDeps.openPalette` 与 `isleRect`；指令台打开期间灵岛保持展开，并且不把指令台内的点击当作外部点击；失联后 ⌘ 隐藏 | 1 条 | 用指针从灵岛进入指令台 |
 
+> 2026-11-23：用户同意把顺序调整为 PR1 → PR2 → PR6 → PR3 → PR4 → PR5（先做灵岛 ⌘ 入口与铰链位置，再做快速翻译框）。表中序号保持原样，只是实施顺序变了。
+
 PR1 的范围：
 - 原型画板。
 - `palette-runtime` 模块和 WAR，同步修改：
@@ -442,6 +444,20 @@ PR1 的范围：
 - **测试**：单测 +17（1876 → 1893，文件 85 → 86）：后台处理函数 9（sender 校验 5 种、`options.open`、`shortcuts.get` 只回三个 name 与补空串）、注册表 1、指令台 7（快捷键填入两行、空串隐藏、请求失败仍打开、迟到结果被丢弃、「打开设置」关闭并发送、发送失败静默、halted 无指令）；已有的两处列表断言补上「打开设置」。e2e +2（67 → 69 通过，2 跳过不变）：「翻译此页」行的快捷键等于同一浏览器 `chrome.commands.getAll()` 里 `translate-page` 的值（为空串时断言不显示，不写死按键字符）；执行「打开设置」后出现 `options.html` 页面。先红后绿：去掉 sender 校验时后台测试 5 条失败，去掉 `shortcuts.get` 请求时指令台 2 条失败，e2e 在旧构建上两条失败。
 - **实测**（e2e 观察）：macOS 上 `commands.getAll()` 返回 `⌃⇧A` 这样的符号写法，指令台原样显示。
 - **与方案的偏差**：无。
+
+## PR1/PR2 真机验收与补丁（#72，分支 `fix/palette-polish`）
+- **验收结果**（用户真机，2026-11-23）：Gmail、Wikipedia、GitHub 页面的输入框里，Esc 关闭、焦点归还、打字不触发网页快捷键均正常；Mac 上 `⌃⇧K` 默认键绑定正常；PR2 的快捷键显示与「打开设置」正常。
+- **发现的问题与修复**：
+  - 「原 / 译 / 双」字形方框文字不居中：`.pf` 改为 flex 居中、`box-sizing:border-box`，字重 600。
+  - 视觉检查补出 5 处：halted 横条文字折行溢出（`.hs` 单行省略）、长服务名挤没标题（`.tr`、`.nt` 限宽 45% 加省略号）、无图标服务的文字标签溢出（`.pi.pf` 宽度自适应、不换行）、行尾服务名与箭头、数字、快捷键的字号与间距（统一 12px，箭头贴近行尾，快捷键等宽数字）。
+  - halted 横条改用已有文案 `popup.reloadTitle`（「需要刷新这个网页」），不再复用 `errors.network.pageUnreachable` 的长句，不新增 key；短文案不会被截断，悬停 `title` 一并删除。
+  - 焦点在 Chrome 地址栏时按 `⌃⇧K`，指令台在页面上弹出，但键盘焦点留在地址栏，打字与 Esc 都进地址栏，指令台关不掉。现在 `toggle()` 打开前检查 `document.hasFocus()`，为假不打开（已打开时照常可关）。判断放在 `palette.ts` 的打开路径，没有动常驻层 bootstrap，content 体积不变；与划词卡片快捷键的 `hasFocus` 判断一致。
+- **测试**：单测 +8（1893 → 1901，文件 86 → 87）：指令台 3（无焦点不打开、焦点回到页面后可打开、已打开时无焦点仍可关闭），新增 `styles.test.ts` 5（字形方框居中与字重、文字标签自适应不换行、行尾文字限宽省略、halted 横条单行省略、行尾字号）；halted 文案断言改为「需要刷新这个网页」。happy-dom 不计算布局，样式只能断言规则本身，真实排版靠真机目测。e2e 在 `harness.ts` 的 `openPage` 里开启 `Emulation.setFocusEmulationEnabled`（测试窗口没有操作系统焦点，`document.hasFocus()` 为假会让指令台打不开），e2e 仍是 69 通过 2 跳过。
+- **体积**（gzip）：content 7.55 KB 不变；page-runtime 26.03 KB 不变；palette-runtime 9.06 → 9.12 KB。
+- **已知限制**：
+  - 二级列表窄屏下英文 placeholder 被裁，不加省略号：Chrome 不给有焦点的 input 加省略号。
+  - 未就绪服务的品牌色图标 50% 不透明度偏暗，与灵岛一致，不改。
+  - Windows / Linux 上 `Alt+Shift+K` 与浏览器 accesskey 是否冲突仍未验证。
 
 ## 附录 A：第 1 稿审查处理记录（Opus 对抗式审查，2026-11-23）
 | 编号 | 问题 | 处理 |

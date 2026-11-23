@@ -357,7 +357,7 @@ Unit tests sit next to the source they cover and are named `*.test.ts`.
 | ✅ Done | v0.3.0 as a GitHub Release |
 | ✅ Done | M3b paragraph-level interaction |
 | ✅ Done | v0.4.0 as a GitHub Release |
-| In progress | M3c command palette and keyboard control of the control bar (PR 1, the palette itself, and PR 2, Settings entry and shortcut display, done) |
+| In progress | M3c command palette and keyboard control of the control bar (PR 1, the palette itself, and PR 2, Settings entry and shortcut display, done; next PR 6, the control bar's ⌘ entry, then PR 3 to PR 5) |
 | Later | M3e Chrome's built-in local engine |
 | Later | M4 expert styles, glossary, input translation, multi-engine comparison on the card |
 | Later | M5 YouTube subtitles, article refinement, vocabulary list, bilingual export |

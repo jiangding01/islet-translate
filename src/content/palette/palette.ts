@@ -576,7 +576,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     input.blur();
     input.hidden = true;
     list.hidden = true;
-    const copy = message('errors.network.pageUnreachable');
+    const copy = message('popup.reloadTitle');
     text.textContent = copy;
     text.hidden = false;
     live.textContent = copy;
@@ -934,6 +934,9 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       // flag says: the shortcut opens a new palette instead of closing an invisible one.
       if (open && host?.isConnected && host.checkVisibility?.() !== false) close();
       else {
+        // Focus in the browser's own UI (address bar, devtools): keys would never reach the
+        // palette, so it stays shut, like the selection card's shortcut.
+        if (!doc.hasFocus()) return;
         close(false);
         openPalette();
       }
