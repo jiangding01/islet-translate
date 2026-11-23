@@ -8,6 +8,7 @@ export const MENU_SELECTION_ID = 'translate-selection';
 export const MENU_PAGE_ID = 'translate-page';
 const COMMAND_SELECTION = 'translate-selection';
 const COMMAND_PAGE = 'translate-page';
+const COMMAND_PALETTE = 'open-palette';
 
 /** Web pages only: the content script runs nowhere else, so a menu item would do nothing. */
 export const MENU_URL_PATTERNS = ['http://*/*', 'https://*/*'];
@@ -66,7 +67,7 @@ export interface Target {
 export interface MenuDeps {
   /** Sends a message to a tab's content script; rejects when nothing listens. */
   send(
-    type: 'selection.open' | 'page.toggle',
+    type: 'selection.open' | 'page.toggle' | 'palette.toggle',
     data: { selectionText?: string; frameId?: number } | undefined,
     target: Target,
   ): Promise<unknown>;
@@ -104,10 +105,13 @@ export function createMenuHandlers(deps: MenuDeps): MenuHandlers {
       }
     },
     onCommand(command, tab) {
-      let type: 'selection.open' | 'page.toggle';
+      let type: 'selection.open' | 'page.toggle' | 'palette.toggle';
       let data: { selectionText?: string } | undefined;
       if (command === COMMAND_PAGE) {
         type = 'page.toggle';
+      } else if (command === COMMAND_PALETTE) {
+        // Opens the palette, or closes it when it is open (the content script decides).
+        type = 'palette.toggle';
       } else if (command === COMMAND_SELECTION) {
         // No `selectionText`: the content script reads its own selection.
         type = 'selection.open';

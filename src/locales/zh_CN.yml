@@ -11,6 +11,7 @@ manifest:
   commands:
     translatePage: 翻译此页 / 显示原文
     translateSelection: 翻译选中文字
+    openPalette: 打开指令台
 
 # 错误文案（src/lib/error-messages.ts 的错误码 → 键表；内容侧 src/content/error-text.ts 复用其中 3 条）。
 # 写法：发生了什么 + 怎么办。
@@ -366,3 +367,15 @@ render:
   retry: 重试
   # 段落过长，不发送，原处留下这句提示。
   skipped: 此段过长，未翻译
+
+# 指令台（src/content/palette），用 open-palette 快捷键打开。
+palette:
+  # 对话框的无障碍名称。
+  label: 指令台
+  placeholder: 输入指令
+  empty: 没有匹配的指令
+  retryFailed: 重试失败的段落
+  # 整页翻译进行中时显示，进入引擎列表。三种语言都必须以「…」结尾：引擎列表的面包屑去掉它后显示。
+  switchEngine: 切换翻译服务…
+  # 页面未翻译时显示，下一步再选引擎。
+  translateWith: 用…翻译此页

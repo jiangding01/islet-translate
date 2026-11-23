@@ -251,6 +251,47 @@ PR1 的范围：
 - `isle.ts` 的 Esc 让步；`hold/watch.ts` 把自己的宿主当作正在输入。
 - `ET-PALETTE` 加入 `isOwnNode` 和 DOM 约定。
 
+## PR1 实施记录（分支 `feat/m3c-palette`）
+- **范围**：按「PR1 的范围」实现，视觉按 Design 原型 PaletteM3c 画板定稿（输入行、列表、二级列表、halted、位置、动画；结果区、区域选择、列表脚注「以 / 开头只搜索指令」留给 PR3/PR4）。
+- **代码**：
+  - 新按需模块 `src/entrypoints/palette-runtime.ts`（WAR、`check-build` 的 WAR / `RUNTIME_KEYS` 断言、`check-size` 条目同步）。
+  - `src/content/palette/`：`registry.ts`（指令表与匹配排序，纯函数）、`keys.ts`（按键语义与输入法让步）、`focus.ts`（焦点与选区的保存、交还）、`place.ts`（停靠位置）、`styles.ts`（全部样式）、`palette.ts`（DOM、动画、事件）。
+  - `src/content/page-state.ts`：`isActive` / `hasRetry` 从 `isle.ts` 抽出，灵岛与指令台共用，保证「重试」条件一致。
+  - bootstrap：动作表 `PageActions`（getState/start/stop/toggle/setMode/retryFailed）同时注册 `page.*` 消息并借给指令台；三个按需模块共用一个懒加载器（失败与失联走 `isContextLost`）；`palette.toggle` 失联时回 `page-unreachable` 且不加载，打开前关卡片与小点；`selection.open` 打开卡片前关指令台。
+  - 内容脚本 deps 改为通用 `send`（`listEngines` 也走它），三处 `loadRuntime` 合成一个 `loader`。
+  - 快捷键 `open-palette`（`Alt+Shift+K` / `MacCtrl+Shift+K`），后台 `onCommand` 发 `palette.toggle` 到 frameId 0。
+  - `isle.ts` 的 Esc 让步给 `ET-PALETTE[data-open]`；`hold/watch.ts` 焦点在自家宿主时视为正在输入；`ET-PALETTE` 加入 `dom-rules.ts` 与 `isOwnNode`。
+- **体积**（gzip，含两轮审查修复）：content 7.36 → 7.55 KB（预算 7.75；第 2 轮把 `SKIP_TAGS` 里的 `...HOST_TAGS` 展开改成字面值，content.js 7733 → 7728 B）；page-runtime 26.00 → 26.03 KB（预算 28）；selection-runtime 18.17 → 18.19 KB；palette-runtime 8.89 KB（预算 15）；background 57.52 → 57.59 KB。
+- **测试**：单测 +88（1788 → 1876，文件 80 → 85；其中审查第 1 轮 +13、第 2 轮 +5）：注册表表驱动 6 种情境 + 匹配排序、按键与输入法、焦点恢复（元素被移除、选区、iframe、文本框不覆盖选区）、位置、DOM（打开聚焦、按键隔离、Enter / ↓ / Tab / 过滤 / 空结果、Esc 交还焦点与选区、二级列表、halted、点别处、抢焦点 100 ms 规则、全屏、模态对话框、动画与减弱动效）、bootstrap（消息路径与 deps 路径一致、互斥、失联、加载失败重试）、灵岛 Esc 让步、按住手势、`isOwnNode`、快捷键分发。e2e 新增 `tests/e2e/palette.e2e.test.ts` 5 条（62 → 67 通过，2 跳过不变）。
+- **与方案的偏差**：
+  - 「七种情境」中的「快速翻译之后」属于 PR3（`ctx` 在 PR1 只有 `state`），单测覆盖其余 6 种。
+  - `PaletteRuntime.toggle()` 不带参数，PR6 需要灵岛位置时再加。
+  - 「显示原文（结束翻译）」复用灵岛现有文案 `isle.modeOriginal`（「显示原文（结束本次翻译）」），「翻译此页」复用 `popup.translatePage`，双语 / 只看译文复用灵岛的模式文案；新增文案 7 条（快捷键描述、`palette.label/placeholder/empty/retryFailed/switchEngine/translateWith`），三语同步；`switchEngine` 三语都以「…」结尾（面包屑去掉它显示，yml 注释已写明）。
+  - 二级列表的返回箭头只给指针用（`tabindex=-1`、`aria-hidden`），键盘用 Esc、←、空输入 Backspace 返回；这样不必为它新增无障碍文案。
+  - 原型里的尺寸、字号、圆角 token（`--et-h-strip`、`--et-space-*`、`--et-fs-inject-*` 等）在 `tokens.css`，Shadow 里只有 `tokens-isle.css`：按约定写成字面值并在 `styles.ts` 注释里注明对应 token，颜色与阴影仍全部引用 `tokens-isle.css`。
+  - 二级列表面包屑：整页进行中用「切换翻译服务…」去掉末尾「…」，空闲时用 `popup.translatePage`。
+  - 视图指令的字形方框只在中文界面显示「原 / 双 / 译」，其他语言与灵岛一致画线条图标。
+- **审查第 1 轮修复**（check skill，无阻断，重要 4 项与建议 10 项）：
+  - 由 Enter / Esc 关闭时，在 window 捕获阶段拦掉同一个键的 keyup（一次，最多 1 s），焦点已还给网页，它不经过 Shadow。
+  - 先挂监听再聚焦，聚焦后核对 `shadowRoot.activeElement`：网页的同步焦点陷阱也按「被抢焦点」处理。焦点进入 iframe / frame 时直接关闭。
+  - 挂进模态对话框后监听它的 `close`；宿主被移除或因对话框关闭而不可见时，快捷键当作已关闭并重新打开；打开期间进入全屏就关闭。
+  - `ET-PALETTE` 进入 `SKIP_TAGS` 与会话的 `isOwn`（与 `isOwnNode` 共用 `dom-rules.ts` 的 `HOST_TAGS`），宿主内联 `display:block !important`；灵岛 Esc 让步改为在整个文档里找 `et-palette[data-open]`；灵岛探测也跳过它。
+  - 按住手势只在焦点位于 `ET-PALETTE` 宿主时视为正在输入，灵岛与卡片保持原行为。
+  - 隔离的事件补上 paste、copy、cut 与 composition 三件；`Send` 收窄为显式白名单（PR1 只有 `engine.options`）；`palette.translateWith` 去掉占位，直接写「用…翻译此页」。
+- **审查第 2 轮修复**：聚焦后（含收回一次之后）`shadowRoot.activeElement` 仍不是输入框就关闭（宿主 inert、网页拦焦点）；keyup 守卫期间同一个键的自动重复 keydown 也在 window 捕获阶段拦下，随守卫移除；`SKIP_TAGS` 写字面值，单测核对 `HOST_TAGS` 每项都在其中；补上「首次聚焦失败、收回后成功」与「`checkVisibility()` 为 false 时快捷键重开」两条分支测试。
+- **审查记录的偏差与限制**（不改代码）：
+  - 折叠途中再次打开时直接重建，不保留弹簧速度（有意为之，新的一次按当前页面重新定位）。
+  - 打开期间页面状态不刷新：列表按打开时的 `state()` 计算。
+  - 先关卡片再开指令台：若指令台因全屏或加载失败没有打开，卡片也已经被关掉。
+  - 二级列表的占位复用灵岛的「这次用哪个引擎翻译」，与指令标题「切换翻译服务…」两种叫法并存。
+  - 占位文案在 PR1 用「输入指令」，PR3 加入快速翻译时改为方案定稿的「输入指令，或输入要翻译的文字」。
+  - 焦点交还到 iframe 内的元素时，keyup 落在 frame 里，顶层的 keyup 守卫会悬挂 1 s，这期间顶层同一个键的 keyup 可能被误吞。
+  - halted 横条先打开、灵岛后展开时，一次 Esc 可能同时关掉两层（横条不持有焦点，Esc 由 window 监听；推测，未实测）。
+- **已知限制**（未实测，留给手测）：
+  - `showModal` 对话框：实现了「宿主挂进最上层模态对话框」，单测用替身验证挂载位置；无头 e2e 未验证真实焦点与点击，按方案手测，不可行时改为模态期间不打开。
+  - 真实快捷键无法在 CDP 里按，e2e 用 `palette.toggle` 消息代替；三平台注册、升级用户能否拿到默认键、Gmail / GitHub / YouTube 捕获阶段截键，均待真机验收。
+  - 网页在 window/document 捕获阶段注册的按键监听仍会先收到按键（方案「最脆弱的假设」第 1 条）。
+
 ### 测试
 **单测**
 - 注册表的 `when`、`rank` 与匹配排序：表驱动，覆盖空闲、整页、有失败、`engineError`、局部会话、`halted`、快速翻译之后七种情境。

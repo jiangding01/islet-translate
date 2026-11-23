@@ -11,13 +11,12 @@ import type {
 } from '@/lib/messaging/protocol';
 import { createPacer, discoverUnits, type Unit } from './discover';
 import {
-  ISLE_TAG,
+  HOST_TAGS,
   isInlineElement,
   isSingleLineLocked,
   isSkipped,
   OWN_TAG,
   protectedAncestor,
-  SELECTION_TAG,
   type StyleReader,
 } from './dom-rules';
 import { errorText } from './error-text';
@@ -772,7 +771,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
     let current: Node | null = node;
     while (current) {
       const name = current.nodeName;
-      if (name === OWN_TAG || name === ISLE_TAG || name === SELECTION_TAG) return true;
+      if (name === OWN_TAG || HOST_TAGS.includes(name)) return true;
       if (current === sheet) return true;
       current = current.parentNode;
     }

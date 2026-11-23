@@ -1,4 +1,5 @@
 import type { ConfigV1, HoldKey } from '@/lib/config/types';
+import { PALETTE_TAG } from '../dom-rules';
 import { deepActiveElement, isOwnNode } from '../selection/watch';
 
 // The always-loaded half of hold-to-toggle (M3b plan, sections 4 and 6): holding the chosen
@@ -20,10 +21,12 @@ const TEXT_INPUT = /^(text|search|email|url|tel|password|number)$/;
 
 /**
  * Focus where the key starts a text shortcut (Ctrl+A, Ctrl+←, ⌥←): a text field or editable
- * content. A focused checkbox, slider or button takes no typing, so it does not count.
+ * content. A focused checkbox, slider or button takes no typing, so it does not count. Focus
+ * in the palette (its input, behind a closed shadow root: the host is what shows) is typing.
  */
 function isTypingFocus(doc: Document): boolean {
   const active = deepActiveElement(doc);
+  if (active?.nodeName === PALETTE_TAG) return true;
   if (active?.nodeName === 'INPUT') return TEXT_INPUT.test((active as HTMLInputElement).type);
   return (
     active?.nodeName === 'TEXTAREA' || (active as HTMLElement | null)?.isContentEditable === true

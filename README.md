@@ -52,6 +52,7 @@ Islet Translate is at version `0.1.0`. M0 (foundation), M1 (translation core), M
 | Control bar | While a page is being translated, a small bar docks to the edge of the page.<br>It switches the display mode, retries paragraphs that were not translated, and changes the engine for this page only.<br>It can dock on the right, on the left or at the bottom. | <img src="docs/assets/readme/en-isle.png" width="240" alt="The control bar docked on the right"> |
 | Translate one paragraph | You do not need to translate the whole page. Rest the pointer on a paragraph and hold Ctrl (⌃ on macOS) for about 0.6 seconds to translate just that paragraph. Hold again to restore it. In Settings you can switch the key to Alt (⌥ Option on macOS) or turn the gesture off.<br>The control bar stays hidden and the panel still offers **Translate this page**. Starting a whole-page translation later keeps the paragraphs you already translated.<br>During a whole-page translation the same gesture restores a translated paragraph and excludes it, or translates one that has not been reached yet. | <sub>Coming soon</sub> |
 | Selection card and phonetics | Select foreign text and an amber dot appears at the end of the selection. Click it, or pause on it, and the card opens. The right-click menu and a keyboard shortcut work too.<br>AI engines stream the translation as it is written. The card can switch engine, collapse the original, copy the translation, read the text aloud, and be pinned and dragged.<br>A single English word shows **UK** and **US** phonetics from offline word lists (about 175,000 and 117,000 words). Click one to hear it in that accent. | <img src="docs/assets/readme/en-card.png" width="240" alt="The selection card"> |
+| Command palette | Press `⌃⇧K` (`Alt+Shift+K` on Windows / Linux) on any page, even inside a text field, to open a small command box: translate the page, show the original, switch between Bilingual and Translation only, retry failed paragraphs, or pick the engine for this page. Type to filter, use ↑↓ and Enter, Esc to go back.<br>What you type there never triggers the page's own shortcuts, and closing it gives the focus and the selection back to the page. | <sub>Coming soon</sub> |
 | Translation only | Hides the original and shows only the translation, while keeping the page layout. Switch back to Bilingual at any time to restore the page exactly. | <img src="docs/assets/readme/en-only.png" width="240" alt="A page in Translation only mode"> |
 | Toolbar panel | Shows the current site and page language, and switches the target language and default engine.<br>Quiet hints for pages already in your language, browser pages, and pages that need a reload. On a page that already declares your language, **Translate anyway** and the target language stay available. | <sub>Coming soon</sub> |
 | Settings: General | Target and source language, appearance, translation style with a live preview, how a page is shown when translation starts, control bar position, and the selection dot. | <img src="docs/assets/readme/en-options-general.png" width="240" alt="Settings, General page"> |
@@ -95,6 +96,7 @@ After installing or reloading the extension, refresh pages that were already ope
 | --- | --- | --- |
 | Translate the page / show original | `⌃⇧A` | `Alt+A` |
 | Translate the selection | `⌃⇧S` | `Alt+Shift+S` |
+| Open the command palette | `⌃⇧K` | `Alt+Shift+K` |
 
 Change them at `chrome://extensions/shortcuts`.
 
@@ -164,9 +166,10 @@ Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, an
 
 | Entry | Limit |
 | --- | --- |
-| content | 7.5 KB |
-| page-runtime | 27 KB |
+| content | 7.75 KB |
+| page-runtime | 28 KB |
 | selection-runtime | 19 KB |
+| palette-runtime | 15 KB |
 | background | 60 KB |
 | popup | 90 KB |
 | options | 150 KB |
@@ -267,6 +270,7 @@ It finds the newest Playwright Chrome for Testing, or takes a path from `CHROME`
 │   │   ├── content.ts           # Content script (first-load bootstrap, about 7 KB)
 │   │   ├── page-runtime.ts      # On-demand module: wires up a page translation session
 │   │   ├── selection-runtime.ts # On-demand module: loaded on the first selection, wires up the card
+│   │   ├── palette-runtime.ts   # On-demand module: loaded by the palette shortcut, wires up the palette
 │   │   ├── popup/               # Toolbar panel
 │   │   └── options/             # Settings page: General, Translation services, add dialog, tests
 │   ├── content/                 # Page side
@@ -279,6 +283,7 @@ It finds the newest Playwright Chrome for Testing, or takes a path from `CHROME`
 │   │   ├── i18n.ts              # Typed getMessage wrapper with plural selection
 │   │   ├── loader.ts            # Loads the on-demand modules through a dynamic URL
 │   │   ├── mutations.ts         # Watches dynamic content
+│   │   ├── page-state.ts        # Readings of the session state shared by the control bar and the palette
 │   │   ├── render.ts            # Inserts and restores translations, retry and too-long placeholders
 │   │   ├── runtime-contract.ts  # Interface between the loader and the runtime modules
 │   │   ├── segment.ts           # Splits blocks into segments and keeps inline formatting
@@ -288,6 +293,7 @@ It finds the newest Playwright Chrome for Testing, or takes a path from `CHROME`
 │   │   ├── text.ts              # Text helpers
 │   │   ├── viewport.ts          # Viewport visibility and priority
 │   │   ├── isle/                # Control bar: springs, geometry, hover intent, probing, shadow host
+│   │   ├── palette/             # Command palette: command registry, keys, focus hand-back, placement, shadow host
 │   │   └── selection/           # Selection: watching, text extraction, card, placement, requests, speech
 │   ├── components/              # Shared UI: Select dropdown, ProviderIcon
 │   ├── lib/
@@ -351,7 +357,7 @@ Unit tests sit next to the source they cover and are named `*.test.ts`.
 | ✅ Done | v0.3.0 as a GitHub Release |
 | ✅ Done | M3b paragraph-level interaction |
 | ✅ Done | v0.4.0 as a GitHub Release |
-| Later | M3c command palette and keyboard control of the control bar |
+| In progress | M3c command palette and keyboard control of the control bar (PR 1, the palette itself, done) |
 | Later | M3e Chrome's built-in local engine |
 | Later | M4 expert styles, glossary, input translation, multi-engine comparison on the card |
 | Later | M5 YouTube subtitles, article refinement, vocabulary list, bilingual export |

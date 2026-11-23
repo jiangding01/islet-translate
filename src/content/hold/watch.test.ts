@@ -227,6 +227,31 @@ describe('hold watch', () => {
     expect(onHold).not.toHaveBeenCalled();
   });
 
+  it('does not fire while the focus is in one of our own hosts (the palette input)', () => {
+    // A closed shadow root: the document only sees the host as focused.
+    const host = document.createElement('et-palette');
+    const input = document.createElement('input');
+    host.attachShadow({ mode: 'closed' }).append(input);
+    document.body.replaceChildren(host);
+    input.focus();
+    expect(document.activeElement).toBe(host);
+    ctrlDown();
+    vi.advanceTimersByTime(HOLD_MS * 2);
+    ctrlUp();
+    expect(onHold).not.toHaveBeenCalled();
+  });
+
+  it('still fires while the focus is on a button in the selection card (not the palette)', () => {
+    const host = document.createElement('et-selection');
+    const button = document.createElement('button');
+    host.attachShadow({ mode: 'closed' }).append(button);
+    document.body.replaceChildren(host);
+    button.focus();
+    ctrlDown();
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(onHold).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['a checkbox', '<input id="f" type="checkbox">'],
     ['a radio button', '<input id="f" type="radio">'],

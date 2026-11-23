@@ -8,6 +8,7 @@ import {
   CLEAR_GRACE_MS,
   createSelectionWatch,
   estimateLength,
+  isOwnNode,
   KEY_DELAY_MS,
   MAX_LENGTH,
   POINTER_DELAY_MS,
@@ -680,5 +681,22 @@ describe('estimateLength and readSelection', () => {
     expect(readSelection(document)?.source).toBe('a');
     select(para('y'.repeat(MAX_LENGTH + 5)));
     expect(readSelection(document)?.source).toHaveLength(MAX_LENGTH + 5);
+  });
+});
+
+describe('isOwnNode', () => {
+  it.each(['et-isle', 'et-selection', 'et-palette'])('counts nodes inside <%s>', (tag) => {
+    const host = document.createElement(tag);
+    const inner = document.createElement('span');
+    host.append(inner);
+    document.body.append(host);
+    expect(isOwnNode(inner)).toBe(true);
+    expect(isOwnNode(host)).toBe(true);
+    host.remove();
+  });
+
+  it('does not count the page’s own nodes', () => {
+    expect(isOwnNode(document.body)).toBe(false);
+    expect(isOwnNode(null)).toBe(false);
   });
 });

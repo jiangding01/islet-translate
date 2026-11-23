@@ -1,6 +1,18 @@
 // Which elements are translated, kept as-is, or treated as boundaries. Pure DOM
 // reads (no writes); shared by discovery and segmentation.
 
+/** Our own nodes: the translations… */
+export const OWN_TAG = 'ET-TR';
+/** …and the hosts of our interface (docs/dom-contract.md). */
+export const ISLE_TAG = 'ET-ISLE';
+export const SELECTION_TAG = 'ET-SELECTION';
+export const PALETTE_TAG = 'ET-PALETTE';
+/**
+ * The page isle (M2b), the selection card (M3a) and the palette (M3c): never page content,
+ * whatever node they end up under (the palette joins an open modal dialog).
+ */
+export const HOST_TAGS: readonly string[] = [ISLE_TAG, SELECTION_TAG, PALETTE_TAG];
+
 /** Never descended into: their text is not prose, or not ours to touch. */
 export const SKIP_TAGS: ReadonlySet<string> = new Set([
   'SCRIPT',
@@ -18,10 +30,11 @@ export const SKIP_TAGS: ReadonlySet<string> = new Set([
   'SELECT',
   'OPTION',
   'BUTTON',
-  // The page isle's host (M2b): never page content, whatever node it ends up under.
+  // HOST_TAGS, written out: a spread would pull the list into the resident bundle for
+  // nothing (dom-rules.test checks the two agree).
   'ET-ISLE',
-  // The selection card's host (M3a), likewise.
   'ET-SELECTION',
+  'ET-PALETTE',
   'PRE',
   'HEAD',
   // Ruby readings (furigana) are pronunciation, not text to translate.
@@ -125,10 +138,6 @@ const SKIP_ROLES = new Set([
   'img',
 ]);
 
-/** Our own nodes. */
-export const OWN_TAG = 'ET-TR';
-export const ISLE_TAG = 'ET-ISLE';
-export const SELECTION_TAG = 'ET-SELECTION';
 export const OWN_ATTR = 'data-et';
 
 /** Nodes other translators insert. */

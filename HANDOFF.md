@@ -1,12 +1,12 @@
-<!-- handoff: head=9b93aac branch=main updated=2026-11-23T15:57:14+08:00 by=claude-opus-5-5 -->
+<!-- handoff: head=5a6d9d5 branch=feat/m3c-palette updated=2026-11-23 by=claude-opus-5-5 -->
 # HANDOFF：译屿 / Islet Translate
 
 > 本文给接手的 Agent 或开发者用，按顺序读完即可开工。与其他文档冲突时，以本文和第 2 节「文档地位」表中的权威文档为准。本文只写现状，不写流水账：进度写进 `CHANGELOG.md` 和 [`docs/history.md`](docs/history.md)。
 
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
-- 停在哪：`main` 在 9b93aac，**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成，没有进行中的分支。
-- 下一步：按 think 流程为 **M3c 指令台与灵岛键盘** 写方案 `docs/plans/m3c.md`（参考 `docs/plans/` 既有方案与本地 FluentRead），方案审查并经用户批准后再动手实现。
+- 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」已合入 `main`（分支 `feat/m3c-palette`，实施记录见方案「PR1 实施记录」）。
+- 下一步：**M3c PR2**（分支 `feat/m3c-palette-extras`）：后台窄消息 `options.open`、`shortcuts.get` 及 sender 校验，`options.open` 指令，列表行尾显示实际快捷键（`.kb` 样式已留好）；`Send` 白名单随之加入这两条。
 
 ## 1. 目标与范围
 - 目标：做近乎原生、少打扰的沉浸式双语阅读（界面方向「隐中生岛」+ 琥珀主题，见 `docs/plans/ui-isle-direction.md`）；差异化针对竞品痛点：免费额度不透明与订阅弹窗打扰、大页面卡顿、排版错乱与悬停结果消失、429 只能手动换引擎、每页默认浮球。**从 M2 起每个批次的方案都要有「差异化」一节**。
@@ -14,18 +14,18 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main` @ 9b93aac（v0.4.0）；本文随 PR `docs/handoff-slim` 修改，不涉及代码。
+- 分支 / HEAD：`main`（已合入 M3c PR1，分支 `feat/m3c-palette`）；本文随该 PR 修改。
 - 未提交改动：无。
-- 验证状态：截至 M3b PR6（#67）`npm run check` 通过，单测 1788 个（80 个文件），e2e 62 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。以上为历史记录的数字，非本次实测。
-- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.36 / 7.5（余 0.14，**改引导层或常驻监听前必须先评估**）、page-runtime 26.00 / 27（余约 1.0）、selection-runtime 18.17 / 19、background 57.52 / 60、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
+- 验证状态：截至 M3c PR1 `npm run check` 通过，单测 1876 个（85 个文件），e2e 67 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
+- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.55 / 7.75（余 0.20，**改引导层或常驻监听前必须先评估**）、page-runtime 26.03 / 28（余约 2.0，M3c PR4–PR6 还要用）、selection-runtime 18.19 / 19、palette-runtime 8.89 / 15（PR3、PR4 还要用）、background 57.59 / 60、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
 - 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
-- 路线图：**M3c 指令台与灵岛键盘（方案 `docs/plans/m3c.md` 已批准，6 个 PR）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**；批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
+- 路线图：**M3c 指令台与灵岛键盘（方案 `docs/plans/m3c.md` 已批准，6 个 PR，PR1 已完成）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**；批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
 
 ## 3. 已定决策
 - 优先级：先做完整翻译能力（M0–M6），可选打磨放 M7，账户放 M8 —— 用户 2026-11-13 拍板。
 - 文章精翻必做，基于用户自配 AI 供应商（BYOK），范围仅限字幕；分块句数与 token 双上限（约 50 句 / 约 800 token），块并发 2，失败块降级逐句 —— 不依赖账户。
 - 默认引擎 Google 非官方端点（零配置），设置里一键切 BYOK；默认引擎失败时**不自动**降级本地引擎，只在错误提示里给一键切换 —— 避免静默改变翻译来源。
-- 内容脚本用 `<all_urls>` 静态注入，但常驻首屏脚本极小，其余是按需模块 `page-runtime.js`、`selection-runtime.js`（动态 URL 的 WAR，最低 Chrome 130）—— 后台注入需要全部网站权限，被否决（见 `docs/plans/m2b-lazy-runtime-and-isle.md` 附录 A）。
+- 内容脚本用 `<all_urls>` 静态注入，但常驻首屏脚本极小，其余是按需模块 `page-runtime.js`、`selection-runtime.js`、`palette-runtime.js`（动态 URL 的 WAR，最低 Chrome 130）—— 后台注入需要全部网站权限，被否决（见 `docs/plans/m2b-lazy-runtime-and-isle.md` 附录 A）。
 - 按需模块硬约束：单文件、零 import；跨包只共享类型和无副作用常量；灵岛等 UI 里禁止出现任何扩展地址（图片、CSS `url()`、字体），否则网页能截获动态地址。
 - 默认快捷键不用 Option 组合，改用 `Ctrl+Shift+字母`（macOS 为 manifest 中的 `MacCtrl+Shift+…`）—— macOS 上 `⌥X` 会输出字符，影响德语、北欧语言输入。
 - 内容脚本防串写：维护当前有效 reqId 集合或本地 epoch，只接受当前会话的结果。
@@ -37,19 +37,19 @@
 - 「仅看译文」、翻译占位符、标签保护等实现细节以各 `docs/plans/*.md` 为准，这里不重复。
 
 ## 4. 待办
-1. 按 think 流程写 `docs/plans/m3c.md`：M3c 指令台与灵岛键盘（含手动「不翻译此区域」；新增文案要先问用户；UI 方案取舍用 Design 原型自行出图决定，不摆候选让用户选）。方案经审查、用户批准后在 `feat/` 分支实现，拆成最小可用增量。
+1. M3c 后续 PR（方案 `docs/plans/m3c.md`「拆分」表，PR2–PR6 都只依赖 PR1、彼此独立）：PR2 设置入口与快捷键显示 → PR3 快速翻译框 → PR4 翻译一个区域 → PR5 不翻译一个区域 → PR6 从灵岛 ⌘ 打开指令台。视觉按 Design 原型 PaletteM3c 画板；每个 PR 的实施记录补到方案里，新增文案先问用户。
 2. M3c 之后按路线图做 M3e 本地引擎；开工前先实测 Translator / LanguageDetector API 在 Service Worker 中是否可用。
 3. 每批收尾评估是否发 0.x（节奏：主题批次收尾后发版；M3c 收尾是下一个发版点）。
 4. 仍有效的已知限制与后续项（按住 Ctrl 手势、渲染层一帧空窗、冷却计时、观察项等）见 [`docs/known-issues.md`](docs/known-issues.md)，动到相关代码前先读。
 
 ## 5. 坑与注意事项
-- **改体积敏感代码前先看第 2 节余量**：content 只剩 0.14 KB，page-runtime 约 1.0 KB，超了先瘦身，经用户同意才调预算。popup 已调到 90 KB，往里加依赖前先评估。
+- **改体积敏感代码前先看第 2 节余量**：content 只剩 0.21 KB，page-runtime 约 2.0 KB（M3c 后续 PR 还要用），超了先瘦身，经用户同意才调预算。popup 已调到 90 KB，往里加依赖前先评估。
 - **验证 manifest 权限与授权流程只能用生产构建**（`npm run build`）：WXT 开发构建会给 manifest 加 `http(s)://*/*`，Chrome 会提示可选权限多余。
 - **改了 `src/locales` 后必须在 `chrome://extensions` 点「重新加载」**：Chrome 只在加载或重载扩展时读 `_locales`，页面 JS 却每次读最新文件，否则出现 `[i18n] Message not found`；验收前清空扩展错误页。i18n 中文硬编码按哈希基线只减不增（`scripts/i18n-baseline.json`，`npm run check:i18n`），规则见 `docs/plans/i18n.md` 第 4 节。
 - 本地 Ollama 默认拒绝扩展来源（403）：需设置 `OLLAMA_ORIGINS`，并从菜单栏彻底退出 Ollama 再打开（已实测，README 有说明）。
 - Port 的调用方切换会话前必须先 `cancelAll()`；写操作保持幂等（`call()` 把所有发送失败归为「后台不可达」，可能实际已写入）。SW 被回收后在途请求丢失，由内容脚本重连并重发。
 - 同一地址上的多个自定义服务共享限流冷却（有意为之）；Google 备用接口吞 429 是有意为之。
-- 常驻内容脚本不得读取扩展 ID（`check:build` 有防探测规则），也不得含 `getMessage`；扩展重载后旧页面靠 `i18n.getUILanguage` 判断失联并 halt。
+- 防探测：`check:build` 只对 WAR 里的按需模块断言不读 `runtime.id`、不含 `getURL` 和扩展地址；常驻内容脚本另有 `alive()`（读 `browser.runtime?.id` 判断失联）的既有用法，不受这条断言约束。常驻脚本不得含 `getMessage`（check:build 断言）；按需模块失联靠 `i18n.getUILanguage` 判断并 halt。
 - 依赖：TypeScript 已升到 6.0.3，Dependabot 已忽略 TS 7，将来单独升时要改 `src/entrypoints/options/providers.ts:37` 的 Uint8Array 类型。依赖审计硬拦截由 `scripts/check-audit.mjs` 执行，`scripts/audit-allowlist.json` 按公告 ID 限期豁免（当前为空）。
 - 分段边界只看计算样式（`src/content/dom-rules.ts` 的 `isInlineElement`）；脱离文档流元素按标签判断；flex/grid 子元素各自成单元。
 - 新增 provider 时把 `resolveProviderSettings` 移出 registry 改为表驱动（其余 M1 架构审查遗留见 known-issues 第 5 节）。

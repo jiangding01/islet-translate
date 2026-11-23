@@ -17,6 +17,7 @@ manifest:
   commands:
     translatePage: Translate this page / Show original
     translateSelection: Translate selected text
+    openPalette: Open the command palette
 
 # Error copy (the code → key table in src/lib/error-messages.ts; the content side,
 # src/content/error-text.ts, reuses three of them). Pattern: what happened + what to do.
@@ -374,3 +375,16 @@ render:
   retry: Retry
   # A paragraph too long to translate is not sent; this note stays in its place.
   skipped: Too long to translate
+
+# The command palette (src/content/palette), opened with the open-palette shortcut.
+palette:
+  # The dialog's accessible name.
+  label: Command palette
+  placeholder: Type a command
+  empty: No matching commands
+  retryFailed: Retry failed paragraphs
+  # Shown while the whole page is translated; opens the list of engines. Must end with "…"
+  # in every locale: the engine list's breadcrumb shows it with that "…" removed.
+  switchEngine: Switch translation service…
+  # Shown when the page is not translated; the engine is picked next.
+  translateWith: Translate this page with…
