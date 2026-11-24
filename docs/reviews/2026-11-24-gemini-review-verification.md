@@ -59,7 +59,7 @@
 - 不处理 `<thinking>`、`<reasoning>`、harmony channel 等其他标记，没有反馈，观察。思维链未闭合维持报错；缓存键、提示词版本不变。
 - 回归用例：复现文件里的 3 条 + 缺开标签 2 条。
 
-**实际修法（`fix/batch-think-strip`）**：
+**实际修法（#75，`fix/batch-think-strip`）**：
 - batch（`extractArray`）：先整体 `JSON.parse`；失败且输出含 `</think>`（不分大小写）时，对**第一个** `</think>` 之后的尾部走原有的宽松提取（整体、围栏、首 `[` 到末 `]`）；仍拿不到再对整段输出走旧逻辑。条数、id 校验不变。
 - text（`cleanTextOutput`）：原文不含 `</think>` 时，丢掉**最后一个** `</think>` 及之前的内容；原有「原文不含 `<think>` 时删 `<think>…</think>` 块」的规则保留在其后。
 - 两处取法不同，是有意的：
@@ -170,7 +170,7 @@ Phase 1 裁决改判：子代理结论是「做」；裁决为「暂不做，条
 | # | 分支 | 范围 | 依赖 | 体积影响 | 需用户批准 |
 | --- | --- | --- | --- | --- | --- |
 | 0 | `feat/m3c-isle-entry`（进行中） | M3c PR6，不改范围 | — | page 26.18、content 7.60 KB | 已有 |
-| 1 | `fix/batch-think-strip` | 2.1：batch 与 text 终稿剥离前导推理 + 13 条用例 + known-issues 记流式缺口 | 无，可与 PR6 并行 | background 实测 +0.07 KB（57.85 KB） | 否 |
+| 1 | `fix/batch-think-strip`（#75） | 2.1：batch 与 text 终稿剥离前导推理 + 13 条用例 + known-issues 记流式缺口 | 无，可与 PR6 并行 | background 实测 +0.07 KB（57.85 KB） | 否 |
 | 2 | `fix/render-frame-gap-and-rescan` | 2.2–2.4：drop 代数守卫、`known()` 比 digest、首次 IO 不防抖；划掉 known-issues #57-2 | PR6 合并后拉分支 | page-runtime 约 +0.1 KB | 否 |
 | 3 | 原计划 PR3 → PR4 → PR5 | 不变 | — | 按 m3c 方案 | 新文案照旧先问 |
 | 4 | 发版 v0.5.0 | 含 #1、#2 | #1–#3 | — | 打 tag 前问 |

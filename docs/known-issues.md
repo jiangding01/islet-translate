@@ -57,7 +57,7 @@
 - **429 冷却期间页面无提示**：后台进入限流冷却时，Port 协议没有冷却帧，页面上只看到段落迟迟不出译文。提示需要新文案，用户决定先观察、不加，等反馈。
 - **LLM 引擎快速滚动时请求积压**：已发出的请求不撤销（`m2-page-translation.md` 5.4），调度器同一调用方内先进先出，新视口的段落要排在已滚走的批次之后，最多等几轮 LLM 批（每轮约 10 s 量级）。有反馈再从两种小改法里选：(a) LLM 引擎下前端批次对齐适配器上限（20 段 / 3000 字），`MAX_IN_FLIGHT` 降到 3–4，改 `session.ts` 几行（推荐）；(b) 对滚出范围、整包尚未开始的请求发 cancel，但前端判断不了是否已开始，误取消会浪费 token。
 - **Preact Phase 1（弹窗与设置页换 `preact/compat`）暂不做**：触发条件为 popup 预算余量 < 3 KB，或 M4 设置页设计时预算告急；届时按审查核实文档 4.2 的 spike 验收标准执行，新增依赖需批准。
-- **推理模型内联思维链的剩余缺口**（`fix/batch-think-strip` 之后）：终稿已剥离 `</think>` 之前的推理（batch 取第一个、text 取最后一个 `</think>`，理由见审查核实文档 2.1）。流式过滤器 `createThinkFilter` 只扣住以 `<think>` 开头的推理，缺开标签（`推理…</think>译文`）时划词卡片的流式增量会先显示推理文字，终稿再纠正。`<thinking>`、`<reasoning>`、harmony channel 等其他标记不处理；没有 `</think>` 的未闭合思维链不做特殊处理（同修复前，多数情况报 `validation/bad-response`）。都等反馈。
+- **推理模型内联思维链的剩余缺口**（#75 之后）：终稿已剥离 `</think>` 之前的推理（batch 取第一个、text 取最后一个 `</think>`，理由见审查核实文档 2.1）。流式过滤器 `createThinkFilter` 只扣住以 `<think>` 开头的推理，缺开标签（`推理…</think>译文`）时划词卡片的流式增量会先显示推理文字，终稿再纠正。`<thinking>`、`<reasoning>`、harmony channel 等其他标记不处理；没有 `</think>` 的未闭合思维链不做特殊处理（同修复前，多数情况报 `validation/bad-response`）。都等反馈。
 
 ## 5. 后续规划项
 
