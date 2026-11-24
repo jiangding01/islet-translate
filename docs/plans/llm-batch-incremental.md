@@ -1,6 +1,6 @@
 # AI 批量翻译逐段提交与增量解析（体验债小批 #5）
 
-> 状态：已实施（#待补，见文末「实施记录」）。方案第 2 稿，2026-11-24 用户批准（第 1 稿经 Opus 对抗式审查，结论「需修改后批」，2 条阻断与 6 条重要项已改，见文末「审查记录」）。依据：`docs/reviews/2026-11-24-gemini-review-verification.md` 4.1 节（部分采纳的方案一）与第 6 节第 5 行；用户 2026-11-24 同意排进小批，并要求先写方案过审。M3e 的硬前置。
+> 状态：已实施（#83，见文末「实施记录」）。方案第 2 稿，2026-11-24 用户批准（第 1 稿经 Opus 对抗式审查，结论「需修改后批」，2 条阻断与 6 条重要项已改，见文末「审查记录」）。依据：`docs/reviews/2026-11-24-gemini-review-verification.md` 4.1 节（部分采纳的方案一）与第 6 节第 5 行；用户 2026-11-24 同意排进小批，并要求先写方案过审。M3e 的硬前置。
 
 ## 目标
 用 AI 引擎（OpenAI 兼容、Gemini）整页翻译时，模型还在生成一批，某一段译文完整了就立刻显示，不再等整批 20 段全部生成完。对应 `docs/known-issues.md` 第 5 节「AI 引擎的整页翻译改为逐段出现」。
@@ -179,7 +179,7 @@ revert 本 PR 即可。不改缓存键与存储结构，旧缓存继续可用。
 | 3 | 开头识别缺用例 | 新增 `reads a lead-in of %s`：```` ```JSON ```` 大写、`<think>` 前有空白、```` ```json[ ```` 不换行、BOM、全角空白（都按现实现能识别）、`<thinking>`（不扣，交给整批解码）、```` ```js ````（不识别） |
 | 4 | draft 与「不一致」用同一个报错 | draft 报 `Draft output`，不一致报 `Streamed items differ from the output`（两者都成立时报后者）；加用例 |
 
-## 实施记录（2026-11-24，#待补）
+## 实施记录（2026-11-24，#83）
 
 ### 范围
 按第 2 稿第 1–3 节实现，「审查记录」B1–B2、I1–I6、S1–S3 的处理全部落地。改动 `codec.ts`、`providers/openai-compat.ts`、`providers/gemini.ts`、`scheduler.ts`，测试 `codec.test.ts`、`openai-compat.test.ts`、`gemini.test.ts`、`scheduler.test.ts`、`service.test.ts`，以及 `test-utils.ts`（分块 SSE 的测试工具）。提示词、`PROMPT_VERSION`、`TEXT_PROMPT_VERSION`、缓存键、Port 协议、content 侧代码都没有改。首屏自适应小批没有做，仍是观察项。
