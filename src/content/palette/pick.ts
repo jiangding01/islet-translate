@@ -11,20 +11,22 @@ import {
 } from '../dom-rules';
 import { message, type NoArgKey, uiLocale } from '../i18n';
 import { type ProbeEnv, probeTheme } from '../isle/probe';
+import type { RegionKind } from '../runtime-contract';
 import { isOwnNode } from '../selection/watch';
 import { restoreFocus, type SavedFocus } from './focus';
 import { adoptSheet, HOST_STYLE, PICK_CSS } from './styles';
 
 // The region picker (docs/plans/m3c.md, "区域选择器", PR4; Design prototype PaletteM3c boards
-// 5 and 5b), started by the palette's "选择要翻译的区域": a box around the block under the
-// pointer (or, from the keyboard, at the viewport's centre), ↑ to grow it to the parent block,
-// ↓ back, Enter or a click to translate it, Escape or a right click to stop. Its own host
-// `ET-PICK` draws the box and the hint bar and never takes the pointer. While picking, the
-// window's capture phase keeps every trusted key and press from the page (a link is not
-// followed, a field gets no caret), and the focus stays on a hidden element in the host,
-// handed back to the page when the pick ends. The hold and selection watches listen on the
-// document's capture phase, after the window, so they hear none of it either. A page that
-// registered on the window's capture phase before us still hears first (known limit).
+// 5 and 5b), started by the palette's "选择要翻译的区域" (and, PR5, "选择不翻译的区域"): a box
+// around the block under the pointer (or, from the keyboard, at the viewport's centre), ↑ to
+// grow it to the parent block, ↓ back, Enter or a click to translate it (or leave it alone),
+// Escape or a right click to stop. Its own host `ET-PICK` draws the box and the hint bar and
+// never takes the pointer. While picking, the window's capture phase keeps every trusted key
+// and press from the page (a link is not followed, a field gets no caret), and the focus stays
+// on a hidden element in the host, handed back to the page when the pick ends. The hold and
+// selection watches listen on the document's capture phase, after the window, so they hear
+// none of it either. A page that registered on the window's capture phase before us still
+// hears first (known limit).
 
 /** The pointer rests this long on another block before the box moves there. */
 export const STEADY_MS = 80;
@@ -83,13 +85,16 @@ export interface PickerOptions {
   parent(): Element;
   /** Keeps the keyup of the key that ended the pick from the page (the palette's guard). */
   guardKeyUp(code: string): void;
-  /** The confirmed block: translate it (`page.region`); whether anything was added. */
-  translate(root: Element): Promise<boolean>;
+  /** The confirmed block: translated or left alone (`page.region`); whether anything changed. */
+  region(kind: RegionKind, root: Element): Promise<boolean>;
 }
 
 export interface Picker {
-  /** Starts picking; `saved` is the page's focus, handed back when the pick ends. */
-  start(saved: SavedFocus): void;
+  /**
+   * Starts picking an area to translate, or (`exclude`) one the page translation leaves alone;
+   * `saved` is the page's focus, handed back when the pick ends.
+   */
+  start(saved: SavedFocus, kind?: RegionKind): void;
   /**
    * Ends a pick in progress without translating, handing the focus back; a confirmed pick's
    * late "translated" is not said any more.
@@ -99,7 +104,7 @@ export interface Picker {
   dispose(): void;
 }
 
-export function createPicker({ env, parent, guardKeyUp, translate }: PickerOptions): Picker {
+export function createPicker({ env, parent, guardKeyUp, region }: PickerOptions): Picker {
   const { win } = env;
   const doc = win.document;
   const raf = env.raf ?? ((callback: () => void) => win.requestAnimationFrame(callback));
@@ -114,6 +119,8 @@ export function createPicker({ env, parent, guardKeyUp, translate }: PickerOptio
     | undefined;
   let active = false;
   let disposed = false;
+  let kind: RegionKind = 'translate';
+  const excluding = () => kind === 'exclude';
   let saved: SavedFocus = { element: null };
   let readStyle!: StyleReader;
   /** The highlighted block. */
@@ -162,7 +169,6 @@ export function createPicker({ env, parent, guardKeyUp, translate }: PickerOptio
       class: 'sr',
       tabindex: '-1',
       role: 'application',
-      'aria-label': message('palette.regionTranslate'),
       hidden: '',
     });
     // Outlives the pick: "translated" is said after the focus went back to the page.
@@ -237,7 +243,8 @@ export function createPicker({ env, parent, guardKeyUp, translate }: PickerOptio
     if (!els) return;
     const moved = !!current && !els.box.hidden;
     current = block;
-    over = !!block && sourceLength(block) > HOLD_BLOCK_CHARS;
+    // The size limit is translation's: a whole sidebar or comment section may be left alone.
+    over = !excluding() && !!block && sourceLength(block) > HOLD_BLOCK_CHARS;
     // From one block to another the box glides; it appears in place.
     els.box.toggleAttribute('data-t', moved);
     els.box.toggleAttribute('data-over', over);
@@ -424,12 +431,12 @@ export function createPicker({ env, parent, guardKeyUp, translate }: PickerOptio
     if (!root?.isConnected || over) return;
     end(event, pressed);
     const mine = serial;
-    translate(root).then(
+    region(kind, root).then(
       (added) => {
         // Only when something was added, and only for the latest pick still standing.
         if (!added || mine !== serial || !els) return;
         const { live } = els;
-        live.textContent = message('palette.pick.done');
+        live.textContent = message(excluding() ? 'palette.pick.excluded' : 'palette.pick.done');
         clearTimeout(saidTimer);
         saidTimer = setTimeout(() => {
           live.textContent = '';
@@ -489,10 +496,11 @@ export function createPicker({ env, parent, guardKeyUp, translate }: PickerOptio
   }
 
   return {
-    start(focus) {
+    start(focus, which = 'translate') {
       if (disposed) return;
       end();
       saved = focus;
+      kind = which;
       if (!host?.isConnected) mount();
       if (!host || !els) return;
       // Into the modal dialog the page has open, if any: outside it everything is inert.
@@ -504,6 +512,10 @@ export function createPicker({ env, parent, guardKeyUp, translate }: PickerOptio
       els.live.textContent = '';
       els.hint.hidden = false;
       els.focus.hidden = false;
+      els.focus.setAttribute(
+        'aria-label',
+        message(excluding() ? 'palette.regionExclude' : 'palette.regionTranslate'),
+      );
       probe();
       // A new pick takes its presses at once: the last one's guard goes.
       unguard();

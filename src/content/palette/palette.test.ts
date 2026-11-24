@@ -339,6 +339,7 @@ describe('keys', () => {
       '显示原文（结束本次翻译）',
       '只看译文',
       '切换翻译服务…',
+      '选择不翻译的区域',
       '打开设置',
     ]);
     p.key('ArrowDown');
@@ -760,7 +761,7 @@ describe('shortcuts and settings', () => {
     });
     await running.open();
     expect(running.titles()[0]).toBe('显示原文（结束本次翻译）');
-    expect(kbs(running)).toEqual(['MacCtrl+Shift+A', '', '', '']);
+    expect(kbs(running)).toEqual(['MacCtrl+Shift+A', '', '', '', '']);
   });
 
   it('hides the slot when the key is an empty string', async () => {
@@ -1789,6 +1790,26 @@ describe('the region picker (PR4)', () => {
     press('ArrowUp');
     press('Enter');
     expect(p.page.region).toHaveBeenCalledWith('translate', document.getElementById('m'));
+    expect(document.activeElement?.id).toBe('field');
+  });
+
+  it('“选择不翻译的区域” while the page is translated: the same picker, confirmed as exclude', async () => {
+    document.body.innerHTML = PAGE;
+    (document.getElementById('field') as HTMLElement).focus();
+    const p = await setup({
+      hits: () => [document.getElementById('a') as Element],
+      state: { phase: 'done' },
+    });
+    await p.open();
+    p.type('/区域');
+    expect(p.titles()).toEqual(['选择不翻译的区域']);
+    // The region picker's icon.
+    expect(p.root().querySelector('.o .ic path')?.getAttribute('d')).toMatch(/^M2\.5 5\.5v-3h3/);
+    p.key('Enter');
+    expect(document.activeElement).toBe(pickHost());
+    press('ArrowUp');
+    press('Enter');
+    expect(p.page.region).toHaveBeenCalledWith('exclude', document.getElementById('m'));
     expect(document.activeElement?.id).toBe('field');
   });
 

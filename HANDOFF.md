@@ -1,13 +1,13 @@
-<!-- handoff: head=e5343b2 branch=feat/m3c-region-translate updated=2026-11-24T15:10:00+08:00 by=claude-opus-5-5 -->
+<!-- handoff: head=19c0204 branch=feat/m3c-region-exclude updated=2026-11-24T16:30:00+08:00 by=claude-opus-5-5 -->
 # HANDOFF：译屿 / Islet Translate
 
 > 本文给接手的 Agent 或开发者用，按顺序读完即可开工。与其他文档冲突时，以本文和第 2 节「文档地位」表中的权威文档为准。本文只写现状，不写流水账：进度写进 `CHANGELOG.md` 和 [`docs/history.md`](docs/history.md)。
 
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
-- 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（#77）已合入 `main`，PR4「翻译一个区域」（#78）随本文提交（实施记录见方案「PR1 实施记录」至「PR4 实施记录」）。
+- 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 已完成**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（#77）、PR4「翻译一个区域」（#78）已合入 `main`，PR5「不翻译一个区域」（#79）随本文提交，M3c 六个 PR 至此全部完成（实施记录见方案「PR1 实施记录」至「PR5 实施记录」）。
 - Gemini 架构审查已核实并裁决（`docs/reviews/2026-11-24-gemini-review-verification.md`，执行清单在第 6 节、用户决定在第 7 节）：唯一的 P2 真 bug「LLM 思维链（`<think>`）未剥离」已修（#75）；渲染三项小修（等帧空窗守卫、重扫不再重新分段、首屏不等防抖）在 #76 完成。
-- 下一步：**M3c PR5 不翻译一个区域**（方案 `docs/plans/m3c.md`「拆分」表第 5 行与「区域选择器」一节的 `exclude`；选择器、`ET-PICK` 与 `session.region` 已由 PR4 建好，PR5 只加 `exclude` 分支与 `excludedRoots`）。体积：palette-runtime 已用 17.69 / 18 KB，只剩约 0.3 KB，PR5 的指令台改动要先评估。PR1/PR2 真机验收与补丁（#72）已完成。PR6、PR3、PR4 待真机验收：区域选择期间网页收不到点击与按键（Gmail、GitHub、YouTube）、右键取消后不弹浏览器菜单、亮暗页面上的高亮框与超限态、模态对话框页面、读屏播报；焦点在地址栏时点 ⌘、三种停靠的观感；快速翻译的方向反转与短输入的书写系统兜底、复制到系统剪贴板、译文区选中文字与中文输入法下的按键。
+- 下一步：**发版 v0.5.0**（M3c 收尾，含 #75 与渲染三项小修；按 `/check` 的 ship 模式做发版 PR，打 tag 前先问用户），之后做体验债小批。体积：palette-runtime 已用 17.76 / 18 KB，只剩约 0.24 KB，往指令台加东西前要先评估。PR1/PR2 真机验收与补丁（#72）已完成。PR6、PR3、PR4、PR5 待真机验收：整页翻译时排除侧栏或评论区后滚动、在排除区域里按住恢复、单页应用换页后排除清空；区域选择期间网页收不到点击与按键（Gmail、GitHub、YouTube）、右键取消后不弹浏览器菜单、亮暗页面上的高亮框与超限态、模态对话框页面、读屏播报；焦点在地址栏时点 ⌘、三种停靠的观感；快速翻译的方向反转与短输入的书写系统兜底、复制到系统剪贴板、译文区选中文字与中文输入法下的按键。
 
 ## 1. 目标与范围
 - 目标：做近乎原生、少打扰的沉浸式双语阅读（界面方向「隐中生岛」+ 琥珀主题，见 `docs/plans/ui-isle-direction.md`）；差异化针对竞品痛点：免费额度不透明与订阅弹窗打扰、大页面卡顿、排版错乱与悬停结果消失、429 只能手动换引擎、每页默认浮球。**从 M2 起每个批次的方案都要有「差异化」一节**。
@@ -15,12 +15,12 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main`（已合入 M3c PR1 #70、PR2 #71、补丁 #72、PR6 #74、思维链剥离 #75、渲染小修 #76、PR3 #77）；本文随 PR4 修改。
+- 分支 / HEAD：`main`（已合入 M3c PR1 #70、PR2 #71、补丁 #72、PR6 #74、思维链剥离 #75、渲染小修 #76、PR3 #77、PR4 #78）；本文随 PR5 修改。
 - 未提交改动：无。
-- 验证状态：截至 PR4 `npm run check` 通过，单测 2094 个（88 个文件），e2e 79 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
-- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.63 / 7.75（余 0.12，**改引导层或常驻监听前必须先评估**）、page-runtime 26.67 / 28（余约 1.3，M3c PR5 还要用）、selection-runtime 18.20 / 19、palette-runtime 17.69 / 18（用户 2026-11-24 批准由 15 提到 18 KB，随 PR4 生效；余约 0.3）、background 57.85 / 60（小批的 LLM 逐段提交预计 +0.6–1.0）、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
+- 验证状态：截至 PR5 `npm run check` 通过，单测 2116 个（88 个文件），e2e 80 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
+- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.65 / 7.75（余 0.10，**改引导层或常驻监听前必须先评估**）、page-runtime 26.95 / 28（余约 1.05）、selection-runtime 18.20 / 19、palette-runtime 17.76 / 18（用户 2026-11-24 批准由 15 提到 18 KB，随 PR4 生效；余约 0.24）、background 57.85 / 60（小批的 LLM 逐段提交预计 +0.6–1.0）、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
 - 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
-- 路线图：**M3c 余下 PR5（方案 `docs/plans/m3c.md`，PR1、PR2、PR6、PR3、PR4 及真机验收补丁已完成）→ 发版 v0.5.0 → 体验债小批（不新开里程碑编号）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**。小批（用户 2026-11-24 同意，见核实文档第 6、7 节）：必做「LLM 批量逐段提交 + 增量解析」（M3e 硬前置，先用 think 写方案过审，两条硬约束：顺序前缀规则、缓存延后写）；可选 Shadow DOM 测量 spike、浮层协调器重构（PR5 合并后）、边扫边注册。批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
+- 路线图：**M3c 已完成（方案 `docs/plans/m3c.md`，六个 PR 与真机验收补丁）→ 发版 v0.5.0 → 体验债小批（不新开里程碑编号）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**。小批（用户 2026-11-24 同意，见核实文档第 6、7 节）：必做「LLM 批量逐段提交 + 增量解析」（M3e 硬前置，先用 think 写方案过审，两条硬约束：顺序前缀规则、缓存延后写）；可选 Shadow DOM 测量 spike、浮层协调器重构（PR5 合并后）、边扫边注册。批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
 
 ## 3. 已定决策
 - 优先级：先做完整翻译能力（M0–M6），可选打磨放 M7，账户放 M8 —— 用户 2026-11-13 拍板。
@@ -38,14 +38,13 @@
 - 「仅看译文」、翻译占位符、标签保护等实现细节以各 `docs/plans/*.md` 为准，这里不重复。
 
 ## 4. 待办
-1. M3c 后续 PR（方案 `docs/plans/m3c.md`「拆分」表，PR2、PR6、PR3、PR4 已完成）：PR5 不翻译一个区域（复用 PR4 的选择器与 `session.region`）。视觉按 Design 原型 PaletteM3c 画板；每个 PR 的实施记录补到方案里，新增文案先问用户。
-2. M3c 收尾发 v0.5.0（含 #75 与渲染三项小修），打 tag 前先问用户。
-3. 体验债小批（核实文档第 6 节执行清单 #5–#8）：必做 `feat/llm-batch-incremental`（先写方案过审，硬约束：只有序号恰为下一个期望值才增量提交、出现 id 异常本批一条都不写缓存）；可选 `chore/shadow-dom-survey`（两个常用站待用户指定）、`refactor/overlay-coordinator`、`perf/scan-streaming-register`（带大页面 e2e 与「每段只发一次」断言）。
-4. 之后按路线图做 M3e 本地引擎；开工前先实测 Translator / LanguageDetector API 在 Service Worker 中是否可用。
-5. 仍有效的已知限制与后续项（按住 Ctrl 手势、冷却计时、流式思维链缺口、观察项等）见 [`docs/known-issues.md`](docs/known-issues.md)，动到相关代码前先读。
+1. 发版 v0.5.0（M3c 收尾，含 #75 与渲染三项小修）：走 `/check` ship 模式（版本号与 CHANGELOG 一致性），打 tag 前先问用户；M3c 各 PR 的真机验收结果先向用户确认。
+2. 体验债小批（核实文档第 6 节执行清单 #5–#8）：必做 `feat/llm-batch-incremental`（先写方案过审，硬约束：只有序号恰为下一个期望值才增量提交、出现 id 异常本批一条都不写缓存）；可选 `chore/shadow-dom-survey`（两个常用站待用户指定）、`refactor/overlay-coordinator`、`perf/scan-streaming-register`（带大页面 e2e 与「每段只发一次」断言）。
+3. 之后按路线图做 M3e 本地引擎；开工前先实测 Translator / LanguageDetector API 在 Service Worker 中是否可用。
+4. 仍有效的已知限制与后续项（按住 Ctrl 手势、冷却计时、流式思维链缺口、观察项等）见 [`docs/known-issues.md`](docs/known-issues.md)，动到相关代码前先读。
 
 ## 5. 坑与注意事项
-- **改体积敏感代码前先看第 2 节余量**：content 只剩 0.12 KB，page-runtime 约 1.3 KB、palette-runtime 约 0.3 KB（预算 18 KB），超了先瘦身，经用户同意才调预算。popup 已调到 90 KB，往里加依赖前先评估。
+- **改体积敏感代码前先看第 2 节余量**：content 只剩 0.10 KB，page-runtime 约 1.05 KB、palette-runtime 约 0.24 KB（预算 18 KB），超了先瘦身，经用户同意才调预算。popup 已调到 90 KB，往里加依赖前先评估。
 - **验证 manifest 权限与授权流程只能用生产构建**（`npm run build`）：WXT 开发构建会给 manifest 加 `http(s)://*/*`，Chrome 会提示可选权限多余。
 - **改了 `src/locales` 后必须在 `chrome://extensions` 点「重新加载」**：Chrome 只在加载或重载扩展时读 `_locales`，页面 JS 却每次读最新文件，否则出现 `[i18n] Message not found`；验收前清空扩展错误页。i18n 中文硬编码按哈希基线只减不增（`scripts/i18n-baseline.json`，`npm run check:i18n`），规则见 `docs/plans/i18n.md` 第 4 节。
 - 本地 Ollama 默认拒绝扩展来源（403）：需设置 `OLLAMA_ORIGINS`，并从菜单栏彻底退出 Ollama 再打开（已实测，README 有说明）。

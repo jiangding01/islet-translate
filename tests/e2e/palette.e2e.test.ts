@@ -449,14 +449,14 @@ describe('region picker (PR4)', () => {
       y: Math.round(r.y + r.h / 2),
     });
   }
-  /** From the palette: “/区域”, Enter, until the picker shows. */
-  async function startPicking() {
+  /** From the palette: “/区域”, Enter on `title`, until the picker shows. */
+  async function startPicking(title = '选择要翻译的区域') {
     await openPalette();
     await h.input('Input.insertText', { text: '/区域' });
     await waitFor(
       async () =>
         (await h.shadow<string>(HOST, `(root) => root.querySelector('#o0 .tt')?.textContent`)) ===
-        '选择要翻译的区域',
+        title,
       { message: 'the region command to be the first match' },
     );
     await press(ENTER, '\r');
@@ -556,6 +556,69 @@ describe('region picker (PR4)', () => {
     expect(await h.evaluate<number>(`document.querySelector('#field').selectionStart`)).toBe(5);
     expect(await h.evaluate<string[]>('window.__keys')).toEqual([]);
     expect((await state()).phase).toBe('idle');
+    h.assertNoErrors();
+  });
+
+  it('“选择不翻译的区域” (PR5): paragraphs registered there stay untranslated when scrolled in', async () => {
+    await h.openPage('e2e-article.html');
+    // A region holding a short paragraph on screen, the spacer and #far (registered by the page
+    // scan, past the viewport margin); #after follows it, outside the region.
+    await h.evaluate(`(() => {
+      const tail = document.createElement('div');
+      tail.id = 'tail';
+      const head = document.createElement('p');
+      head.id = 'tail-head';
+      head.textContent = 'The old lighthouse keeper still walks the pier every morning.';
+      tail.append(head, document.querySelector('#spacer'), document.querySelector('#far'));
+      const after = document.createElement('p');
+      after.id = 'after';
+      after.textContent = 'At the end of the road, a small cafe serves fresh bread at dawn.';
+      document.body.append(tail, after);
+    })()`);
+    await h.tell('page.start');
+    await waitFor(
+      () => h.evaluate<boolean>(`!!document.querySelector('#intro > et-tr:not([data-et-state])')`),
+      { message: 'the first screen to be translated' },
+    );
+    await h.evaluate(`document.querySelector('#tail-head').scrollIntoView({ block: 'center' })`);
+    // The region shows a translation before it is left alone.
+    await waitFor(
+      () =>
+        h.evaluate<boolean>(`!!document.querySelector('#tail-head > et-tr:not([data-et-state])')`),
+      { message: 'the region’s short paragraph to be translated first' },
+    );
+    await startPicking('选择不翻译的区域');
+    await hover('#tail-head');
+    await boxAround('#tail-head');
+    await press(ARROW_UP);
+    await boxAround('#tail');
+    await press(ENTER, '\r');
+    await waitFor(async () => !(await isPicking()), { message: 'the picker to end' });
+    await waitFor(
+      () => h.shadow<string>(PICK, `(root) => root.querySelector('[aria-live]').textContent`),
+      { message: 'the region to be announced as left alone' },
+    );
+    expect(
+      await h.shadow<string>(PICK, `(root) => root.querySelector('[aria-live]').textContent`),
+    ).toBe('该区域不再翻译');
+    // What it showed there goes at once.
+    await waitFor(() => h.evaluate<boolean>(`!document.querySelector('#tail et-tr')`), {
+      message: 'the region’s translations to go',
+    });
+    expect(await h.evaluate<boolean>(`!!document.querySelector('#tail-head > et-tr')`)).toBe(false);
+    await h.evaluate(`document.querySelector('#far').scrollIntoView()`);
+    await waitFor(
+      () => h.evaluate<boolean>(`!!document.querySelector('#after > et-tr:not([data-et-state])')`),
+      { message: 'the paragraph after the region to be translated' },
+    );
+    await new Promise((done) => setTimeout(done, 500));
+    expect(await h.evaluate<number>(`document.querySelectorAll('#tail et-tr').length`)).toBe(0);
+    expect(h.google.texts.some((text) => text.includes('Further down the coast'))).toBe(false);
+    expect((await state()).phase).toBe('done');
+    // Outside the region the page stays translated.
+    expect(
+      await h.evaluate<boolean>(`!!document.querySelector('#intro > et-tr:not([data-et-state])')`),
+    ).toBe(true);
     h.assertNoErrors();
   });
 

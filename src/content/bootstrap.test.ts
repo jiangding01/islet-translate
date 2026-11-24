@@ -645,6 +645,22 @@ describe('palette runtime', () => {
     expect(t.session.region).toHaveBeenCalledWith('translate', root);
   });
 
+  it('excluding a region never loads the page runtime: without a session it changes nothing', async () => {
+    const t = setup();
+    await t.send('palette.toggle');
+    const root = {} as Element;
+    expect(await paletteDepsOf(t).page.region('exclude', root)).toBe(false);
+    expect(t.load).not.toHaveBeenCalled();
+    // With the session loaded, it is passed through.
+    await t.send('page.start');
+    expect(await paletteDepsOf(t).page.region('exclude', root)).toBe(true);
+    expect(t.load).toHaveBeenCalledOnce();
+    expect(t.session.region).toHaveBeenCalledWith('exclude', root);
+    t.halt();
+    expect(await paletteDepsOf(t).page.region('exclude', root)).toBe(false);
+    expect(t.session.region).toHaveBeenCalledOnce();
+  });
+
   it('region adds nothing once the session has halted', async () => {
     const t = setup();
     await t.send('page.start');
