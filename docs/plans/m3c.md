@@ -627,6 +627,55 @@ PR1 的范围：
   3. e2e「不移动直接点另一段」改为：先把鼠标停在 `#word` 上再用键盘进入，在同一点只派发按下与松开；在旧实现（总是确认当前框）的构建上确认会失败（等不到 `#word` 的译文）。没有改 harness，直接用 `Input.dispatchMouseEvent`。
   4. 双击守卫用例里 `pointer*` 与 `mouse*` 的余下事件改用 `detail: 0`（与 Chrome 一致）；把守卫改成只吞 `detail >= 2` 的变异会让它失败。
 
+## PR5 实施记录（#待补，分支 `feat/m3c-region-exclude`）
+- **范围**：拆分表第 5 行与「区域选择器」一节的 `exclude` 部分（重要项 I3）：指令 `region.exclude`、选择器的种类参数、`region('exclude')`、`excludedRoots` 的判断、取消区域里待发与在途的段（不取消 Port 请求，见「与方案的偏差」）、路由变化与 `stop` 时清空、按住时解除整个区域。没有新宿主，DOM 约定不变。
+- **代码**：
+  - `runtime-contract.ts`：新增 `RegionKind = 'translate' | 'exclude'`；`PaletteActions.region(kind: RegionKind, root)`，返回仍是 `Promise<boolean>`（本次是否改变了什么）。
+  - `bootstrap.ts`：`region` 对 `exclude` 在 `page.loaded` 不存在时直接返回 false，不为排除加载 page-runtime；其余与 PR4 相同（halted 返回 false）。
+  - `session.ts`：
+    - `excludedRoots: WeakSet<Element> | undefined`（没有排除时为 undefined，判断直接短路）与 `excludedRoute`（最近一次排除时的 `routeKeyOf(win.location)`）。`inExcludedRegion(el)` 从 `el` 向上走到 body，任一祖先在 `excludedRoots` 里即为排除。
+    - 判断并进 `isExcluded`（「按住不翻译此段」的记录，或在已排除的区域内），所以与它在同样的位置生效：`want`、渲染批次过滤、请求回来的单段错误与单段译文（审查修复 L3：译文只写进内存、不进 `queued`）。`register` 对已在视口范围里的根经 `want` 判断；对过长单元另判断 `inExcludedRegion`：在已排除区域里新登记的过长单元不插「过长未翻译」提示、记入 `unnoted`、不计入 `skipped`，区域恢复时由 `readmit` 补上提示（审查修复 L4）。
+    - `region('exclude', root)`（`exclude`，同步执行）：halted、非整页会话（`phase === 'idle'` 或 `scope !== 'page'`）、`root` 是 body 或不在 body 内、`root` 本身或其祖先已被排除时返回 false。开头先 `leaveRoute()`：当前路由键与 `excludedRoute` 不同（换了路由、页面还没变动）时先清空旧路由的区域并 `readmit()`（审查修复 L1）。否则记入 `excludedRoots` 与路由键；对 `root.contains(unit.root)` 的已登记单元，像 `toggleAt` 那样从 `pending/sent/waiting/queued` 移除，另外从 `failed` 移除，`release` 后 `renderer.drop`（移除译文、失败提示与加载点）；然后 `report()`，返回 true。过长提示（`unit.skipped`）不是译文，留在原处。已发出的批次不取消：回来的译文只写进内存（`translations`），不进渲染队列；单段错误被 `isExcluded` 挡在 `markFailed` 之前；这些单元已不在 `sent`，请求结束时也不会因「未答复」重新排队或计入失败。
+    - 计数与进度：被排除的单元不在 `pending/waiting/failed` 里，也没有译文，`status()`/`state()` 不把它们算作进行中或失败；只有已发出的请求在返回前仍计入 `inFlight`（不会一直显示进行中）。
+    - 清空：`clearState` 清空 `excludedRoots` 与 `unnoted`（`stop()` 与新会话都经过它）；`watch` 的 `onDirty` 开头调用 `leaveRoute()`：当前路由键与 `excludedRoute` 不同就清空，并 `readmit()`，换页后仍保留的容器不必滚出再滚回才恢复。不加 popstate 监听。
+    - `readmit(area?)`：对（`area` 内的）已登记单元，跳过根已不在页面里的（交给 rescan 去 `forget`，审查修复 S3）和仍被排除的（嵌套子区域、按住排除的段）；`unnoted` 里的补上过长提示，其余在 `visibleRoots` 里的 `want`。
+    - 按住解除：`toggleAt` 在会话就绪后从命中元素向上走到 body，把路过的所有已排除祖先从 `excludedRoots` 删掉（嵌套时都删）。原有的按住处理拆成内部函数 `hold`，在 `try/finally` 里先处理被按住的那段（翻译它），`finally` 里再对最外层被解除的区域 `readmit(freed)`，只在 epoch 未变且未 halted 时进行（审查修复 L2，`hold` 之前记下 epoch）：区域内、在 `visibleRoots` 里的已登记单元 `want`。顺序不能反：先 `want` 会让被按住的段看起来「正在翻译」，按住反而把它还原并排除。区域内另有未被命中的已排除子区域时，它仍然排除。
+  - `palette/pick.ts`：`start(saved, kind = 'translate')`；选项 `translate(root)` 改为 `region(kind, root)`。2 万字上限只在 `translate` 时生效（`over` 先判断种类）；聚焦元素的 `aria-label` 改为每次进入时按种类设置；确认后返回 true 时按种类播报「已翻译该区域」或「该区域不再翻译」。视觉、提示条、按键、拦截、守卫都不变。
+  - `palette/palette.ts`：`pickRegion(kind)` 把种类交给选择器；选择器选项改为 `region: (kind, root) => deps.page.region(kind, root)`；`region.exclude` 复用 `PATH.region` 图标。没有新样式。
+  - `palette/registry.ts`：新增 `region.exclude`（标题「选择不翻译的区域」，英文别名 `exclude`、`skip`、`region`、`area`），`when` 为 `isActive(state)`（整页会话进行中、未 halted、不是局部会话，与「双语对照 / 只看译文」同一判断；halted 时 `listCommands` 本来也返回空），表中位置在 `region.translate` 之后。两条区域指令的可用条件互斥，同一查询（如 `/区域`、`area`）只会列出其中一条。`CommandApi.pickRegion(kind?)`。
+- **文案**（三种语言同步）：`palette.regionExclude`「选择不翻译的区域」/ Select an area not to translate / 選擇不翻譯的區域；`palette.pick.excluded`「该区域不再翻译」/ Area no longer translated / 該區域不再翻譯。
+- **体积**（gzip，含审查修复）：content 7.63 → 7.65 KB（预算 7.75）；page-runtime 26.67 → 26.95 KB（预算 28）；palette-runtime 17.69 → 17.76 KB（预算 18，余约 0.24 KB）。
+- **测试**：单测 +16（2094 → 2110，文件 88 不变）：
+  - `session.test.ts` +11：排除后滚入视口的已登记段不翻译、区域里新出现的内容也不翻译、区域外照常；已插入的译文与失败提示被移除，`failed`/`translated` 与状态点随之更新，「重试失败的段落」不再发区域里的段；已发出的请求回来后不写译文、不记失败、状态为 done；已到达但未渲染的译文不写进区域；等待发送的段不再发出；`stop()` 后清空；路由变化（伴随 DOM 变化）后清空，区域里的段从内存恢复、不重发；按住区域内一段解除整个区域，按住的段与区域内其他可见段一起发出，再排除再按住时从内存恢复；嵌套区域（已覆盖的返回 false；按住外层区域里的段只解除外层，内层仍排除；按住内层的段解除内层）；命中点外有两层已排除区域时都解除；返回值（空闲、局部会话、body、文档外元素、halted 都返回 false）。
+  - `pick.test.ts` +2：`exclude` 不受 2 万字上限限制（框不变珊瑚色、提示条为正常态、Enter 以 `exclude` 确认）；按种类设置聚焦元素的 `aria-label` 并按种类播报，下一次不带种类的选择回到 `translate`。既有用例的选项 `translate` 改名为 `region`，断言补上种类参数。
+  - `registry.test.ts` +1（`region.exclude` 的 `when`、标题、`/区域`、`area`、`exclude` 匹配），整页会话四种情境的列表补上新指令，「翻译」子串匹配补上新指令，执行断言 `pickRegion('exclude')`；`palette.test.ts` +1（整页会话中 `/区域` 只列出「选择不翻译的区域」，图标与区域指令相同，↑ 后 Enter 以 `exclude` 调用 `page.region`，焦点回到页面输入框），两处整页会话的列表与快捷键列补上新指令；`bootstrap.test.ts` +1（未加载 page-runtime 时 `exclude` 返回 false 且不加载；加载后透传；halted 后返回 false）。
+  - 审查修复另加 `session.test.ts` +6（2110 → 2116），见下方「审查修复」。
+  - 先红后绿：实现前 33 条失败（新增 16 条全部失败；另 17 条是改写的既有用例：`pick.test.ts` 选项改名 11 条、`registry.test.ts` 列表与执行 6 条），整页会话的两处列表断言在实现后补上。另用变异确认会话用例能抓住问题：去掉路由清空、去掉按住后的 `readmit`、`isExcluded` 去掉区域判断、去掉排除时的取消，各有 1–5 条用例失败。
+  - e2e：`palette.e2e.test.ts` +1（79 → 80 通过，2 跳过不变）：把一段屏内短段、`#spacer` 与 `#far` 包进 `#tail`，其后加区域外的 `#after`；整页翻译后用指令台进入「选择不翻译的区域」，指针停在短段上、↑ 扩到 `#tail`、Enter；读屏播报「该区域不再翻译」，区域里已插入的译文移除；滚到 `#far` 后 `#after` 出现译文，`#tail` 内没有任何 `et-tr`，请求里没有 `#far` 的文字，`#intro` 的译文仍在。在不记录 `excludedRoots` 的构建上该用例失败（`#tail` 内出现 2 条译文）。
+- **与方案的偏差**：
+  - 判断没有另写三处，而是并进 `isExcluded`，与「按住不翻译此段」共用 `want`、渲染过滤与单段错误三处；`register` 经 `want` 判断。
+  - 路由变化清空后，对视口范围内的已登记单元重新 `want`（`readmit()`），按住解除也用同一个函数；方案只写了清空。
+  - 过长提示不随排除移除。
+  - `root` 是 body 时也返回 false（选择器本来不会给出 body）。
+  - 拆分表第 5 行写的「取消在途请求」没有照做：已发出的 Port 请求不取消（同一批里多半还有区域外的段），只把区域里的单元移出 `sent`，回来的译文只写进内存、不渲染，单段错误不计入失败，请求结束时也不重新排队。区域里还没发出的段（`pending`、等待重试的 `waiting`）确实不再发出。
+  - 区域里新出现的过长段落不插提示、不计数，区域恢复时补上；排除前已有的过长提示保留。
+- **已知限制**：
+  - 排除只在本页这次翻译内有效，不持久化（见 `docs/plans/m3d.md` 决定 5：站点规则只内置、不开放编辑）；刷新、「显示原文」结束翻译、单页应用换页后都要重新排除。
+  - 路由变化要等下一轮 DOM 变动（`onDirty`）才清空；只改 URL、页面内容不变时不清空。
+  - 已发出的批次不取消，返回前灵岛仍显示进行中；译文进内存，之后解除排除时直接从内存显示。
+  - 排除后区域里的段落仍留在登记表和视口观察里（开销与整页翻译相同），只是不再请求、不再渲染。
+  - 排除按元素身份记录（`WeakSet`）。同一路由下网站把整个容器换成新元素（框架重渲染、「加载更多」重建列表）时，排除对新容器无效，区域会重新翻译，需要再排除一次。
+- **审查修复（check skill 第 1 轮，Opus 审查者，无中高危）**：
+  1. L1 换了路由、页面还没变动时再排除，旧路由的区域会一直留着：`exclude()` 开头调用 `leaveRoute()`（与 `onDirty` 共用），路由键不同就先清空旧区域并 `readmit()`，再记这次的区域与路由键。
+  2. L2 按住期间 halt，`finally` 里的 `readmit(freed)` 仍会 `want` 并从内存往页面插入译文：`hold` 之前记下 epoch，只在 epoch 未变且未 halted 时 `readmit`。
+  3. L3 区域被排除后回来的译文仍进 `queued`，16 ms 内按住这段会被当成「即将显示」而按掉：单段译文回来时 `isExcluded` 的只写内存、`answered`，不进渲染队列。按住排除的单段（`excluded` 映射）走同一判断：以前同样的窗口里再按住会把它又按掉，现在会从内存恢复，符合「再按住恢复翻译」；其余按住用例不变。
+  4. L4 已排除区域里新出现的超长内容仍插提示、计数增加：`register` 里在已排除区域内的过长单元不插提示、记入 `unnoted`、`state()` 不计入；`readmit` 在区域恢复（按住解除、换路由）时补上提示与计数（rescan 不会补：`settle` 保留已登记的单元）。排除前已有的提示仍保留。
+  5. S1 e2e 保真：进入选择前先等 `#tail-head` 出现译文，排除后断言它被移除。
+  6. S2 已知限制补上「排除按元素身份记录，容器被整个换掉后失效」。
+  7. S3 `readmit` 跳过根已不在页面里的单元。
+  8. S4「与方案的偏差」补上「不取消 Port 请求」。
+  - 测试：`session.test.ts` +6（2110 → 2116）：换路由后页面变动前排除新区域，旧路由的区域先恢复、新区域保留（L1）；按住期间 halt 不再往页面写译文（L2）；区域里回来的译文在渲染窗口内按住能恢复（L3）；按住排除的单段在其译文刚回来时再按住能从内存恢复、不重发（L3 同一判断）；区域里新出现的过长内容无提示、无计数，按住解除后补上提示且计数为 1（L4）；换路由时区域里已离开页面的段不发请求（S3）。实现前 5 条失败；S3 的用例在修复前也通过：按住解除时 `area.contains` 已排除离开页面的根，换路由的 `readmit()` 之后，同一轮 `onDirty` 的 rescan 会在 50 ms 防抖的 flush 之前 `forget` 它，所以这条只是防御，没有能先失败的公开路径。e2e 改动 S1 是加强断言，不是先失败的用例。
+
 ## 附录 A：第 1 稿审查处理记录（Opus 对抗式审查，2026-11-23）
 | 编号 | 问题 | 处理 |
 |---|---|---|

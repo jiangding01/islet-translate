@@ -1,7 +1,7 @@
 import type { PageState } from '@/lib/messaging/protocol';
 import { message } from '../i18n';
 import { hasRetry, isActive } from '../page-state';
-import type { PageActions } from '../runtime-contract';
+import type { PageActions, RegionKind } from '../runtime-contract';
 
 // The palette's commands (docs/plans/m3c.md, "指令表"): plain data and pure functions, no DOM.
 // Copy is looked up inside `title` only (docs/plans/i18n.md 4.2): evaluating this module
@@ -24,10 +24,10 @@ export interface CommandApi {
   /** Copies the quick translation; the palette stays open and says it was copied. */
   copy(): void;
   /**
-   * Closes the palette without handing the focus back and starts the region picker (PR4),
-   * which keeps that focus until the pick ends.
+   * Closes the palette without handing the focus back and starts the region picker (PR4;
+   * `exclude`, PR5), which keeps that focus until the pick ends.
    */
-  pickRegion(): void;
+  pickRegion(kind?: RegionKind): void;
 }
 
 export interface Command {
@@ -122,6 +122,14 @@ export const COMMANDS: readonly Command[] = [
     // As "翻译此页": a page session translates the region already.
     when: canTranslate,
     run: (_ctx, { pickRegion }) => pickRegion(),
+  },
+  {
+    id: 'region.exclude',
+    title: () => message('palette.regionExclude'),
+    keywords: ['exclude', 'skip', 'region', 'area'],
+    // A page session only: held paragraphs and regions are translated one by one already.
+    when: ({ state }) => isActive(state),
+    run: (_ctx, { pickRegion }) => pickRegion('exclude'),
   },
   {
     id: 'options.open',

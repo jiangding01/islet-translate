@@ -25,6 +25,7 @@ import { errorText } from './error-text';
 import { routeKeyOf, watchMutations } from './mutations';
 import { pageIsInLanguage, sampleText } from './page-language';
 import { createRenderer, inViewport, type Renderer } from './render';
+import type { RegionKind } from './runtime-contract';
 import { injectStyles, removeStyles } from './styles';
 
 // One page-translation session: discovery → viewport queue → Port requests →
@@ -89,13 +90,16 @@ export interface PageSession {
    */
   toggleAt(point: { x: number; y: number }): Promise<void>;
   /**
-   * The palette's region picker (docs/plans/m3c.md, PR4): every paragraph in `root` is
-   * translated as held paragraphs are (a `scope: 'units'` session, started here when idle,
-   * added to otherwise), under the page scan's rules. Paragraphs held away there come back.
-   * Changes nothing once halted, during a page session, or for a region over the hold limit.
-   * Resolves to whether anything was added to the translation (sent, from memory, retried).
+   * The palette's region picker (docs/plans/m3c.md, PR4/PR5). `translate`: every paragraph in
+   * `root` is translated as held paragraphs are (a `scope: 'units'` session, started here when
+   * idle, added to otherwise), under the page scan's rules; paragraphs held away there come
+   * back. Changes nothing once halted, during a page session, or for a region over the hold
+   * limit. `exclude`: a page session leaves `root` alone until it stops or the route changes
+   * (a hold inside lets the region back in); what it shows there goes at once. Changes nothing
+   * once halted, without a page session, or for a region left alone already. Resolves to
+   * whether anything changed (paragraphs added to the translation, a region left alone).
    */
-  region(kind: 'translate', root: Element): Promise<boolean>;
+  region(kind: RegionKind, root: Element): Promise<boolean>;
   state(): PageState;
   /**
    * Called with the current state at most once per frame after anything visible changed.
@@ -177,7 +181,24 @@ export function createPageSession(deps: SessionDeps): PageSession {
    * new Unit objects. Kept across rescans; a user stop forgets them.
    */
   let excluded = new WeakMap<Element, Set<string>>();
-  const isExcluded = (unit: Unit) => excluded.get(unit.root)?.has(unit.seg.text) === true;
+  /**
+   * "选择不翻译的区域": regions a page session leaves alone, and the route they were picked on.
+   * A stop or another route forgets them; undefined while there are none.
+   */
+  let excludedRoots: WeakSet<Element> | undefined;
+  let excludedRoute = '';
+  /** `el` is in a region left alone: it or an ancestor below the body was picked. */
+  const inExcludedRegion = (el: Element | null) => {
+    for (; excludedRoots && el && el !== doc.body; el = el.parentElement) {
+      if (excludedRoots.has(el)) return true;
+    }
+    return false;
+  };
+  /** Too-long units found in a region left alone: no note, no count until it comes back. */
+  const unnoted = new Set<Unit>();
+  /** Held away (this text at this root), or in a region left alone. */
+  const isExcluded = (unit: Unit) =>
+    excluded.get(unit.root)?.has(unit.seg.text) === true || inExcludedRegion(unit.root);
 
   const unitsByRoot = new Map<Element, Unit[]>();
   const ids = new Map<Unit, string>();
@@ -254,7 +275,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
     let skipped = 0;
     for (const units of unitsByRoot.values()) {
       for (const unit of units) {
-        if (unit.skipped) skipped += 1;
+        if (unit.skipped && !unnoted.has(unit)) skipped += 1;
         if (renderer?.has(unit)) translated += 1;
       }
     }
@@ -402,10 +423,14 @@ export function createPageSession(deps: SessionDeps): PageSession {
         unitsByRoot.set(unit.root, [unit]);
         viewport?.observe(unit.root);
       }
-      // Already-observed roots get no new observer callback: queue them here.
+      // Already-observed roots get no new observer callback: queue them here (`want` leaves
+      // held-away paragraphs and regions left alone out).
       if (visibleRoots.has(unit.root) && want(unit)) added = true;
-      // Nothing to wait for: the note goes in at once, in or out of the viewport.
-      if (unit.skipped) void renderer?.skip(unit);
+      // Nothing to wait for: the note goes in at once, in or out of the viewport; in a region
+      // left alone, once the region comes back (readmit).
+      if (!unit.skipped) continue;
+      if (inExcludedRegion(unit.root)) unnoted.add(unit);
+      else void renderer?.skip(unit);
     }
     if (added) scheduleFlush();
   }
@@ -416,8 +441,8 @@ export function createPageSession(deps: SessionDeps): PageSession {
     renderTimer = setTimeout(() => {
       renderTimer = undefined;
       if (current !== epoch || !renderer) return;
-      // Held away while it waited: the translation stays in memory only. Forgotten
-      // meanwhile (no longer queued): its source changed, nothing goes in.
+      // Held away (or its region left alone) while it waited: the translation stays in
+      // memory only. Forgotten meanwhile (no longer queued): its source changed, nothing goes in.
       const ready = toRender
         .splice(0)
         .filter(({ unit }) => queued.delete(unit) && !isExcluded(unit));
@@ -551,7 +576,8 @@ export function createPageSession(deps: SessionDeps): PageSession {
         if (!unit) return;
         sent.delete(unit);
         if ('error' in chunk) {
-          // Held away while it was out: nothing to show, nothing to resend.
+          // Held away (or its region left alone) while it was out: nothing to show, nothing
+          // to resend, nothing counted.
           if (isExcluded(unit)) return;
           if (isEngineLevel(chunk.error)) engineFailed(chunk.error, [unit], used);
           else markFailed(unit, chunk.error);
@@ -565,7 +591,9 @@ export function createPageSession(deps: SessionDeps): PageSession {
         translations.set(unit.seg.text, chunk.text);
         failed.delete(unit);
         answered(unit);
-        queueRender(unit, chunk.text);
+        // Held away (or its region left alone) while it was out: memory only. Never queued, so
+        // a hold right after does not take it for one about to show and hold it away again.
+        if (!isExcluded(unit)) queueRender(unit, chunk.text);
       },
     );
     requests.add(request);
@@ -783,6 +811,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
     settled.delete(unit);
     failed.delete(unit);
     queued.delete(unit);
+    unnoted.delete(unit);
     wantedAt.delete(unit);
     shown.delete(unit);
     renderer?.drop(unit);
@@ -855,6 +884,8 @@ export function createPageSession(deps: SessionDeps): PageSession {
     toRender.length = 0;
     inFlight = 0;
     engineError = undefined;
+    excludedRoots = undefined;
+    unnoted.clear();
   }
 
   function start(options: { engine?: Engine } = {}): Promise<PageState> {
@@ -971,6 +1002,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
         ignoreRemoved: (node) => isLoadingDot(node) || !!renderer?.removedByUs(node),
         routeKey: () => routeKeyOf(win.location),
         onDirty: (elements) => {
+          leaveRoute();
           if (held) {
             held.push(...elements);
             return;
@@ -1101,6 +1133,25 @@ export function createPageSession(deps: SessionDeps): PageSession {
       if (epoch !== mine) return;
     }
     if (!renderer || phase === 'idle' || halted || held) return;
+    // In a region left alone: the whole region (every one around the point) comes back. The
+    // rest of it in range asks again once the held paragraph is dealt with, as a hold of its
+    // own (asking first would make it look "on its way", and the hold would restore it).
+    let freed: Element | undefined;
+    for (let node: Element | null = el; node && node !== doc.body; node = node.parentElement) {
+      if (excludedRoots?.delete(node)) freed = node;
+    }
+    const mine = epoch;
+    try {
+      await hold(el, hit, own, began);
+    } finally {
+      // Stopped or halted meanwhile: nothing more goes into the page.
+      if (freed && epoch === mine && !halted) readmit(freed);
+    }
+  }
+
+  /** toggleAt's own work on the paragraph at the point (`el`, `hit`), the session ready. */
+  async function hold(el: Element, hit: Node, own: Element | null, began: boolean) {
+    if (!renderer) return;
     const current = epoch;
     const contains = (unit: Unit) => unit.nodes.some((node) => node.contains(hit));
     /** The registered unit holding the point (an unchanged one, or any). */
@@ -1154,7 +1205,63 @@ export function createPageSession(deps: SessionDeps): PageSession {
     report();
   }
 
-  async function region(_kind: 'translate', root: Element): Promise<boolean> {
+  /**
+   * Paragraphs let back in (in `area`, or anywhere): those in range ask again, too-long ones
+   * found while left alone get their note. One that left the page is the rescan's to forget.
+   */
+  function readmit(area?: Element) {
+    let added = false;
+    for (const [root, units] of unitsByRoot) {
+      if (!root.isConnected || (area && !area.contains(root))) continue;
+      for (const unit of units) {
+        if (isExcluded(unit)) continue;
+        if (unnoted.delete(unit)) void renderer?.skip(unit);
+        else if (visibleRoots.has(root) && want(unit)) added = true;
+      }
+    }
+    if (added) scheduleFlush();
+  }
+
+  /**
+   * Another route (a single-page app; its content changes with it): the regions left alone
+   * were picked on the last one, and a container kept across routes comes back.
+   */
+  function leaveRoute() {
+    if (excludedRoots && routeKeyOf(win.location) !== excludedRoute) {
+      excludedRoots = undefined;
+      readmit();
+    }
+  }
+
+  /**
+   * "选择不翻译的区域" (PR5): the page session leaves `root` alone. What is there goes now, as a
+   * hold restores a paragraph: not sent, its translation, failure note and dot taken out (a
+   * "too long" note stays: it is no translation). A request already out still answers, into
+   * memory only. Whether `root` was not left alone already.
+   */
+  function exclude(root: Element): boolean {
+    if (halted || phase === 'idle' || scope !== 'page' || root === doc.body) return false;
+    // Picked on a new route the page watch has not seen yet: the last route's regions go first.
+    leaveRoute();
+    if (!doc.body.contains(root) || inExcludedRegion(root)) return false;
+    excludedRoots ??= new WeakSet();
+    excludedRoots.add(root);
+    excludedRoute = routeKeyOf(win.location);
+    for (const [unitRoot, units] of unitsByRoot) {
+      if (!root.contains(unitRoot)) continue;
+      for (const unit of units) {
+        if (unit.skipped) continue;
+        for (const set of [pending, sent, waiting, queued, failed]) set.delete(unit);
+        release(unit);
+        renderer?.drop(unit);
+      }
+    }
+    report();
+    return true;
+  }
+
+  async function region(kind: RegionKind, root: Element): Promise<boolean> {
+    if (kind === 'exclude') return exclude(root);
     if (halted || (phase !== 'idle' && scope === 'page')) return false;
     // The picker checked the size already; the page may have grown since.
     if (root === doc.body || !doc.body.contains(root) || sourceLength(root) > HOLD_BLOCK_CHARS) {

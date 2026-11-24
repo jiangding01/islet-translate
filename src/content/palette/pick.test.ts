@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StyleReader } from '../dom-rules';
+import type { RegionKind } from '../runtime-contract';
 import { saveFocus } from './focus';
 import { createPicker, type Picker, STEADY_MS } from './pick';
 
@@ -41,8 +42,8 @@ function runFrames() {
   for (const frame of due) frame();
 }
 
-function setup(options: { translate?: (root: Element) => Promise<boolean> } = {}) {
-  const translate = vi.fn(options.translate ?? (async () => true));
+function setup(options: { region?: (kind: RegionKind, root: Element) => Promise<boolean> } = {}) {
+  const region = vi.fn(options.region ?? (async () => true));
   const guardKeyUp = vi.fn();
   picker = createPicker({
     env: {
@@ -60,15 +61,15 @@ function setup(options: { translate?: (root: Element) => Promise<boolean> } = {}
     },
     parent: () => parentEl,
     guardKeyUp,
-    translate,
+    region,
   });
   const host = () => document.querySelector('et-pick') as HTMLElement | null;
   const root = () => host()?.shadowRoot as ShadowRoot;
   const box = () => root().querySelector('.bx') as HTMLElement;
   const hint = () => root().querySelector('.hn') as HTMLElement;
   /** The highlighted block: the element whose box the highlight was drawn around. */
-  const start = () => {
-    picker?.start(saveFocus(document));
+  const start = (kind?: RegionKind) => {
+    picker?.start(saveFocus(document), kind);
   };
   const key = (key: string, init: KeyboardEventInit = {}) => {
     const event = new KeyboardEvent('keydown', {
@@ -98,7 +99,7 @@ function setup(options: { translate?: (root: Element) => Promise<boolean> } = {}
   /** Whether a pick is running: its hint bar shows. */
   const picking = () => !!host() && !hint().hidden;
   const live = () => root().querySelector('[aria-live]') as HTMLElement;
-  return { translate, guardKeyUp, host, root, box, hint, start, key, pointer, move, picking, live };
+  return { region, guardKeyUp, host, root, box, hint, start, key, pointer, move, picking, live };
 }
 
 const CENTER = () => `${window.innerWidth / 2},${window.innerHeight / 2}`;
@@ -221,7 +222,7 @@ describe('the candidate block', () => {
     expect(p.box().hidden).toBe(true);
     // Enter then does nothing.
     p.key('Enter');
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
   });
 });
 
@@ -334,14 +335,27 @@ describe('the size limit', () => {
     expect(p.hint().querySelector('.dt')).not.toBeNull();
     p.key('Enter');
     p.pointer('click', el('c'));
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
     expect(p.picking()).toBe(true);
     // ↓ still shrinks, and the smaller block can be confirmed.
     p.key('ArrowDown');
     expect(p.box().hasAttribute('data-over')).toBe(false);
     expect(p.hint().textContent).toBe('↑扩大·↓缩小·Enter确认·Esc取消');
     p.key('Enter');
-    expect(p.translate).toHaveBeenCalledWith(el('a'));
+    expect(p.region).toHaveBeenCalledWith('translate', el('a'));
+  });
+
+  it('does not apply to an area left untranslated: a whole sidebar may be excluded', () => {
+    big();
+    hits[CENTER()] = [el('a')];
+    const p = setup();
+    p.start('exclude');
+    p.key('ArrowUp');
+    expect(picked()).toBe(el('sec'));
+    expect(p.box().hasAttribute('data-over')).toBe(false);
+    expect(p.hint().textContent).toBe('↑扩大·↓缩小·Enter确认·Esc取消');
+    p.key('Enter');
+    expect(p.region).toHaveBeenCalledWith('exclude', el('sec'));
   });
 
   it('counts the source text only, not our translations', () => {
@@ -385,7 +399,7 @@ describe('keys and pointer presses while picking', () => {
     p.start();
     p.key('Enter', { repeat: true });
     p.key('Escape', { repeat: true });
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
     expect(p.picking()).toBe(true);
     p.key('ArrowUp', { repeat: true });
     p.key('ArrowUp', { repeat: true });
@@ -401,7 +415,7 @@ describe('keys and pointer presses while picking', () => {
     trusted = false;
     const enter = p.key('Enter');
     expect(enter.defaultPrevented).toBe(false);
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
     const click = p.pointer('click', el('link'));
     expect(click.defaultPrevented).toBe(false);
     p.pointer('contextmenu', el('c'));
@@ -438,7 +452,7 @@ describe('keys and pointer presses while picking', () => {
     const menu = p.pointer('contextmenu', el('c'), { button: 2 });
     expect(menu.defaultPrevented).toBe(true);
     expect(p.picking()).toBe(false);
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
     expect(p.hint().hidden).toBe(true);
   });
 
@@ -450,7 +464,7 @@ describe('keys and pointer presses while picking', () => {
     p.key('ArrowUp');
     const click = p.pointer('click', el('s'), { clientX: 3, clientY: 3 });
     expect(click.defaultPrevented).toBe(true);
-    expect(p.translate).toHaveBeenCalledWith(el('sec'));
+    expect(p.region).toHaveBeenCalledWith('translate', el('sec'));
     expect(p.picking()).toBe(false);
   });
 
@@ -461,7 +475,7 @@ describe('keys and pointer presses while picking', () => {
     p.start();
     p.key('ArrowUp');
     p.pointer('click', el('c'), { clientX: 7, clientY: 7 });
-    expect(p.translate).toHaveBeenCalledWith(el('c'));
+    expect(p.region).toHaveBeenCalledWith('translate', el('c'));
   });
 
   it('a click where there is no block is swallowed and confirms nothing', () => {
@@ -473,7 +487,7 @@ describe('keys and pointer presses while picking', () => {
     expect(p.pointer('click', el('navtext'), { clientX: 8, clientY: 8 }).defaultPrevented).toBe(
       true,
     );
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
     expect(p.picking()).toBe(true);
     expect(picked()).toBe(el('a'));
   });
@@ -484,7 +498,7 @@ describe('keys and pointer presses while picking', () => {
     p.start();
     const second = p.pointer('click', el('a'), { clientX: 512, clientY: 384, detail: 2 });
     expect(second.defaultPrevented).toBe(true);
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
     expect(p.picking()).toBe(true);
   });
 
@@ -519,7 +533,7 @@ describe('keys and pointer presses while picking', () => {
     const p = setup();
     p.start();
     p.pointer('click', el('s'), { clientX: 3, clientY: 3 });
-    expect(p.translate).toHaveBeenCalledOnce();
+    expect(p.region).toHaveBeenCalledOnce();
     // As Chrome sends them: the second press's pointer and mouse events may say detail 0.
     for (const type of types) {
       const detail = type === 'click' || type === 'dblclick' ? 2 : 0;
@@ -541,7 +555,7 @@ describe('keys and pointer presses while picking', () => {
     p.pointer('click', el('s'), { clientX: 3, clientY: 3 });
     p.start();
     expect(p.pointer('click', el('c'), { clientX: 7, clientY: 7 }).defaultPrevented).toBe(true);
-    expect(p.translate).toHaveBeenLastCalledWith(el('c'));
+    expect(p.region).toHaveBeenLastCalledWith('translate', el('c'));
   });
 
   it('the half second after a pick never swallows presses on our own interface', () => {
@@ -583,7 +597,7 @@ describe('keys and pointer presses while picking', () => {
     p.start();
     p.move(5, 5);
     p.pointer('click', el('c'), { clientX: 5, clientY: 5 });
-    expect(p.translate).toHaveBeenCalledWith(el('c'));
+    expect(p.region).toHaveBeenCalledWith('translate', el('c'));
   });
 });
 
@@ -609,7 +623,7 @@ describe('focus and ending', () => {
     p.start();
     const live = p.live();
     p.key('Enter');
-    expect(p.translate).toHaveBeenCalledWith(el('a'));
+    expect(p.region).toHaveBeenCalledWith('translate', el('a'));
     expect(p.guardKeyUp).toHaveBeenCalledWith('Enter');
     expect(document.activeElement).toBe(el('field'));
     await vi.waitFor(() => expect(live.textContent).toBe('已翻译该区域'));
@@ -627,12 +641,28 @@ describe('focus and ending', () => {
     expect(live.textContent).toBe('');
   });
 
+  it('an area left untranslated: named so while picking, and says so once confirmed', async () => {
+    hits[CENTER()] = [el('a')];
+    const p = setup();
+    p.start('exclude');
+    expect(p.root().activeElement?.getAttribute('aria-label')).toBe('选择不翻译的区域');
+    p.key('Enter');
+    expect(p.region).toHaveBeenCalledWith('exclude', el('a'));
+    await vi.waitFor(() => expect(p.live().textContent).toBe('该区域不再翻译'));
+    // The next pick is a translating one again, unless told otherwise.
+    p.start();
+    expect(p.root().activeElement?.getAttribute('aria-label')).toBe('选择要翻译的区域');
+    p.key('Enter');
+    expect(p.region).toHaveBeenLastCalledWith('translate', el('a'));
+    await vi.waitFor(() => expect(p.live().textContent).toBe('已翻译该区域'));
+  });
+
   it('says nothing when nothing was added to the translation', async () => {
     hits[CENTER()] = [el('a')];
-    const p = setup({ translate: async () => false });
+    const p = setup({ region: async () => false });
     p.start();
     p.key('Enter');
-    await vi.waitFor(() => expect(p.translate).toHaveBeenCalled());
+    await vi.waitFor(() => expect(p.region).toHaveBeenCalled());
     await Promise.resolve();
     await Promise.resolve();
     expect(p.live().textContent).toBe('');
@@ -645,7 +675,7 @@ describe('focus and ending', () => {
     hits[CENTER()] = [el('a')];
     let answer: (added: boolean) => void = () => {};
     const p = setup({
-      translate: () =>
+      region: () =>
         new Promise<boolean>((resolve) => {
           answer = resolve;
         }),
@@ -801,6 +831,6 @@ describe('the highlight box', () => {
     expect(p.box().hidden).toBe(true);
     expect(picked()).toBeUndefined();
     p.key('Enter');
-    expect(p.translate).not.toHaveBeenCalled();
+    expect(p.region).not.toHaveBeenCalled();
   });
 });

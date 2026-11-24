@@ -102,17 +102,21 @@ export interface PageActions {
   retryFailed(): Promise<PageState>;
 }
 
+/** What the region picker does with the block it confirms (docs/plans/m3c.md, PR4/PR5). */
+export type RegionKind = 'translate' | 'exclude';
+
 /**
- * The page actions lent to the palette: the table above plus `region` (PR4), which takes an
- * element and so can never be a message.
+ * The page actions lent to the palette: the table above plus `region` (PR4/PR5), which takes
+ * an element and so can never be a message.
  */
 export interface PaletteActions extends PageActions {
   /**
-   * The region picker confirmed `root`: its paragraphs are translated (a session of held
-   * paragraphs, started when idle). Loads the page runtime like `start`. Resolves to whether
-   * anything was added to the translation; false once the session has halted.
+   * The region picker confirmed `root`. `translate`: its paragraphs are translated (a session
+   * of held paragraphs, started when idle); loads the page runtime like `start`. `exclude`: the
+   * page session leaves it alone; never loads the page runtime (no session, nothing to leave).
+   * Resolves to whether anything changed; false once the session has halted.
    */
-  region(kind: 'translate', root: Element): Promise<boolean>;
+  region(kind: RegionKind, root: Element): Promise<boolean>;
 }
 
 /** What a message's `Result` carries when it worked. */

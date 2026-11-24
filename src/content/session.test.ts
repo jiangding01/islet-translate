@@ -3359,3 +3359,360 @@ describe('page session: region (the palette’s region picker)', () => {
     });
   });
 });
+
+describe('page session: region exclude (“选择不翻译的区域”)', () => {
+  const PAGE =
+    '<div id="side"><div id="a">First side paragraph.</div><div id="inner">' +
+    '<div id="b">Second side paragraph.</div></div></div>' +
+    '<div id="c">Main paragraph text here.</div>';
+  const SIDE = ['First side paragraph.', 'Second side paragraph.'];
+  const el = (selector: string) => document.querySelector(selector) as Element;
+  const point = document as unknown as { caretRangeFromPoint?: (x: number, y: number) => unknown };
+  const holdOn = (selector: string) => {
+    point.caretRangeFromPoint = () => ({ startContainer: el(selector).firstChild, startOffset: 0 });
+  };
+  const errorNotes = () => document.querySelectorAll('et-tr[data-et-state="error"]').length;
+
+  let originalHref = '';
+  beforeEach(() => {
+    originalHref = location.href;
+  });
+  afterEach(() => {
+    delete point.caretRangeFromPoint;
+    setURL(originalHref);
+  });
+
+  /** A page session with every paragraph in range and the first request answered. */
+  async function translatedPage(extra: Partial<SessionDeps> = {}) {
+    const t = setup(PAGE, undefined, extra);
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(3));
+    return t;
+  }
+
+  it('registered paragraphs scrolled in later are not translated; the rest of the page is', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    expect(await t.session.region('exclude', el('#side'))).toBe(true);
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    expect(t.sentTexts()).toEqual(['Main paragraph text here.']);
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toEqual(['译:Main paragraph text here.']));
+    // New content inside the region is left alone too, in range or not.
+    el('#a').insertAdjacentHTML('afterend', '<div id="n">Added side paragraph.</div>');
+    await vi.waitFor(() => expect(t.observed).toContain(el('#n')));
+    t.show();
+    await wait();
+    expect(t.port.calls).toHaveLength(1);
+    expect(t.session.state()).toMatchObject({ phase: 'done', translated: 1, failed: 0 });
+  });
+
+  it('takes the region’s translations and failure notes out, and frees its counts', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    const call = t.port.calls[0] as Call;
+    const [a, b, c] = call.payload.items;
+    call.onChunk?.({ id: a?.id ?? '', text: '译:a', disposition: 'translated', cached: false });
+    call.onChunk?.({ id: b?.id ?? '', error: appError('provider', 'provider/bad-response', 'x') });
+    call.onChunk?.({ id: c?.id ?? '', text: '译:c', disposition: 'translated', cached: false });
+    call.finish({ status: 'done', data: { total: 3, failed: 1 } });
+    await vi.waitFor(() => expect(translations()).toHaveLength(3));
+    expect(errorNotes()).toBe(1);
+    expect(t.session.state()).toMatchObject({ failed: 1, translated: 2 });
+    expect(await t.session.region('exclude', el('#side'))).toBe(true);
+    expect(translations()).toEqual(['译:c']);
+    expect(errorNotes()).toBe(0);
+    expect(t.session.state()).toMatchObject({ phase: 'done', failed: 0, translated: 1 });
+    t.runFrame();
+    expect(t.statuses.at(-1)).toBe('done');
+    // "Retry the failed" has nothing of the region's to send.
+    t.session.retryFailed();
+    await wait();
+    expect(t.port.calls).toHaveLength(1);
+  });
+
+  it('answers still out for the region go to memory only: no translation, no failure, not running', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    expect(await t.session.region('exclude', el('#side'))).toBe(true);
+    const call = t.port.calls[0] as Call;
+    const [a, b, c] = call.payload.items;
+    call.onChunk?.({ id: a?.id ?? '', text: '译:a', disposition: 'translated', cached: false });
+    call.onChunk?.({ id: b?.id ?? '', error: appError('provider', 'provider/bad-response', 'x') });
+    call.onChunk?.({ id: c?.id ?? '', text: '译:c', disposition: 'translated', cached: false });
+    call.finish({ status: 'done', data: { total: 3, failed: 1 } });
+    await vi.waitFor(() => expect(translations()).toEqual(['译:c']));
+    await wait();
+    expect(translations()).toEqual(['译:c']);
+    expect(errorNotes()).toBe(0);
+    expect(t.session.state()).toMatchObject({ phase: 'done', failed: 0, translated: 1 });
+  });
+
+  it('an answer already in but not yet rendered stays out of the region', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    // Queued for the next render: excluded before it runs.
+    expect(await t.session.region('exclude', el('#side'))).toBe(true);
+    await vi.waitFor(() => expect(translations()).toEqual(['译:Main paragraph text here.']));
+    await wait();
+    expect(translations()).toEqual(['译:Main paragraph text here.']);
+  });
+
+  it('paragraphs waiting to be sent are not sent', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    // The first request is out, so later paragraphs wait for the debounced flush.
+    t.show([el('#c')]);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.show([el('#a'), el('#b')]);
+    expect(await t.session.region('exclude', el('#side'))).toBe(true);
+    await wait();
+    expect(t.port.calls).toHaveLength(1);
+    expect(t.sentTexts()).toEqual(['Main paragraph text here.']);
+  });
+
+  it('a stop forgets the regions: the next session translates them', async () => {
+    const t = await translatedPage();
+    await t.session.region('exclude', el('#side'));
+    expect(translations()).toHaveLength(1);
+    await t.session.stop();
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text)).toEqual([
+      ...SIDE,
+      'Main paragraph text here.',
+    ]);
+  });
+
+  it('another route forgets the regions: what is in range there comes back', async () => {
+    setURL('https://example.com/one');
+    const t = await translatedPage();
+    await t.session.region('exclude', el('#side'));
+    expect(translations()).toHaveLength(1);
+    // The same route changing: still left alone.
+    el('#c').insertAdjacentHTML('afterend', '<div>Another main paragraph.</div>');
+    await vi.waitFor(() => expect(t.dirtyRounds.length).toBeGreaterThan(0));
+    await wait();
+    expect(el('#side').querySelector('et-tr')).toBeNull();
+    // A new route (the page changes with it): back from memory, no new request for them.
+    setURL('https://example.com/two');
+    const rounds = t.dirtyRounds.length;
+    el('#c').insertAdjacentHTML('afterend', '<div>Next route paragraph.</div>');
+    await vi.waitFor(() => expect(t.dirtyRounds.length).toBeGreaterThan(rounds));
+    await vi.waitFor(() => expect(el('#side').querySelectorAll('et-tr')).toHaveLength(2));
+    expect(t.sentTexts().filter((text) => SIDE.includes(text))).toEqual(SIDE);
+  });
+
+  it('a hold in the region lets the whole region back in: the held paragraph and the rest in range', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    await t.session.region('exclude', el('#side'));
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(1));
+    holdOn('#a');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text)).toEqual(SIDE);
+    t.port.calls[1]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(3));
+    // Excluded again, then back once more: from memory this time.
+    expect(await t.session.region('exclude', el('#side'))).toBe(true);
+    expect(translations()).toHaveLength(1);
+    holdOn('#b');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    await vi.waitFor(() => expect(translations()).toHaveLength(3));
+    expect(t.port.calls).toHaveLength(2);
+  });
+
+  it('nested regions: a region inside an excluded one adds nothing; a hold frees those around it only', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    expect(await t.session.region('exclude', el('#inner'))).toBe(true);
+    expect(await t.session.region('exclude', el('#side'))).toBe(true);
+    // Covered already: inside an excluded region, or excluded itself.
+    expect(await t.session.region('exclude', el('#inner'))).toBe(false);
+    expect(await t.session.region('exclude', el('#b'))).toBe(false);
+    expect(await t.session.region('exclude', el('#side'))).toBe(false);
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    expect(t.sentTexts()).toEqual(['Main paragraph text here.']);
+    // A hold on #a frees #side; #inner, which does not hold #a, stays left alone.
+    holdOn('#a');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text)).toEqual([
+      'First side paragraph.',
+    ]);
+    // A hold on #b frees #inner (and anything else around it).
+    holdOn('#b');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(3));
+    expect(t.port.calls[2]?.payload.items.map((item) => item.text)).toEqual([
+      'Second side paragraph.',
+    ]);
+  });
+
+  it('a hold on two excluded regions around the point frees both', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    await t.session.region('exclude', el('#inner'));
+    await t.session.region('exclude', el('#side'));
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    holdOn('#b');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text).sort()).toEqual(SIDE);
+  });
+
+  it('a region picked on a new route before the page changed: the last route’s regions go first', async () => {
+    setURL('https://example.com/one');
+    const t = await translatedPage();
+    await t.session.region('exclude', el('#side'));
+    expect(translations()).toHaveLength(1);
+    // Route two, no page change yet: #side was picked on route one and comes back now.
+    setURL('https://example.com/two');
+    expect(await t.session.region('exclude', el('#c'))).toBe(true);
+    await vi.waitFor(() => expect(el('#side').querySelectorAll('et-tr')).toHaveLength(2));
+    expect(el('#c').querySelector('et-tr')).toBeNull();
+    // A page change on route two keeps #c (picked there) left alone.
+    const rounds = t.dirtyRounds.length;
+    el('#c').insertAdjacentHTML('afterend', '<div>Next route paragraph.</div>');
+    await vi.waitFor(() => expect(t.dirtyRounds.length).toBeGreaterThan(rounds));
+    await wait();
+    expect(el('#c').querySelector('et-tr')).toBeNull();
+    expect(el('#side').querySelectorAll('et-tr')).toHaveLength(2);
+  });
+
+  it('halted while a hold in the region rescans: nothing more goes into the page', async () => {
+    let alive = true;
+    const t = await translatedPage({ alive: () => alive });
+    await t.session.region('exclude', el('#side'));
+    expect(translations()).toHaveLength(1);
+    // Not registered yet: the hold rescans (awaits), and the extension goes meanwhile.
+    el('#a').insertAdjacentHTML('afterend', '<div id="z">Zed paragraph here.</div>');
+    holdOn('#z');
+    const holding = t.session.toggleAt({ x: 1, y: 1 });
+    alive = false;
+    await holding;
+    await wait();
+    expect(t.session.state().halted).toBe(true);
+    expect(el('#side').querySelectorAll('et-tr')).toHaveLength(0);
+  });
+
+  it('an answer for the region kept in memory is not “about to show”: a hold right after brings it back', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    await t.session.region('exclude', el('#side'));
+    const call = t.port.calls[0] as Call;
+    const [a] = call.payload.items;
+    call.onChunk?.({ id: a?.id ?? '', text: '译:a', disposition: 'translated', cached: false });
+    // Within the render window: the reader holds #a to bring it (and its region) back.
+    holdOn('#a');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    call.answer();
+    await vi.waitFor(() => expect(el('#a').querySelector('et-tr')?.textContent).toBe('译:a'));
+  });
+
+  it('a paragraph held away whose answer comes in: a hold right after brings it back', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    // On its way: the hold restores it and leaves it alone.
+    holdOn('#a');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    t.port.calls[0]?.answer();
+    // Its answer is in memory only; held again at once, it shows from there.
+    await t.session.toggleAt({ x: 1, y: 1 });
+    await vi.waitFor(() =>
+      expect(el('#a').querySelector('et-tr')?.textContent).toBe('译:First side paragraph.'),
+    );
+    expect(t.port.calls).toHaveLength(1);
+  });
+
+  it('new too-long content in the region gets no note and no count until the region comes back', async () => {
+    const t = await translatedPage();
+    await t.session.region('exclude', el('#side'));
+    el('#a').insertAdjacentHTML(
+      'afterend',
+      `<div id="long">${'Long sentence here. '.repeat(400)}</div>`,
+    );
+    await vi.waitFor(() => expect(t.observed).toContain(el('#long')));
+    await wait();
+    expect(el('#long').querySelector('et-tr')).toBeNull();
+    expect(t.session.state().skipped).toBeUndefined();
+    // Back with the region: the note comes, and is counted.
+    holdOn('#a');
+    await t.session.toggleAt({ x: 1, y: 1 });
+    await vi.waitFor(() =>
+      expect(el('#long').querySelector('et-tr[data-et-state="skipped"]')).not.toBeNull(),
+    );
+    expect(t.session.state().skipped).toBe(1);
+  });
+
+  it('a paragraph that left the page is not asked for when a new route lets its region back', async () => {
+    setURL('https://example.com/one');
+    const t = setup(PAGE);
+    await t.session.start();
+    await t.session.region('exclude', el('#side'));
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    // A new route takes #a away: the region comes back, without the paragraph that left.
+    setURL('https://example.com/two');
+    el('#a').remove();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    await wait();
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text)).toEqual([
+      'Second side paragraph.',
+    ]);
+    expect(t.port.calls).toHaveLength(2);
+  });
+
+  it('changes nothing without a whole-page session, once halted, or outside the body', async () => {
+    const t = setup(PAGE);
+    // Idle.
+    expect(await t.session.region('exclude', el('#side'))).toBe(false);
+    expect(t.session.state()).toEqual(IDLE_PAGE_STATE);
+    // Held paragraphs only.
+    await t.session.region('translate', el('#a'));
+    expect(t.session.state().scope).toBe('units');
+    expect(await t.session.region('exclude', el('#side'))).toBe(false);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(1));
+    await t.session.stop();
+    // A page session: not for the body, nor for an element outside it.
+    await t.session.start();
+    const detached = document.createElement('div');
+    detached.textContent = 'Not in the page.';
+    expect(await t.session.region('exclude', detached)).toBe(false);
+    expect(await t.session.region('exclude', document.body)).toBe(false);
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    // Halted: the extension went away.
+    t.port.calls[1]?.finish({
+      status: 'error',
+      error: appError('internal', 'internal/context-invalidated', 'gone'),
+    });
+    await vi.waitFor(() => expect(t.session.state().halted).toBe(true));
+    expect(await t.session.region('exclude', el('#side'))).toBe(false);
+  });
+});

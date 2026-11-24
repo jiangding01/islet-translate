@@ -207,6 +207,7 @@ const COMMAND_ICONS: Record<string, string> = {
   'options.open': PATH.settings,
   'quick.copy': PATH.copy,
   'region.translate': PATH.region,
+  'region.exclude': PATH.region,
 };
 /** The commands that show their bound key, and the manifest command each one reads. */
 const SHORTCUT_OF: Record<string, keyof PaletteShortcuts> = {
@@ -311,7 +312,7 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
     },
     parent: () => modalDialog() ?? doc.documentElement,
     guardKeyUp: swallowKeyUp,
-    translate: (root) => deps.page.region('translate', root),
+    region: (kind, root) => deps.page.region(kind, root),
   });
   /** The streamed translation's text node, and its caret (moved, never rebuilt). */
   let streamed: Text | undefined;
@@ -499,12 +500,12 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
     copy() {
       void copy();
     },
-    pickRegion() {
+    pickRegion(kind) {
       // The page's focus goes to the picker, not back to the page (decision 2): the picker
       // hands it back when the pick ends.
       const focus = saved;
       close(false);
-      picker.start(focus);
+      picker.start(focus, kind);
     },
     openSettings() {
       close();

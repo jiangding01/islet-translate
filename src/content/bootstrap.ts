@@ -183,6 +183,8 @@ export function createBootstrap(deps: BootstrapDeps): Bootstrap {
   const paletteActions: PaletteActions = {
     ...actions,
     async region(kind, root) {
+      // Nothing to leave alone without a session: never loaded for that.
+      if (kind === 'exclude' && !page.loaded) return false;
       const session = await load();
       return !session.state().halted && session.region(kind, root);
     },

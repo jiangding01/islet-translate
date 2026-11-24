@@ -405,6 +405,9 @@ palette:
   # Command: picks an area of the page and translates only that (idle, or only some paragraphs
   # translated).
   regionTranslate: Select an area to translate
+  # Command: picks an area of the page that the page translation leaves alone (a whole-page
+  # session is running).
+  regionExclude: Select an area not to translate
   # The hint bar while picking an area: the key names (↑ ↓ Enter Esc) are not translated and
   # live in the code; these are the verbs after them.
   pick:
@@ -417,3 +420,5 @@ palette:
     tooLarge: Area too large. Translate the whole page instead
     # Screen reader announcement: confirmed, the area's paragraphs are being translated.
     done: Area translated
+    # Screen reader announcement: confirmed, the area is left untranslated.
+    excluded: Area no longer translated

@@ -23,17 +23,24 @@ describe('availability and order (empty input)', () => {
     [
       'a whole-page session in bilingual mode',
       { phase: 'running', engine: 'google' },
-      ['page.restore', 'view.translationOnly', 'engine.switch', 'options.open'],
+      ['page.restore', 'view.translationOnly', 'engine.switch', 'region.exclude', 'options.open'],
     ],
     [
       'a finished session showing translations only',
       { phase: 'done', mode: 'translation' },
-      ['page.restore', 'view.bilingual', 'engine.switch', 'options.open'],
+      ['page.restore', 'view.bilingual', 'engine.switch', 'region.exclude', 'options.open'],
     ],
     [
       'failed paragraphs (retry first)',
       { phase: 'done', failed: 3 },
-      ['retry.failed', 'page.restore', 'view.translationOnly', 'engine.switch', 'options.open'],
+      [
+        'retry.failed',
+        'page.restore',
+        'view.translationOnly',
+        'engine.switch',
+        'region.exclude',
+        'options.open',
+      ],
     ],
     [
       'an engine-level error (retry first)',
@@ -41,7 +48,14 @@ describe('availability and order (empty input)', () => {
         phase: 'running',
         engineError: appError('provider', 'provider/unauthorized', 'x'),
       },
-      ['retry.failed', 'page.restore', 'view.translationOnly', 'engine.switch', 'options.open'],
+      [
+        'retry.failed',
+        'page.restore',
+        'view.translationOnly',
+        'engine.switch',
+        'region.exclude',
+        'options.open',
+      ],
     ],
     [
       'held paragraphs only (a local session)',
@@ -93,6 +107,20 @@ describe('availability and order (empty input)', () => {
     expect(ids(ctxOf({}), 'area')).toEqual(['region.translate']);
   });
 
+  it('offers “选择不翻译的区域” only while the whole page is translated, as the view commands', () => {
+    const region = COMMANDS.find((c) => c.id === 'region.exclude');
+    expect(region?.title(ctxOf({}))).toBe('选择不翻译的区域');
+    expect(region?.when(ctxOf({ phase: 'running' }))).toBe(true);
+    expect(region?.when(ctxOf({ phase: 'done', failed: 2 }))).toBe(true);
+    expect(region?.when(ctxOf({}))).toBe(false);
+    expect(region?.when(ctxOf({ phase: 'running', scope: 'units' }))).toBe(false);
+    expect(region?.when(ctxOf({ phase: 'running', halted: true }))).toBe(false);
+    // The two region commands never show together: the same query finds the one available.
+    expect(ids(ctxOf({ phase: 'done' }), '/区域')).toEqual(['region.exclude']);
+    expect(ids(ctxOf({ phase: 'done' }), 'area')).toEqual(['region.exclude']);
+    expect(ids(ctxOf({ phase: 'done' }), 'exclude')).toEqual(['region.exclude']);
+  });
+
   it('titles the engine command by state: switch while translating, translate with … when idle', () => {
     const engine = COMMANDS.find((c) => c.id === 'engine.switch');
     expect(engine?.title(ctxOf({ phase: 'running' }))).toBe('切换翻译服务…');
@@ -142,9 +170,9 @@ describe('matching', () => {
   });
 
   it('puts title prefix matches before other matches, then rank, then table order', () => {
-    // 显示原文… starts with 显示; nothing else does. 翻译 is inside two titles.
+    // 显示原文… starts with 显示; nothing else does. 翻译 is inside three titles.
     expect(ids(running, '显示')).toEqual(['page.restore']);
-    expect(ids(running, '翻译')).toEqual(['page.restore', 'engine.switch']);
+    expect(ids(running, '翻译')).toEqual(['page.restore', 'engine.switch', 'region.exclude']);
     // "mode" is a keyword of both views; only the one not current is offered.
     expect(ids(running, 'mode')).toEqual(['view.translationOnly']);
   });
@@ -186,6 +214,9 @@ describe('running', () => {
     const region = run('region.translate', ctxOf({}));
     expect(region.pickRegion).toHaveBeenCalledOnce();
     expect(region.page.start).not.toHaveBeenCalled();
+    const exclude = run('region.exclude');
+    expect(exclude.pickRegion).toHaveBeenCalledWith('exclude');
+    expect(exclude.page.stop).not.toHaveBeenCalled();
   });
 
   it('swallows a rejected action (the isle and the panel report the session)', async () => {
