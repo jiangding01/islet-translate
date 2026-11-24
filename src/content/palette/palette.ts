@@ -793,12 +793,12 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     const parts = (isleHost()?.getAttribute('data-et-rect') ?? '').split(',').map(Number);
     if (parts.length !== 4 || !parts.every(Number.isFinite)) return undefined;
     const [x = 0, y = 0, w = 0, h = 0] = parts;
-    const fit = (n: number, max: number) => Math.max(0, Math.min(max, n));
+    const within = (n: number, max: number) => Math.max(0, Math.min(max, n));
     const rect = {
-      x: fit(x, viewport.w),
-      y: fit(y, viewport.h),
-      w: fit(w, viewport.w),
-      h: fit(h, viewport.h),
+      x: within(x, viewport.w),
+      y: within(y, viewport.h),
+      w: within(w, viewport.w),
+      h: within(h, viewport.h),
     };
     return rect.w > 0 && rect.h > 0 ? rect : undefined;
   }

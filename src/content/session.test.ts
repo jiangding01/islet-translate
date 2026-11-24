@@ -16,6 +16,19 @@ import { type MutationWatchOptions, watchMutations } from './mutations';
 import { IDLE_PAGE_STATE } from './runtime-contract';
 import { createPageSession, isEngineLevel, type SessionDeps } from './session';
 
+/** Every `segment` call, discovery's and the renderer's: a rescan must not segment kept units again. */
+const segmenting = vi.hoisted(() => ({ calls: 0 }));
+vi.mock('./segment', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./segment')>();
+  return {
+    ...actual,
+    segment: (...args: Parameters<typeof actual.segment>) => {
+      segmenting.calls += 1;
+      return actual.segment(...args);
+    },
+  };
+});
+
 const readStyle: StyleReader = (el) => {
   const own = (el as HTMLElement).style?.display;
   if (own) return { display: own };
@@ -153,6 +166,8 @@ function setup(
       targets,
       targets.map(() => true),
     );
+  /** One observer callback with its own in-range flag per root. */
+  const report = (targets: Element[], visible: boolean[]) => notify?.(targets, visible);
   /** Reports the given roots as out of range. */
   const hide = (targets: Element[]) =>
     notify?.(
@@ -168,6 +183,7 @@ function setup(
     unobserved,
     show,
     hide,
+    report,
     before,
     sentTexts,
     configListeners,
@@ -217,6 +233,50 @@ describe('page session: happy path', () => {
     expect(document.body.innerHTML).toBe(before);
     expect(document.querySelector('style[data-et]')).toBeNull();
     expect(statuses.at(-1)).toBe('idle');
+  });
+
+  it('sends the first screen without the debounce, and debounces what comes into range later', async () => {
+    const { session, port, show, observed } = setup(
+      '<p>First paragraph text.</p><p>Second paragraph text.</p>',
+    );
+    await session.start();
+    // The scan's own immediate flush (nothing in range yet) runs first: in Chrome the
+    // observer's first callback comes a frame after observe(), usually after that 0 ms timer.
+    await wait(5);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      show(observed.slice(0, 1));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(port.calls).toHaveLength(1);
+      show(observed.slice(1));
+      await vi.advanceTimersByTimeAsync(40);
+      expect(port.calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(port.calls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends a first screen that spans viewport slices in one flush, after the last slice', async () => {
+    const markup = Array.from({ length: 600 }, (_, i) => `<p>Paragraph number ${i} text.</p>`);
+    const { session, port, report, observed, sentTexts } = setup(markup.join(''));
+    await session.start();
+    await wait(5);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      // More roots than one slice (500): one in range in the first slice, one in the second.
+      const inRange = [observed[10], observed[550]];
+      report(
+        observed,
+        observed.map((root) => inRange.includes(root)),
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      expect(port.calls).toHaveLength(1);
+      expect(sentTexts()).toEqual(['Paragraph number 10 text.', 'Paragraph number 550 text.']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('drops results that arrive after stop', async () => {
@@ -1506,6 +1566,82 @@ describe('page session: dynamic content', () => {
     expect(port.calls).toHaveLength(6);
     for (const call of port.calls) call.answer();
     await vi.waitFor(() => expect(sentTexts()).toHaveLength(600), { timeout: 3000 });
+  });
+});
+
+describe('page session: rescans keep what did not change', () => {
+  // Two blocks (one with inline markup) and a mixed block: a run, then a block child.
+  const markup =
+    '<div id="feed"><p id="a">Alpha paragraph text.</p><p id="b">Beta <b>bold</b> words.</p>' +
+    '<div id="mix">Lead <b>bold</b> tail text.<p>Block child text.</p></div></div>';
+  async function translated() {
+    const context = setup(markup);
+    await context.session.start();
+    context.show();
+    await vi.waitFor(() => expect(context.port.calls).toHaveLength(1));
+    context.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(4));
+    return context;
+  }
+  /** The translation whose text starts like this (tags come back as elements). */
+  const byText = (start: string) =>
+    [...document.querySelectorAll('et-tr')].find((el) => el.textContent?.startsWith(start));
+
+  it('keeps every unchanged unit, run included, without segmenting it again', async () => {
+    const { port, observed } = await translated();
+    const shown = [...document.querySelectorAll('et-tr')];
+    // The run's inline translation sits among its nodes now: still the same run.
+    expect(byText('译:Lead')?.previousSibling?.nodeValue).toBe(' tail text.');
+    const added = document.createElement('p');
+    added.textContent = 'Fresh paragraph text.';
+    segmenting.calls = 0;
+    document.getElementById('feed')?.append(added);
+    await vi.waitFor(() => expect(observed).toContain(added));
+    await wait();
+    // Discovery segments the feed's five units once each; the four kept ones not again.
+    expect(segmenting.calls).toBe(5);
+    expect([...document.querySelectorAll('et-tr')]).toEqual(shown);
+    expect(port.calls).toHaveLength(1);
+  });
+
+  it('keeps a block whose inline element the page swapped for an identical one', async () => {
+    const { port } = await translated();
+    const shown = byText('译:Beta');
+    const bold = document.querySelector('#b b') as Element;
+    bold.replaceWith(bold.cloneNode(true));
+    await wait(100);
+    expect(byText('译:Beta')).toBe(shown);
+    expect(port.calls).toHaveLength(1);
+  });
+
+  it('takes a run whose node the page swapped for an identical one as new, from memory', async () => {
+    const { port } = await translated();
+    const shown = byText('译:Lead');
+    const lead = document.getElementById('mix')?.firstChild as Text;
+    lead.replaceWith(document.createTextNode(lead.nodeValue ?? ''));
+    await vi.waitFor(() => {
+      const now = byText('译:Lead');
+      expect(now).toBeDefined();
+      expect(now).not.toBe(shown);
+    });
+    expect(translations()).toHaveLength(4);
+    expect(port.calls).toHaveLength(1);
+  });
+
+  it('sends a block whose text changed, and a run that gained a node, again', async () => {
+    const { port, show, sentTexts } = await translated();
+    ((document.getElementById('a') as Element).firstChild as Text).nodeValue = 'Alpha changed.';
+    const mix = document.getElementById('mix') as Element;
+    const more = document.createElement('i');
+    more.textContent = ' more';
+    mix.insertBefore(more, mix.querySelector('p'));
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+    show();
+    await vi.waitFor(() => expect(port.calls).toHaveLength(2));
+    expect(sentTexts().slice(4).sort()).toEqual([
+      'Alpha changed.',
+      'Lead <t0>bold</t0> tail text.<t1> more</t1>',
+    ]);
   });
 });
 

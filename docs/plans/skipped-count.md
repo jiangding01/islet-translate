@@ -35,6 +35,7 @@
   - 与 `fail` 的区别：没有按钮，没有 `title`（不写阈值数字，也不写说明），不加 `tabindex`，`record.failed = false`、`record.skipped = true`。
   - 实现时可以把 `fail` 与 `skip` 的公共骨架抽成一个内部函数（只差 state、文字、按钮和下面的守卫），省体积；`appear` 作为参数传入，只有 `fail` 调用；`fail` 的现有测试作为回归保护。
 - **登记守卫**：`skip` 等帧期间，这个 Unit 可能已经被 `forget`（重扫发现文字变了），`drop` 此时找不到记录，帧后再写就会留下一个孤儿占位，新 Unit 再写一个就成了两个。做法：渲染器内部 `const skipping = new Set<Unit>()`，`skip` 开始时加入，`drop`（`:609-615`）时删除，帧后 `if (!skipping.delete(unit) || !unit.root.isConnected) return`。`restoreAll` 置 `disposed`（`:635`）已经拦住停止后的写入。
+  - 注记：2026-11-24 起由渲染器的 drop 代数（`WeakMap<Unit, number>`）取代，见 `docs/known-issues.md` #57-2 与 `fix/render-frame-gap-and-rescan`。
   - **`skipping.delete(unit)` 必须放在 `drop` 里 `if (!record) return`（`render.ts:612` 附近）之前**：帧窗口内 Unit 还没有记录，`drop` 会在这一行提前返回，删除放在它后面守卫就失效。
   - **写阶段的便宜检查**：帧后对行内 run 再做一道与 `stillSame` 同类的检查（`render.ts:378` 附近那一行 `unit.nodes.some((node) => node.parentNode !== unit.root)` 的写法），只看最后一个节点：`unit.kind === 'run' && unit.nodes[unit.nodes.length - 1].parentNode !== unit.root` 时不写记录、不插占位（run 的最后一个节点已脱离文档，占位没有可挂的位置）。块单元不需要，`root.isConnected` 已覆盖。
 - **必须排除的两处**：

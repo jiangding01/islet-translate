@@ -27,7 +27,7 @@
 
       - **后续项（#57 记录）**：
         1. 「按句切分」：过长段落按句切分后照常翻译，参考 FluentRead `Intl.Segmenter` 加 480 字符回退；行内标记跨句的段落保留占位，届时可改为可点的「分句翻译」，新文案需用户确认。
-        2. 渲染层一帧空窗的既有问题：`fail()` 与 `insert()` 等帧后不检查单元是否已被遗忘，可能留下孤儿失败占位或孤儿、重复译文（`render.ts` 的 fail 写入段与 insert 约 501-560 行），可参照 #57 的 `skipping` 守卫修。
+        2. ~~渲染层一帧空窗的既有问题：`fail()` 与 `insert()` 等帧后不检查单元是否已被遗忘，可能留下孤儿失败占位或孤儿、重复译文（`render.ts` 的 fail 写入段与 insert 约 501-560 行），可参照 #57 的 `skipping` 守卫修。~~ 已由 `fix/render-frame-gap-and-rescan` 修复：渲染器改用「drop 代数」（`WeakMap<Unit, number>`，`drop()` 自增，等帧前记下、等帧后比对），`insert`、`fail`、`skip` 共用，`skipping` 集合随之删除；同一单元两次写入在同一帧重叠时两次都写（集合写法会误跳过第二次）。见 `docs/reviews/2026-11-24-gemini-review-verification.md` 2.2。
         3. 若真机觉得段末占位太弱，升级路径是占位自身左侧 2px muted 竖条（不碰原文）。
       - **后续项（#58 记录）**：
         1. 冷却计时用 `Date.now`（`mutations.ts`），系统时钟回拨时整页重扫会等到时钟追回，可改 `performance.now`。
@@ -44,6 +44,7 @@
 
 - 「仅看译文」遗留（#35 之后）：视口单位与媒体查询不跟随，接受为已知限制；em 边框/圆角归零等真实反馈再修（详见 `docs/reviews/2026-11-17-translation-only-followups.md`）。
 - 产品名被直译（「Sonnet」译成「十四行诗」），属专有名词保护，留给 M4 术语库。
+- 按住手势找不到「内部元素被换成相同克隆」的块（既有问题，2026-11-24 审查 `fix/render-frame-gap-and-rescan` 时发现，未修）：重扫时块单元按「同类型、同文本」保留旧单元（修复前的 `isCurrent` 同样如此），但旧单元的 `unit.nodes` 仍指向已脱离页面的旧元素；`toggleAt`（`session.ts`）用 `unit.nodes.some((node) => node.contains(hit))` 找单元，按住新元素里的文字时找不到对应段落，追补重扫后仍保留旧单元，这次按住没有反应。以后可让块单元改用 `unit.root.contains(hit)` 判断（run 仍比节点）。
 
 ## 4. 观察项
 

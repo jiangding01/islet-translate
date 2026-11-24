@@ -1006,6 +1006,59 @@ describe('renderer: writes racing a restore', () => {
     expect(document.body.innerHTML).toBe(before);
   });
 
+  it('drops an insert or failure notice whose unit was dropped while waiting for the frame', async () => {
+    // known-issues #57-2: a rescan forgets the unit in the frame gap; nothing may land after.
+    const { units, renderer, before } = await setup('<p>Alpha one.</p><p>Beta two.</p>');
+    const [first, second] = units;
+    if (!first || !second) throw new Error('no units');
+    const inserting = renderer.insert([{ unit: first, translation: '甲' }]);
+    const failing = renderer.fail(second, () => undefined);
+    renderer.drop(first);
+    renderer.drop(second);
+    await Promise.all([inserting, failing]);
+    expect(document.body.innerHTML).toBe(before);
+    expect(renderer.has(first)).toBe(false);
+    expect(renderer.isFailed(second)).toBe(false);
+    expect(renderer.detached()).toEqual([]);
+  });
+
+  it('leaves one translation when the unit is forgotten and its successor inserted in the same frame', async () => {
+    const { units, renderer } = await setup('<p>Alpha one.</p>');
+    const [old] = units;
+    if (!old) throw new Error('no unit');
+    const stale = renderer.insert([{ unit: old, translation: '旧' }]);
+    renderer.drop(old);
+    const [successor] = await discoverUnits(document.body, { readStyle });
+    if (!successor) throw new Error('no successor');
+    await Promise.all([stale, renderer.insert([{ unit: successor, translation: '新' }])]);
+    expect([...document.querySelectorAll('et-tr')].map((el) => el.textContent)).toEqual(['新']);
+    expect(renderer.has(successor)).toBe(true);
+  });
+
+  it('writes both of two inserts of one unit waiting for the same frame, the later one last', async () => {
+    // A set of "units in flight" would let the first write take the unit out and skip the second.
+    const { units, renderer } = await setup('<p>Alpha one.</p>');
+    const [unit] = units;
+    if (!unit) throw new Error('no unit');
+    await Promise.all([
+      renderer.insert([{ unit, translation: '一' }]),
+      renderer.insert([{ unit, translation: '二' }]),
+    ]);
+    expect([...document.querySelectorAll('et-tr')].map((el) => el.textContent)).toEqual(['二']);
+    expect(renderer.has(unit)).toBe(true);
+  });
+
+  it('writes an insert asked for again after a drop in the same frame, not the one before', async () => {
+    const { units, renderer } = await setup('<p>Alpha one.</p>');
+    const [unit] = units;
+    if (!unit) throw new Error('no unit');
+    const before = renderer.insert([{ unit, translation: '取消前' }]);
+    renderer.drop(unit);
+    const after = renderer.insert([{ unit, translation: '取消后' }]);
+    await Promise.all([before, after]);
+    expect([...document.querySelectorAll('et-tr')].map((el) => el.textContent)).toEqual(['取消后']);
+  });
+
   it('never pins spacing after a restore began during a mode switch', async () => {
     const fades = stubFades();
     try {
