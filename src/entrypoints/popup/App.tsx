@@ -95,10 +95,17 @@ export function App() {
     );
   }
 
+  const failed = () => setError(i18n.t('errors.action.openSettingsFailed'));
+  // The gear: the settings page as the browser opens it (the general page, an open one reused).
   const openSettings = () => {
-    void browser.runtime
-      .openOptionsPage()
-      .catch(() => setError(i18n.t('errors.action.openSettingsFailed')));
+    void browser.runtime.openOptionsPage().catch(failed);
+  };
+  // "去设置" next to an engine problem: straight to the services page. `openOptionsPage`
+  // takes no hash, so this is a new tab each time (a rare path).
+  const openServices = () => {
+    void browser.tabs
+      .create({ url: `${browser.runtime.getURL('/options.html')}#services` })
+      .catch(failed);
   };
 
   const report = (result: { ok: boolean; error?: Parameters<typeof describeError>[0] }) => {
@@ -173,7 +180,7 @@ export function App() {
             onMode={async (mode) => report(await session.setMode(mode))}
             onRetry={async () => report(await session.retryFailed())}
             onGoogle={() => void start('google')}
-            onOpenSettings={openSettings}
+            onOpenSettings={openServices}
           />
         )}
         {!active && view.kind === 'foreign' && (
@@ -183,7 +190,7 @@ export function App() {
             statuses={statuses}
             shortcut={shortcut}
             onStart={(engine) => void start(engine)}
-            onOpenSettings={openSettings}
+            onOpenSettings={openServices}
           />
         )}
         {!active && view.kind === 'native' && (
@@ -199,7 +206,7 @@ export function App() {
               statuses={statuses}
               shortcut={shortcut}
               onStart={(engine) => void start(engine)}
-              onOpenSettings={openSettings}
+              onOpenSettings={openServices}
             />
           </>
         )}

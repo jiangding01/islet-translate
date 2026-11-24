@@ -531,7 +531,7 @@ async function start(
       await cdp.send('Page.navigate', { url }, sessionId);
     }
     // A new target starts on about:blank, which is already "complete": wait for the page.
-    const loaded = `location.pathname === '/${path}' && document.readyState === 'complete' && !!globalThis.chrome?.runtime?.id`;
+    const loaded = `location.pathname + location.search + location.hash === '/${path}' && document.readyState === 'complete' && !!globalThis.chrome?.runtime?.id`;
     await waitFor(() => run(loaded), { message: `${path} to load` });
     return {
       evaluate: run,

@@ -46,30 +46,31 @@ describe('settings page', () => {
           `document.querySelector(${JSON.stringify(selector)})?.textContent ?? ''`,
         );
 
-      // The page opens on the services tab; the brand and the tab title use the UI language.
-      await waitFor(async () => (await text('h1')) === copy.services, {
-        message: 'the services page',
-      });
-      expect(await page.evaluate<string>('document.title')).toBe(copy.title);
-      expect(await text('nav img + span')).toBe(copy.brand);
-      expect(await text('nav a[aria-current="page"]')).toBe(copy.services);
-
-      await page.evaluate(`document.querySelector('nav a[href="#general"]').click()`);
+      // The page opens on the general tab; the brand and the tab title use the UI language.
       await waitFor(async () => (await text('h1')) === copy.general, {
         message: 'the general page',
       });
+      expect(await page.evaluate<string>('document.title')).toBe(copy.title);
+      expect(await text('nav img + span')).toBe(copy.brand);
       expect(await text('nav a[aria-current="page"]')).toBe(copy.general);
 
       await page.evaluate(`document.querySelector('nav a[href="#services"]').click()`);
       await waitFor(async () => (await text('h1')) === copy.services, {
-        message: 'the services page again',
+        message: 'the services page',
+      });
+      expect(await text('nav a[aria-current="page"]')).toBe(copy.services);
+
+      await page.evaluate(`document.querySelector('nav a[href="#general"]').click()`);
+      await waitFor(async () => (await text('h1')) === copy.general, {
+        message: 'the general page again',
       });
       h?.assertNoErrors();
     },
   );
 
   it('tests the Google connection and shows the mock translation', async () => {
-    const page = await (await start('en')).extPage('options.html');
+    // `#services`: how the popup's "去设置" next to an engine problem opens it.
+    const page = await (await start('en')).extPage('options.html#services');
     // The default engine's panel is open: its test button and the live result.
     await waitFor(
       () =>
