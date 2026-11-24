@@ -6,7 +6,7 @@
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
 - 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）已合入 `main`（实施记录见方案「PR1 实施记录」「PR2 实施记录」「PR6 实施记录」）。
-- Gemini 架构审查已核实并裁决（`docs/reviews/2026-11-24-gemini-review-verification.md`，执行清单在第 6 节、用户决定在第 7 节）：唯一的 P2 真 bug「LLM 思维链（`<think>`）未剥离」已修（#75）；渲染三项小修（等帧空窗守卫、重扫不再重新分段、首屏不等防抖）在 `fix/render-frame-gap-and-rescan` 完成。
+- Gemini 架构审查已核实并裁决（`docs/reviews/2026-11-24-gemini-review-verification.md`，执行清单在第 6 节、用户决定在第 7 节）：唯一的 P2 真 bug「LLM 思维链（`<think>`）未剥离」已修（#75）；渲染三项小修（等帧空窗守卫、重扫不再重新分段、首屏不等防抖）在 #76 完成。
 - 下一步：**M3c PR3 快速翻译框**（方案 `docs/plans/m3c.md`「拆分」表第 3 行；2026-11-23 用户同意顺序调整为 PR1 → PR2 → PR6 → PR3 → PR4 → PR5）。PR1/PR2 真机验收与补丁（#72）已完成并通过补丁验收，记录见方案「PR1/PR2 真机验收与补丁」。PR6 待真机验收：焦点在地址栏时点 ⌘、三种停靠的观感。PR3 做时占位文案由「输入指令」改为方案定稿的「输入指令，或输入要翻译的文字」。
 
 ## 1. 目标与范围
@@ -15,9 +15,9 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main`（`c72c11d`，已合入 M3c PR1 #70、PR2 #71、补丁 #72、PR6 #74、思维链剥离 #75）；本文随 `fix/render-frame-gap-and-rescan` 修改。
+- 分支 / HEAD：`main`（`c72c11d`，已合入 M3c PR1 #70、PR2 #71、补丁 #72、PR6 #74、思维链剥离 #75）；本文随 #76 修改。
 - 未提交改动：无。
-- 验证状态：截至 `fix/render-frame-gap-and-rescan` `npm run check` 通过，单测 1957 个（87 个文件），e2e 70 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
+- 验证状态：截至 #76 `npm run check` 通过，单测 1957 个（87 个文件），e2e 70 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
 - 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.60 / 7.75（余 0.15，**改引导层或常驻监听前必须先评估**）、page-runtime 26.45 / 28（余约 1.55，M3c PR4、PR5 还要用）、selection-runtime 18.19 / 19、palette-runtime 9.54 / 15（PR3、PR4 还要用）、background 57.85 / 60（小批的 LLM 逐段提交预计 +0.6–1.0）、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
 - 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
 - 路线图：**M3c 余下 PR3 → PR4 → PR5（方案 `docs/plans/m3c.md`，PR1、PR2、PR6 及真机验收补丁已完成）→ 发版 v0.5.0 → 体验债小批（不新开里程碑编号）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**。小批（用户 2026-11-24 同意，见核实文档第 6、7 节）：必做「LLM 批量逐段提交 + 增量解析」（M3e 硬前置，先用 think 写方案过审，两条硬约束：顺序前缀规则、缓存延后写）；可选 Shadow DOM 测量 spike、浮层协调器重构（PR5 合并后）、边扫边注册。批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。

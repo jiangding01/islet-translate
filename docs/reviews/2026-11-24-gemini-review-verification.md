@@ -89,7 +89,7 @@
 
 三项渲染小修合成一个 PR、三个提交，各带用例；等 PR6 合并后再从 main 拉分支，体积在 PR6 之上实测。
 
-**实际修法（`fix/render-frame-gap-and-rescan`）**：
+**实际修法（#76）**：
 - 2.2 等帧空窗（`render.ts`）：`drops = new WeakMap<Unit, number>()`，`drop()` 在提前返回之前自增；`insert` 读阶段把代数记进每个计划，写阶段代数变了就跳过该单元（不算 stale，会话已遗忘它）；`note()`（`fail` 与 `skip` 共用）等帧前记、等帧后比对。原 `skipping` 集合由同一机制取代并删除，`skip` 的「块根离开页面 / run 末节点离开父元素」两道检查保留。
 - 2.3 `known()`（`session.ts`）：不再调用 `isCurrent`。新单元刚从当前 DOM 分段出来，判断改为「同类型、同文本，run 再要求节点逐个相同」；块不比节点（与 `stillSame` 一致：块的子节点被换成同样内容的克隆时仍保留）。`mayBeHidden` 分支照旧用 `isCurrent`。
   - 与裁决的差异：没有另比 `seg.digest`。`digest` 就是 `text` 的哈希（`segment.ts`），原条件已比 `text`，再比摘要是冗余；只比摘要反而会在哈希碰撞时误认。
@@ -181,7 +181,7 @@ Phase 1 裁决改判：子代理结论是「做」；裁决为「暂不做，条
 | --- | --- | --- | --- | --- | --- |
 | 0 | `feat/m3c-isle-entry`（#74） | M3c PR6，不改范围 | — | page 26.18、content 7.60 KB | 已有 |
 | 1 | `fix/batch-think-strip`（#75） | 2.1：batch 与 text 终稿剥离前导推理 + 13 条用例 + known-issues 记流式缺口 | 无，可与 PR6 并行 | background 实测 +0.07 KB（57.85 KB） | 否 |
-| 2 | `fix/render-frame-gap-and-rescan`（已完成） | 2.2–2.4：drop 代数守卫、`known()` 不再重分段、首次 IO 不防抖 + 10 条用例；划掉 known-issues #57-2 | PR6 合并后拉分支 | page-runtime 实测 +0.13 KB（26.45 KB） | 否 |
+| 2 | #76（已完成） | 2.2–2.4：drop 代数守卫、`known()` 不再重分段、首次 IO 不防抖 + 10 条用例；划掉 known-issues #57-2 | PR6 合并后拉分支 | page-runtime 实测 +0.13 KB（26.45 KB） | 否 |
 | 3 | 原计划 PR3 → PR4 → PR5 | 不变 | — | 按 m3c 方案 | 新文案照旧先问 |
 | 4 | 发版 v0.5.0 | 含 #1、#2 | #1–#3 | — | 打 tag 前问 |
 | 5 | `feat/llm-batch-incremental` | 方案一 PR①：provider 逐项产出、调度器部分提交、只对剩余段重试 / 二分；带 4.1 两条硬约束；不改提示词与缓存键 | 先用 think 写方案并过审 | background 约 +0.6–1.0 KB（余 2.22） | 方案确认；若超 60 KB 需批预算 |
