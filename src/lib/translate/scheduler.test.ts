@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { appError } from '@/lib/errors';
+import { type AppError, appError } from '@/lib/errors';
 import type { ItemOutcome } from './codec';
-import { abortedError, badResponseError, safeFetch } from './providers/errors';
+import {
+  abortedError,
+  badResponseError,
+  outputTruncatedError,
+  safeFetch,
+} from './providers/errors';
 import { createOpenAICompatAdapter } from './providers/openai-compat';
 import {
   type CacheEntry,
@@ -137,6 +142,8 @@ function setup(
 ) {
   const net = createNetwork(options);
   const persisted: CacheEntry[] = [];
+  /** One entry per persist call. */
+  const writes: CacheEntry[][] = [];
   const scheduler = createScheduler({
     fetch: options.fetch ?? net.fetch,
     random: options.random ?? (() => 0),
@@ -157,6 +164,7 @@ function setup(
       context: CONTEXT,
       segments: texts.map((text) => ({ key: `k:${text}`, text })),
       persist: (entries) => {
+        writes.push([...entries]);
         persisted.push(...entries);
       },
       deadlineMs: submitOptions.deadlineMs,
@@ -168,7 +176,7 @@ function setup(
     });
     return { results, cancel: () => controller.abort() };
   }
-  return { net, scheduler, persisted, submit };
+  return { net, scheduler, persisted, writes, submit };
 }
 
 /** Not faked by the tests (they fake setTimeout only), so it runs after pending promise jobs. */
@@ -1235,5 +1243,421 @@ describe('scheduler: streaming', () => {
     expect(s.results).toEqual([err('network/aborted')]);
     expect(s.events).toEqual(['k:x reset', 'k:x +a', 'x final']);
     expect(scheduler.inspect()).toMatchObject({ active: { llm: 0 }, segments: 0 });
+  });
+});
+
+// ------------------------------------------------------------ items as they arrive
+
+interface ManualCall {
+  texts: string[];
+  signal: AbortSignal;
+  /** Yields an item; the text defaults to `T:<source>`. */
+  item(index: number, text?: string): void;
+  fail(error: AppError): void;
+  /** Ends the attempt normally, whatever was yielded. */
+  end(): void;
+}
+
+/**
+ * LLM page adapter whose items the test sends one at a time. With `honorAbort: false`
+ * it keeps going after an abort, like a provider that has already read the data.
+ */
+function manualAdapter(options: { honorAbort?: boolean } = {}) {
+  const honorAbort = options.honorAbort ?? true;
+  const calls: ManualCall[] = [];
+  const adapter: ProviderAdapter = {
+    kind: 'llm',
+    limits: { maxItems: 20, maxChars: 100_000 },
+    async *translate(batch, ctx) {
+      const queue: (ProviderEvent | AppError | 'end')[] = [];
+      let wake: () => void = () => undefined;
+      const notify = () => wake();
+      ctx.signal.addEventListener('abort', notify, { once: true });
+      calls.push({
+        texts: batch,
+        signal: ctx.signal,
+        item: (index, text = `T:${batch[index]}`) => {
+          queue.push({ type: 'item', index, text });
+          notify();
+        },
+        fail: (error) => {
+          queue.push(error);
+          notify();
+        },
+        end: () => {
+          queue.push('end');
+          notify();
+        },
+      });
+      for (;;) {
+        if (honorAbort && ctx.signal.aborted) throw abortedError();
+        const next = queue.shift();
+        if (next === undefined) {
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+          continue;
+        }
+        if (next === 'end') return;
+        if (!('type' in next)) throw next;
+        yield next;
+      }
+    },
+  };
+  return { adapter, calls };
+}
+
+const entry = (text: string) => ({ key: `k:${text}`, text: `T:${text}` });
+const LLM_DEADLINE = SCHEDULER_LIMITS.llm.deadlineMs;
+
+describe('scheduler: items delivered as they arrive', () => {
+  it('delivers an item before the attempt ends, and caches the batch once at the end', async () => {
+    const { scheduler, writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    await at(1);
+    expect(results).toEqual([ok('T:a'), undefined, undefined]);
+    expect(scheduler.inspect().segments).toBe(2);
+    expect(writes).toEqual([]);
+
+    calls[0]?.item(1);
+    calls[0]?.item(2);
+    calls[0]?.end();
+    await at(2);
+    expect(results).toEqual([ok('T:a'), ok('T:b'), ok('T:c')]);
+    expect(writes).toEqual([[entry('a'), entry('b'), entry('c')]]);
+    expect(scheduler.inspect()).toMatchObject({ active: { llm: 0 }, segments: 0 });
+  });
+
+  it('maps indices by the members the attempt started with', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c', 'd'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.fail(badResponseError());
+    await at(1000);
+    // The rest is halved: [b, c] and [d]; the half's indices count from its own start.
+    expect(calls.map((call) => call.texts)).toEqual([['a', 'b', 'c', 'd'], ['b', 'c'], ['d']]);
+    calls[1]?.item(0, 'B');
+    calls[1]?.item(1, 'C');
+    calls[1]?.end();
+    calls[2]?.item(0, 'D');
+    calls[2]?.end();
+    await at(1001);
+    expect(results).toEqual([ok('T:a'), ok('B'), ok('C'), ok('D')]);
+  });
+
+  it('caches nothing of a truncated attempt, halves the rest, and caches each half that succeeds', async () => {
+    const { writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c', 'd'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(1);
+    calls[0]?.fail(outputTruncatedError());
+    await at(1000);
+    expect(writes).toEqual([]);
+    expect(calls.map((call) => call.texts)).toEqual([['a', 'b', 'c', 'd'], ['c'], ['d']]);
+    for (const call of calls.slice(1)) {
+      call.item(0);
+      call.end();
+    }
+    await at(1001);
+    expect(results).toEqual([ok('T:a'), ok('T:b'), ok('T:c'), ok('T:d')]);
+    expect(writes).toEqual([[entry('c')], [entry('d')]]);
+  });
+
+  it('caches nothing after a numbering error, and halves the rest', async () => {
+    const { writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c', 'd'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.fail(badResponseError());
+    await at(1000);
+    expect(results[0]).toEqual(ok('T:a'));
+    expect(writes).toEqual([]);
+    expect(calls.map((call) => call.texts).slice(1)).toEqual([['b', 'c'], ['d']]);
+  });
+
+  it.each([
+    ['a duplicate', 0],
+    ['an out-of-range', 5],
+  ])('fails %s index with bad-response and caches nothing', async (_name, index) => {
+    const { writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(index);
+    await at(1000);
+    expect(results[0]).toEqual(ok('T:a'));
+    expect(writes).toEqual([]);
+    expect(calls.map((call) => call.texts)).toEqual([['a', 'b', 'c'], ['b'], ['c']]);
+  });
+
+  it('treats an index the attempt never delivered as bad-response', async () => {
+    const { writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.end();
+    await at(1000);
+    expect(writes).toEqual([]);
+    expect(calls.map((call) => call.texts)).toEqual([['a', 'b', 'c'], ['b'], ['c']]);
+    calls[1]?.item(0);
+    calls[1]?.end();
+    calls[2]?.end();
+    await at(1001);
+    expect(results).toEqual([ok('T:a'), ok('T:b'), err('validation/bad-response')]);
+    expect(writes).toEqual([[entry('b')]]);
+  });
+
+  it('retries only the items not delivered yet, caching only the attempt that succeeds', async () => {
+    const { writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.fail(serverError());
+    await at(1);
+    expect(writes).toEqual([]);
+    await at(1001);
+    expect(calls.map((call) => call.texts)).toEqual([
+      ['a', 'b', 'c'],
+      ['b', 'c'],
+    ]);
+    calls[1]?.item(0);
+    calls[1]?.item(1);
+    calls[1]?.end();
+    await at(1002);
+    expect(results).toEqual([ok('T:a'), ok('T:b'), ok('T:c')]);
+    expect(writes).toEqual([[entry('b'), entry('c')]]);
+  });
+
+  it('times out only the items not delivered yet, and caches nothing', async () => {
+    const { writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    await at(LLM_DEADLINE);
+    expect(calls[0]?.signal.aborted).toBe(true);
+    expect(results).toEqual([ok('T:a'), err('network/timeout'), err('network/timeout')]);
+    expect(writes).toEqual([]);
+  });
+
+  it('caches nothing when every subscriber leaves', async () => {
+    const { scheduler, writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results, cancel } = submit(['a', 'b', 'c'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    await at(1);
+    cancel();
+    await at(2);
+    expect(calls[0]?.signal.aborted).toBe(true);
+    expect(results).toEqual([ok('T:a'), err('network/aborted'), err('network/aborted')]);
+    expect(writes).toEqual([]);
+    expect(scheduler.inspect()).toMatchObject({ active: { llm: 0 }, segments: 0 });
+  });
+
+  it.each(['deadline', 'cancel'])(
+    'neither delivers items that arrive after the %s nor caches anything',
+    async (ending) => {
+      const { writes, submit } = setup();
+      const { adapter, calls } = manualAdapter({ honorAbort: false });
+      const { results, cancel } = submit(['a', 'b', 'c'], { adapter, engine: 'openai' });
+      await at(0);
+      calls[0]?.item(0);
+      await at(1);
+      if (ending === 'cancel') cancel();
+      else await at(LLM_DEADLINE);
+      const code = ending === 'cancel' ? 'network/aborted' : 'network/timeout';
+      calls[0]?.item(1);
+      calls[0]?.item(2);
+      calls[0]?.end();
+      await at(LLM_DEADLINE + 100);
+      // The provider ended normally, but the attempt did not: nothing is cached.
+      expect(results).toEqual([ok('T:a'), err(code), err(code)]);
+      expect(writes).toEqual([]);
+    },
+  );
+
+  it.each(['deadline', 'cancel'])(
+    'caches nothing when the attempt ends with bad-response after the %s',
+    async (ending) => {
+      const { writes, submit } = setup();
+      const { adapter, calls } = manualAdapter({ honorAbort: false });
+      const { results, cancel } = submit(['a', 'b'], { adapter, engine: 'openai' });
+      await at(0);
+      calls[0]?.item(0);
+      await at(1);
+      if (ending === 'cancel') cancel();
+      else await at(LLM_DEADLINE);
+      // A provider turns any ending after a draft array into bad-response.
+      calls[0]?.fail(badResponseError());
+      await at(LLM_DEADLINE + 100);
+      expect(results[0]).toEqual(ok('T:a'));
+      expect(writes).toEqual([]);
+    },
+  );
+
+  it('sends a fresh request for a key submitted again after its early delivery', async () => {
+    const { scheduler, writes, submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const first = submit(['a', 'b'], { adapter, engine: 'openai' });
+    await at(0);
+    calls[0]?.item(0);
+    await at(1);
+    expect(scheduler.inspect().segments).toBe(1);
+    const again = submit(['a'], { caller: 'B', adapter, engine: 'openai' });
+    await at(200);
+    expect(calls.map((call) => call.texts)).toEqual([['a', 'b'], ['a']]);
+    calls[1]?.item(0, 'T:a2');
+    calls[1]?.end();
+    await at(201);
+    expect(again.results).toEqual([ok('T:a2')]);
+    calls[0]?.item(1);
+    calls[0]?.end();
+    await at(202);
+    expect(first.results).toEqual([ok('T:a'), ok('T:b')]);
+    expect(writes).toEqual([[{ key: 'k:a', text: 'T:a2' }], [entry('a'), entry('b')]]);
+  });
+
+  it.each(['truncation', 'cancel', 'deadline'])(
+    'caches nothing of a misplaced prefix ended by %s',
+    async (ending) => {
+      const { writes, submit } = setup();
+      const { adapter, calls } = manualAdapter();
+      const { results, cancel } = submit(['a', 'b', 'c', 'd'], { adapter, engine: 'openai' });
+      await at(0);
+      // Ids run on from 0, but the model merged a and b: every text is one segment off.
+      calls[0]?.item(0, 'T:a T:b');
+      calls[0]?.item(1, 'T:c');
+      await at(1);
+      if (ending === 'truncation') calls[0]?.fail(outputTruncatedError());
+      if (ending === 'cancel') cancel();
+      if (ending === 'deadline') await at(LLM_DEADLINE);
+      await at(LLM_DEADLINE + 100);
+      expect(results.slice(0, 2)).toEqual([ok('T:a T:b'), ok('T:c')]);
+      expect(writes).toEqual([]);
+    },
+  );
+
+  describe('with the OpenAI-compatible adapter', () => {
+    const delta = (content: string) =>
+      `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+    /** Answers each request with `reply(sources)`, as one increment and [DONE]. */
+    function llmFetch(reply: (sources: string[]) => string) {
+      const fn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+        const input = JSON.parse(body.messages[1]?.content.replace('USER ', '') ?? '[]') as {
+          t: string;
+        }[];
+        return sseResponse([delta(reply(input.map((entry) => entry.t))), 'data: [DONE]\n\n']);
+      });
+      return fn as typeof fn & typeof fetch;
+    }
+    // Not an echo of the source (the scanner holds those back).
+    const answer = (sources: string[], prefix = 'T:') =>
+      JSON.stringify(sources.map((t, i) => ({ i, t: `${prefix}${t.toUpperCase()}` })));
+
+    it('caches nothing of a fenced draft followed by a corrected array, and does not split', async () => {
+      const fn = llmFetch(
+        (sources) =>
+          `\`\`\`json\n${answer(sources, 'D:')}\n\`\`\`\nActually corrected:\n${answer(sources, 'F:')}`,
+      );
+      const { scheduler, writes, submit } = setup({ fetch: fn });
+      const { results } = submit(['a', 'b'], {
+        adapter: createOpenAICompatAdapter(),
+        engine: 'openai',
+      });
+      await at(1000);
+      expect(results).toEqual([ok('D:A'), ok('D:B')]);
+      expect(writes).toEqual([]);
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(scheduler.inspect()).toMatchObject({ active: { llm: 0 }, queued: 0, segments: 0 });
+    });
+
+    it('caches an answer followed by a note with a Markdown link', async () => {
+      const fn = llmFetch(
+        (sources) => `\`\`\`json\n${answer(sources)}\n\`\`\`\nSee [the docs](https://x.test).`,
+      );
+      const { writes, submit } = setup({ fetch: fn });
+      const { results } = submit(['a', 'b'], {
+        adapter: createOpenAICompatAdapter(),
+        engine: 'openai',
+      });
+      await at(1000);
+      expect(results).toEqual([ok('T:A'), ok('T:B')]);
+      expect(writes).toEqual([
+        [
+          { key: 'k:a', text: 'T:A' },
+          { key: 'k:b', text: 'T:B' },
+        ],
+      ]);
+    });
+
+    it('caches nothing of an array cut short, then caches the halves that succeed', async () => {
+      const fn = llmFetch((sources) => {
+        const full = answer(sources);
+        // The first reply stops inside item 2 (no closing bracket, nothing after it).
+        return sources.length === 4 ? full.slice(0, full.indexOf('{"i":2') + 10) : full;
+      });
+      const { writes, submit } = setup({ fetch: fn });
+      const { results } = submit(['a', 'b', 'c', 'd'], {
+        adapter: createOpenAICompatAdapter(),
+        engine: 'openai',
+      });
+      await at(1000);
+      expect(results).toEqual([ok('T:A'), ok('T:B'), ok('T:C'), ok('T:D')]);
+      // a and b came through before the cut and stay uncached; [c, d] is halved.
+      expect(fn).toHaveBeenCalledTimes(3);
+      expect(writes).toEqual([[{ key: 'k:c', text: 'T:C' }], [{ key: 'k:d', text: 'T:D' }]]);
+    });
+  });
+
+  it('caches a stream result only when its attempt succeeds while the job still runs', async () => {
+    const { scheduler } = setup();
+    const { adapter, calls } = manualAdapter({ honorAbort: false });
+    const writes: CacheEntry[][] = [];
+    const [outcome] = scheduler.submit({
+      caller: 'S',
+      signal: new AbortController().signal,
+      engine: 'openai',
+      adapter,
+      context: CONTEXT,
+      segments: [{ key: 'k:x', text: 'x' }],
+      persist: (entries) => {
+        writes.push([...entries]);
+      },
+      onReset: () => undefined,
+      deadlineMs: 1000,
+    });
+    await at(1000);
+    expect(await outcome).toEqual(err('network/timeout'));
+    calls[0]?.item(0);
+    calls[0]?.end();
+    await at(1100);
+    expect(writes).toEqual([]);
+  });
+
+  it('keeps stream submissions on the collect-then-deliver path', async () => {
+    const { scheduler } = setup();
+    const { adapter, streams } = streamingAdapter();
+    const s = submitStream(scheduler, ['x'], { adapter });
+    await at(0);
+    streams[0]?.push('a');
+    await at(10);
+    streams[0]?.push('b'); // held until 50ms by the flush interval
+    streams[0]?.end('ab');
+    await at(20);
+    // The last increment still comes before the result.
+    expect(s.events).toEqual(['k:x reset', 'k:x +a', 'k:x +b', 'x final']);
   });
 });

@@ -1,6 +1,6 @@
 import { type AppError, appError, isAppError } from '@/lib/errors';
-import { badResponseError, emptyTranslationError } from './providers/errors';
-import type { BuiltPrompt } from './types';
+import { badResponseError, emptyTranslationError, outputTruncatedError } from './providers/errors';
+import type { BuiltPrompt, ProviderEvent } from './types';
 
 // LLM batch protocol: input and output are JSON arrays of { i, t }, matched by `i`.
 
@@ -255,6 +255,272 @@ export function decodeLlmOutput(raw: string, count: number): string[] {
     result[i] = t;
   }
   return result as string[];
+}
+
+// ------------------------------------------------------------ incremental batch
+
+export interface BatchScanner {
+  /** Feeds the next stream increment; returns the items it commits, in index order. */
+  push(delta: string): { index: number; text: string }[];
+  /**
+   * - `open`: still committing;
+   * - `closed`: commits nothing more, what it committed stands;
+   * - `tainted`: what it committed may be a draft (a `</think>` outside strings, or
+   *   content after the array).
+   */
+  readonly state: 'open' | 'closed' | 'tainted';
+  /**
+   * Tainted by what may be a second answer: after the array, `[` then `{`, `{` then
+   * `"` (whitespace between allowed), a `[` or `{` still open when the output
+   * ends, or `</think>`; `</think>` inside the array. Prose after the array
+   * (`[1]`, `[docs](…)`, `{name}`) taints without it.
+   */
+  readonly draft: boolean;
+  /** The top-level array: not found (yet), being read, or ended. */
+  readonly array: 'none' | 'open' | 'closed';
+  /** Committed translations; index k holds item k. */
+  readonly committed: readonly string[];
+}
+
+const SPACE = /\s/;
+
+function sameText(a: string, b: string): boolean {
+  const normal = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
+  return normal(a) === normal(b);
+}
+
+/**
+ * Reads a streamed `batch` answer and commits items as soon as they are complete,
+ * as a strict prefix: only item `i` equal to the next expected index (below the
+ * batch size) with a non-empty `t`. The first deviation, and the end of the
+ * top-level array, close it. Items equal to their source are held until an item
+ * that differs. Only an output that starts with the array (after whitespace, one
+ * closed `<think>` block and one fence) is read; anything else is left to the
+ * whole-output decode. Every character is looked at once (no rescans).
+ */
+export function createBatchScanner(sources: readonly string[]): BatchScanner {
+  let state: BatchScanner['state'] = 'open';
+  let array: BatchScanner['array'] = 'none';
+  let draft = false;
+  const committed: string[] = [];
+  const held: string[] = [];
+  /**
+   * Lead-in before the array: whitespace (`space`, `gap` after a fence), the
+   * `<think>` tag (`open`), its block (`think`), backticks (`fence`), `json` (`lang`).
+   */
+  let lead: 'space' | 'open' | 'think' | 'fence' | 'lang' | 'gap' = 'space';
+  let thought = false;
+  let matched = 0;
+  let fenced = false;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let item = '';
+  /** The last characters outside strings, to spot `</think>`. */
+  let tag = '';
+  /** After the array: closing backticks seen, and whether whitespace followed them. */
+  let ticks = 0;
+  let ticked = false;
+  /** After the array: a `[` or `{` waiting for its next non-space character. */
+  let opener = '';
+
+  function close() {
+    if (state === 'open') state = 'closed';
+  }
+
+  function taint(second: boolean) {
+    state = 'tainted';
+    if (second) draft = true;
+  }
+
+  /** Feeds `ch` to the rolling tag; true when it completes `</think>`. */
+  function closesThink(ch: string): boolean {
+    tag = (tag + ch).slice(-THINK_CLOSE.length);
+    return tag.toLowerCase() === THINK_CLOSE;
+  }
+
+  function leadIn(ch: string) {
+    if (lead === 'think') {
+      if (closesThink(ch)) {
+        lead = 'space';
+        thought = true;
+      }
+      return;
+    }
+    if (lead === 'open') {
+      if (ch.toLowerCase() !== THINK_OPEN[matched]) return close();
+      matched += 1;
+      if (matched === THINK_OPEN.length) {
+        lead = 'think';
+        tag = '';
+      }
+      return;
+    }
+    if (lead === 'fence') {
+      if (ch !== '`') return close();
+      matched += 1;
+      if (matched === 3) {
+        lead = 'lang';
+        matched = 0;
+        fenced = true;
+      }
+      return;
+    }
+    if (lead === 'lang') {
+      if (matched < 4 && ch.toLowerCase() === 'json'[matched]) {
+        matched += 1;
+        return;
+      }
+      if (matched % 4 !== 0) return close();
+      lead = 'gap';
+    }
+    if (SPACE.test(ch)) return;
+    if (ch === '[') {
+      array = 'open';
+      tag = '';
+      return;
+    }
+    if (lead === 'space' && ch === '<' && !thought) {
+      lead = 'open';
+      matched = 1;
+    } else if (lead === 'space' && ch === '`') {
+      lead = 'fence';
+      matched = 1;
+    } else {
+      close();
+    }
+  }
+
+  function take(raw: string, out: { index: number; text: string }[]) {
+    if (state !== 'open') return;
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      close();
+      return;
+    }
+    const next = committed.length + held.length;
+    const t = isRecord(value) ? value.t : undefined;
+    if (!isRecord(value) || value.i !== next || next >= sources.length) return close();
+    if (typeof t !== 'string' || t.trim() === '') return close();
+    held.push(t);
+    if (sameText(t, sources[next] ?? '')) return;
+    for (const text of held) out.push({ index: committed.push(text) - 1, text });
+    held.length = 0;
+  }
+
+  function inArray(ch: string, out: { index: number; text: string }[]) {
+    if (depth > 0) item += ch;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      return;
+    }
+    if (closesThink(ch)) return taint(true);
+    if (ch === '"') {
+      inString = true;
+      tag = '';
+      if (depth === 0) close();
+    } else if (ch === '{' || ch === '[') {
+      if (depth === 0) {
+        if (ch === '[') close();
+        item = ch;
+      }
+      depth += 1;
+    } else if (ch === '}' || ch === ']') {
+      if (depth > 0) {
+        depth -= 1;
+        if (depth === 0) take(item, out);
+      } else if (ch === '}') {
+        close();
+      } else {
+        array = 'closed';
+        tag = '';
+        close();
+      }
+    } else if (depth === 0 && ch !== ',' && !SPACE.test(ch)) {
+      close();
+    }
+  }
+
+  /** After the array: whitespace, and one closing fence when the array was fenced. */
+  function afterArray(ch: string) {
+    if (closesThink(ch)) return taint(true);
+    if (opener !== '') {
+      if (SPACE.test(ch)) return;
+      if (ch === (opener === '[' ? '{' : '"')) return taint(true);
+      opener = '';
+    }
+    if (ch === '[' || ch === '{') opener = ch;
+    if (state === 'tainted') return;
+    if (SPACE.test(ch)) {
+      if (ticks > 0) ticked = true;
+    } else if (ch === '`' && fenced && !ticked && ticks < 3) {
+      ticks += 1;
+    } else {
+      taint(false);
+    }
+  }
+
+  return {
+    push(delta) {
+      const out: { index: number; text: string }[] = [];
+      for (const ch of delta) {
+        if (draft || (array === 'none' && state !== 'open')) break;
+        if (array === 'none') leadIn(ch);
+        else if (array === 'open') inArray(ch, out);
+        else afterArray(ch);
+      }
+      return out;
+    },
+    get state() {
+      return state;
+    },
+    get draft() {
+      // An opener with nothing after it yet: too little to tell, so not trusted.
+      return draft || opener !== '';
+    },
+    get array() {
+      return array;
+    },
+    committed,
+  };
+}
+
+/**
+ * Ends a streamed batch once the stream is over: yields the items the scanner did
+ * not commit, from the whole-output decode. Throws `validation/bad-response` when
+ * that decode disagrees with what was committed or the output carries a possible
+ * second answer (both after yielding the rest), or when it fails on a tainted
+ * output; `provider/output-truncated` when it fails inside an array that never
+ * ended; otherwise the decode error. Only a run that ends without throwing has
+ * been checked as a whole.
+ */
+export function* finishBatch(
+  scanner: BatchScanner,
+  raw: string,
+  count: number,
+): Generator<ProviderEvent> {
+  let decoded: string[];
+  try {
+    decoded = decodeLlmOutput(raw, count);
+  } catch (error) {
+    if (scanner.state === 'tainted') throw badResponseError('Draft output');
+    if (scanner.array === 'open') throw outputTruncatedError();
+    throw error;
+  }
+  const { committed } = scanner;
+  for (let index = committed.length; index < count; index += 1) {
+    yield { type: 'item', index, text: decoded[index] ?? '' };
+  }
+  if (committed.some((text, index) => text !== decoded[index])) {
+    throw badResponseError('Streamed items differ from the output');
+  }
+  // A second answer after the array may be the one the decode skipped (it prefers a
+  // fence and the first array): never trust it as checked.
+  if (scanner.draft) throw badResponseError('Draft output');
 }
 
 /** Greedy grouping by item and character limits; returns index groups in order. */

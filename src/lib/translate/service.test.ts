@@ -17,7 +17,7 @@ import {
   preprocessText,
   type TranslateServiceDeps,
 } from './service';
-import { jsonResponse, sseResponse } from './test-utils';
+import { gatedSseResponse, jsonResponse, sseResponse } from './test-utils';
 
 // ------------------------------------------------------------ in-memory port
 
@@ -328,7 +328,7 @@ describe('translate service over the port', () => {
   });
 
   it('splits an LLM batch whose item count does not match, down to single items', async () => {
-    const { providers, config, run } = setup();
+    const { providers, config, cache, run } = setup();
     config.translation.engine = 'openai';
     let first = true;
     providers.handlers.openai = (texts, call) => {
@@ -340,12 +340,35 @@ describe('translate service over the port', () => {
     };
     const result = await run({ items: items('one', 'two', 'three'), source: 'en' });
     expect(result.outcome).toEqual({ status: 'done', data: { total: 3, failed: 0 } });
+    // Item 0 is shown as soon as it arrives (ids in order, so it cannot be told apart from
+    // a good answer: docs/known-issues.md), but the batch is not cached; the rest is halved.
     expect(Object.values(result.byId).map((chunk) => 'text' in chunk && chunk.text)).toEqual([
-      'O:one',
+      'only one',
       'O:two',
       'O:three',
     ]);
-    expect(providers.calls).toHaveLength(3); // [one, two, three] → [one, two] + [three]
+    expect(providers.calls).toHaveLength(3); // [one, two, three] → [two] + [three]
+    await cached(cache, 2);
+  });
+
+  it('sends the first item of an LLM batch before the rest of the batch arrives', async () => {
+    const { providers, config, request } = setup();
+    config.translation.engine = 'openai';
+    let release: () => void = () => undefined;
+    providers.handlers.openai = (texts) => {
+      const gated = gatedSseResponse(
+        [openaiDelta(`[${JSON.stringify({ i: 0, t: `O:${texts[0]}` })},`)],
+        [openaiDelta(`${JSON.stringify({ i: 1, t: `O:${texts[1]}` })}]`), 'data: [DONE]\n\n'],
+      );
+      release = gated.release;
+      return gated.response;
+    };
+    const handle = request({ items: items('one', 'two'), source: 'en' });
+    await vi.waitFor(() => expect(handle.chunks.map((chunk) => chunk.id)).toEqual(['i0']));
+    expect(handle.chunks[0]).toMatchObject({ id: 'i0', text: 'O:one', cached: false });
+    release();
+    expect(await handle.outcome).toEqual({ status: 'done', data: { total: 2, failed: 0 } });
+    expect(handle.chunks.map((chunk) => chunk.id)).toEqual(['i0', 'i1']);
   });
 
   it('fails only the item that stays malformed after splitting', async () => {

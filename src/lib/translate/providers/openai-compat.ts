@@ -1,9 +1,16 @@
 import { isLocalEndpoint } from '@/lib/endpoint';
 import { appError } from '@/lib/errors';
-import { cleanTextOutput, createThinkFilter, decodeLlmOutput, renderMessages } from '../codec';
+import {
+  cleanTextOutput,
+  createBatchScanner,
+  createThinkFilter,
+  finishBatch,
+  renderMessages,
+} from '../codec';
 import { readSse } from '../sse';
 import type { ProviderAdapter, ProviderContext, ProviderEvent } from '../types';
 import {
+  badResponseError,
   contentBlockedError,
   errorFromResponse,
   interruptedError,
@@ -51,43 +58,50 @@ async function* translate(batch: string[], ctx: ProviderContext): AsyncGenerator
     throw await errorFromResponse(response);
   }
 
+  // Page batches: items are yielded as soon as the scanner commits them.
+  const scanner = streaming ? undefined : createBatchScanner(batch);
   let text = '';
   let finished = false;
-  for await (const data of readSse(response, { signal: ctx.signal, idleMs: ctx.idleTimeoutMs })) {
-    if (data === '[DONE]') {
-      finished = true;
-      break;
+  try {
+    for await (const data of readSse(response, { signal: ctx.signal, idleMs: ctx.idleTimeoutMs })) {
+      if (data === '[DONE]') {
+        finished = true;
+        break;
+      }
+      let chunk: StreamChunk;
+      try {
+        chunk = JSON.parse(data) as StreamChunk;
+      } catch {
+        continue;
+      }
+      if (chunk.error) {
+        throw appError('provider', 'provider/server-error', 'Provider reported a stream error', {
+          retryable: true,
+        });
+      }
+      const choice = chunk.choices?.[0];
+      const content = typeof choice?.delta?.content === 'string' ? choice.delta.content : '';
+      text += content;
+      const items = scanner?.push(content) ?? [];
+      if (text.length > MAX_LLM_OUTPUT_CHARS) throw outputTruncatedError();
+      if (choice?.finish_reason === 'length') throw outputTruncatedError();
+      if (choice?.finish_reason === 'content_filter') throw contentBlockedError();
+      if (choice?.finish_reason) finished = true;
+      for (const item of items) yield { type: 'item', ...item };
+      const shown = streaming && content !== '' ? visible(content) : '';
+      if (shown !== '') yield { type: 'delta', index: 0, delta: shown };
     }
-    let chunk: StreamChunk;
-    try {
-      chunk = JSON.parse(data) as StreamChunk;
-    } catch {
-      continue;
-    }
-    if (chunk.error) {
-      throw appError('provider', 'provider/server-error', 'Provider reported a stream error', {
-        retryable: true,
-      });
-    }
-    const choice = chunk.choices?.[0];
-    const content = typeof choice?.delta?.content === 'string' ? choice.delta.content : '';
-    text += content;
-    if (text.length > MAX_LLM_OUTPUT_CHARS) throw outputTruncatedError();
-    if (choice?.finish_reason === 'length') throw outputTruncatedError();
-    if (choice?.finish_reason === 'content_filter') throw contentBlockedError();
-    if (choice?.finish_reason) finished = true;
-    const shown = streaming && content !== '' ? visible(content) : '';
-    if (shown !== '') yield { type: 'delta', index: 0, delta: shown };
+    if (!finished) throw interruptedError();
+  } catch (error) {
+    // Items may have come from a draft: nothing of this attempt may be cached.
+    throw scanner?.state === 'tainted' ? badResponseError('Draft output') : error;
   }
-  if (!finished) throw interruptedError();
 
-  if (streaming) {
+  if (!scanner) {
     yield { type: 'item', index: 0, text: cleanTextOutput(text, batch[0] ?? '') };
     return;
   }
-  for (const [index, item] of decodeLlmOutput(text, batch.length).entries()) {
-    yield { type: 'item', index, text: item };
-  }
+  yield* finishBatch(scanner, text, batch.length);
 }
 
 export function createOpenAICompatAdapter(): ProviderAdapter {

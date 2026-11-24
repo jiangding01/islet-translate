@@ -75,3 +75,41 @@ export function mockFetch(...responses: (Response | Error)[]) {
   });
   return fn as typeof fn & typeof fetch;
 }
+
+/** An SSE response that sends `first` at once and the `rest` only when released. */
+export function gatedSseResponse(first: string[], rest: string[]) {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+      for (const chunk of first) c.enqueue(encoder.encode(chunk));
+    },
+  });
+  return {
+    response: new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }),
+    release() {
+      for (const chunk of rest) controller?.enqueue(encoder.encode(chunk));
+      controller?.close();
+    },
+  };
+}
+
+/** An SSE response that sends `chunks`, then neither ends nor fails (an idle stream). */
+export function stalledSseResponse(chunks: string[]): Response {
+  return gatedSseResponse(chunks, []).response;
+}
+
+/** Collects events until the iterable ends or throws; never rejects. */
+export async function collectSettled(events: AsyncIterable<ProviderEvent>) {
+  const out: ProviderEvent[] = [];
+  try {
+    for await (const event of events) out.push(event);
+    return { events: out, error: undefined as unknown };
+  } catch (error) {
+    return { events: out, error };
+  }
+}
