@@ -1188,12 +1188,12 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
       observe();
       resize();
     });
-    // <html>'s children for an isle coming or going, the current isle's rectangle.
+    // <html>'s children for an isle coming or going, the current isle's rectangle and edge.
     const observe = () => {
       watch.disconnect();
       watch.observe(doc.documentElement, { childList: true });
       const isle = isleHost();
-      if (isle) watch.observe(isle, { attributeFilter: ['data-et-rect'] });
+      if (isle) watch.observe(isle, { attributeFilter: ['data-et-rect', 'data-et-dock'] });
     };
     isleWatch = watch;
     observe();
@@ -1210,10 +1210,14 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
   /**
    * The isle host's `data-et-rect="x,y,w,h"`, when it has an area: four finite numbers, kept
    * within the viewport (a page can write anything there; huge values would overflow the
-   * springs into NaN).
+   * springs into NaN). Its `data-et-dock`, when one of the three, replaces the dock read at
+   * opening: the isle regrows on another edge when the setting changes.
    */
   function readIsle(): PanelRect | undefined {
-    const parts = (isleHost()?.getAttribute('data-et-rect') ?? '').split(',').map(Number);
+    const isle = isleHost();
+    const edge = isle?.getAttribute('data-et-dock');
+    if (edge === 'left' || edge === 'right' || edge === 'bottom') dock = edge;
+    const parts = (isle?.getAttribute('data-et-rect') ?? '').split(',').map(Number);
     if (parts.length !== 4 || !parts.every(Number.isFinite)) return undefined;
     const [x = 0, y = 0, w = 0, h = 0] = parts;
     const within = (n: number, max: number) => Math.max(0, Math.min(max, n));

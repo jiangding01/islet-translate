@@ -999,6 +999,50 @@ describe('beside the isle (PR6)', () => {
     expect(p.host()?.hasAttribute('data-open')).toBe(true);
   });
 
+  it('follows the isle to another edge: its published dock and rectangle together', async () => {
+    const isle = isleAt(`${W - 56},300,40,186`);
+    isle.setAttribute('data-et-dock', 'right');
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    settle();
+    // The dock setting changed while open: the isle regrows on the left and says so.
+    isle.setAttribute('data-et-dock', 'left');
+    isle.setAttribute('data-et-rect', '16,300,40,186');
+    await flush();
+    settle();
+    expect(box(p)).toEqual({ x: 64, y: 300 });
+    expect(inset(p)).toMatchObject({ top: 300, left: 64, right: W - 64 - 420 });
+    // Then to the bottom: 8px above it, the right ends aligned.
+    isle.setAttribute('data-et-dock', 'bottom');
+    isle.setAttribute('data-et-rect', `${W - 16 - 186},${H - 56},186,40`);
+    await flush();
+    settle();
+    expect(box(p)).toEqual({ x: W - 16 - 420, y: H - 56 - 8 - 46 });
+    expect(inset(p)).toEqual({ top: H - 56 - 8 - 46, right: 16, bottom: 64, left: W - 16 - 420 });
+  });
+
+  it('opens beside the isle on the edge it publishes, over the dock setting', async () => {
+    const isle = isleAt('16,300,40,186');
+    isle.setAttribute('data-et-dock', 'left');
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    settle();
+    expect(box(p)).toEqual({ x: 64, y: 300 });
+  });
+
+  it('ignores a dock the page wrote that is not one of the three', async () => {
+    for (const value of ['top', 'LEFT', '', 'left ']) {
+      const isle = isleAt(`${W - 56},300,40,186`);
+      isle.setAttribute('data-et-dock', value);
+      const p = await setup({ dock: 'right' });
+      await p.open();
+      settle();
+      expect(box(p)).toEqual({ x: W - 56 - 8 - 420, y: 300 });
+      palette?.dispose();
+      isle.remove();
+    }
+  });
+
   it('stops watching the isle once closed, and on dispose', async () => {
     const isle = isleAt(`${W - 56},300,40,186`);
     const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');

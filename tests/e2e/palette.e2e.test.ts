@@ -394,6 +394,60 @@ describe('the isle’s ⌘ (PR6)', () => {
     await waitFor(async () => !(await isOpen()), { message: 'the palette to close from the ⌘' });
     h.assertNoErrors();
   });
+
+  it('follows the isle to the other edge when the dock setting changes while open; the isle stays open', async () => {
+    const setDock = async (value: string) => {
+      const options = await h.extPage('options.html');
+      try {
+        expect(
+          await options.send('config.patch', [{ path: 'page.isleDock', value }]),
+        ).toMatchObject({ ok: true });
+      } finally {
+        await options.close();
+      }
+    };
+    try {
+      await h.openPage('e2e-article.html');
+      await h.tell('page.toggle');
+      await waitFor(async () => (await state()).phase === 'done', {
+        message: 'the page to settle',
+      });
+      await clickInIsle('.hit');
+      await waitFor(async () => (await isleView()) === 'isle', { message: 'the isle to open' });
+      await clickInIsle('[data-act="palette"]');
+      await waitFor(isOpen, { message: 'the palette to open from the ⌘' });
+      await paletteRect();
+
+      await setDock('left');
+      await waitFor(
+        () =>
+          h.shadow<boolean>(
+            'et-isle',
+            `(root) => root.querySelector('.r')?.dataset.dock === 'left'`,
+          ),
+        { message: 'the isle to regrow on the left' },
+      );
+      // Left dock: 8px to the right of the isle, the tops aligned.
+      const isle = await waitFor(
+        async () => {
+          const before = await isleRect();
+          await new Promise((done) => setTimeout(done, 200));
+          const after = await isleRect();
+          return before && after && before.x === after.x && before.y === after.y ? after : null;
+        },
+        { message: 'the isle’s toolbar to hold still on the left' },
+      );
+      expect(isle.x).toBeLessThan(100);
+      expect(await isOpen()).toBe(true);
+      expect(await isleView()).toBe('isle');
+      const panel = await paletteRect();
+      expect(Math.abs(panel.x - (isle.x + isle.w + 8))).toBeLessThanOrEqual(3);
+      expect(Math.abs(panel.y - isle.y)).toBeLessThanOrEqual(3);
+      h.assertNoErrors();
+    } finally {
+      await setDock('right');
+    }
+  });
 });
 
 describe('region picker (PR4)', () => {
