@@ -5,7 +5,7 @@ import type { BuiltPrompt } from './types';
 
 export const PROMPT_VERSION = 2;
 /** Bump when the text prompt or the output cleaning (cleanTextOutput) changes. */
-export const TEXT_PROMPT_VERSION = 1;
+export const TEXT_PROMPT_VERSION = 2;
 
 function languageLines(options: { source: LanguageCode | 'auto'; target: LanguageCode }) {
   return {

@@ -11,7 +11,7 @@ import {
   type Scheduler,
   type TaskContext,
 } from './scheduler';
-import { PROMPT } from './test-utils';
+import { PROMPT, sseResponse } from './test-utils';
 import type { ProviderAdapter, ProviderEvent } from './types';
 
 // ------------------------------------------------------------ fake network
@@ -590,6 +590,31 @@ describe('scheduler: truncated and blocked batches', () => {
       expect(calls).toEqual([['a', 'b', 'c', 'd'], ['a', 'b'], ['c', 'd'], ['c'], ['d']]);
     },
   );
+});
+
+describe('scheduler: LLM replies with inline reasoning', () => {
+  it('translates the batch in one request when the reasoning quotes an array', async () => {
+    const fn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+      const input = JSON.parse(body.messages[1]?.content.replace('USER ', '') ?? '[]') as {
+        i: number;
+      }[];
+      const items = input.map(({ i }) => ({ i, t: `译${i}` }));
+      const content = `<think>Input looks like [{"i":0,...}]. OK.</think>\n${JSON.stringify(items)}`;
+      return sseResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`,
+        'data: [DONE]\n\n',
+      ]);
+    });
+    const { submit } = setup({ fetch: fn as unknown as typeof fetch });
+    const { results } = submit(['a', 'b', 'c', 'd'], {
+      adapter: createOpenAICompatAdapter(),
+      engine: 'openai',
+    });
+    await at(5000);
+    expect(results).toEqual([ok('译0'), ok('译1'), ok('译2'), ok('译3')]);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('scheduler: fairness', () => {
