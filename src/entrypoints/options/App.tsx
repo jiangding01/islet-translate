@@ -17,14 +17,18 @@ const PAGES = [
   { id: 'services', title: 'options.nav.services', sub: 'options.nav.servicesSub' },
 ] as const satisfies { id: Page; title: string; sub: string }[];
 
-function pageFromHash(): Page {
-  return location.hash === '#general' ? 'general' : 'services';
+/**
+ * Opens on the general page; `#services` only when the caller came for the engines (the
+ * popup's "去设置" next to an engine problem). Exported for tests.
+ */
+export function pageFromHash(hash = location.hash): Page {
+  return hash === '#services' ? 'services' : 'general';
 }
 
 export function App() {
   const { state } = useConfig();
   const { api, notice } = useNoticeState();
-  const [page, setPage] = useState<Page>(pageFromHash);
+  const [page, setPage] = useState<Page>(() => pageFromHash());
   useTheme(state.status === 'ready' ? state.snapshot.data.ui.theme : undefined);
 
   useEffect(() => {
@@ -34,7 +38,7 @@ export function App() {
   }, []);
 
   const index = PAGES.findIndex((item) => item.id === page);
-  const current = PAGES[index] ?? PAGES[1];
+  const current = PAGES[index] ?? PAGES[0];
 
   return (
     <NoticeProvider api={api}>
