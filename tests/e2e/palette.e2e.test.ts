@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type Harness, launch, trackTests, waitFor } from './harness';
+import { type Harness, launch, mockTranslate, trackTests, waitFor } from './harness';
 import { type Ok, type PageState, prepare } from './support';
 
-// M3c PR1, PR2 and PR6: the command palette. A real `chrome.commands` key cannot be pressed through CDP,
+// M3c PR1, PR2, PR3 and PR6: the command palette. A real `chrome.commands` key cannot be pressed through CDP,
 // so `palette.toggle` is sent the way the background sends it for the shortcut. Keys and
 // text are real CDP input. Chinese UI: the commands are matched by their zh_CN titles.
 
@@ -22,6 +22,7 @@ const state = async () => (await h.tell<Ok<PageState>>('page.getState')).data;
 
 const ENTER = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
 const ESCAPE = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 };
+const ARROW_DOWN = { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 };
 
 async function press(key: Record<string, unknown>, text?: string) {
   await h.input('Input.dispatchKeyEvent', { type: 'keyDown', ...key, ...(text ? { text } : {}) });
@@ -65,7 +66,7 @@ describe('command palette', () => {
     h.assertNoErrors();
   });
 
-  it('runs the highlighted match on Enter: “只看” switches to translation only', async () => {
+  it('runs a picked match: “只看”, ↓ and Enter switch to translation only', async () => {
     await h.openPage('e2e-article.html');
     await h.tell('page.toggle');
     await waitFor(async () => (await state()).translated >= 8, {
@@ -73,12 +74,14 @@ describe('command palette', () => {
     });
     await openPalette();
     await h.input('Input.insertText', { text: '只看' });
+    // Plain text: the translate row comes first, Enter would translate it (PR3).
     await waitFor(
       async () =>
-        (await h.shadow<string>(HOST, `(root) => root.querySelector('.o .tt')?.textContent`)) ===
+        (await h.shadow<string>(HOST, `(root) => root.querySelector('#o1 .tt')?.textContent`)) ===
         '只看译文',
       { message: 'the translation-only command to be the first match' },
     );
+    await press(ARROW_DOWN);
     await press(ENTER, '\r');
     await waitFor(async () => (await state()).mode === 'translation', {
       message: 'the page to show translations only',
@@ -163,7 +166,8 @@ describe('command palette', () => {
   it('opens the settings page on “打开设置”', async () => {
     await h.openPage('e2e-article.html');
     await openPalette();
-    await h.input('Input.insertText', { text: '设置' });
+    // A leading slash only searches the commands.
+    await h.input('Input.insertText', { text: '/设置' });
     await waitFor(
       async () =>
         (await h.shadow<string>(HOST, `(root) => root.querySelector('.o .tt')?.textContent`)) ===
@@ -180,6 +184,124 @@ describe('command palette', () => {
     await waitFor(async () => !(await isOpen()), { message: 'the palette to close' });
     const options = await h.waitForExtPage('options.html');
     await options.close();
+    h.assertNoErrors();
+  });
+});
+
+describe('quick translate (PR3)', () => {
+  /** The result area's translation (or notice), '' while it is hidden. */
+  const resultText = () =>
+    h.shadow<string>(
+      HOST,
+      `(root) => { const r = root.querySelector('.qr'); return r && !r.hidden ? root.querySelector('.qt').textContent : ''; }`,
+    );
+  const rowTitle = (index: number) =>
+    h.shadow<string>(HOST, `(root) => root.querySelector('#o${index} .tt')?.textContent ?? ''`);
+
+  it('translates typed English on Enter; the result shows above the list, the palette stays', async () => {
+    await h.openPage('e2e-article.html');
+    // A slow service: the request is seen in flight first.
+    let release: () => void = () => {};
+    const held = new Promise<void>((done) => {
+      release = done;
+    });
+    h.mockGoogle(async () => {
+      await held;
+      return undefined;
+    });
+    await openPalette();
+    const source = 'The quiet harbour wakes before the fishing boats leave.';
+    await h.input('Input.insertText', { text: source });
+    await waitFor(async () => (await rowTitle(0)) === `翻译“${source}”`, {
+      message: 'the translate row to come first',
+    });
+    try {
+      await press(ENTER, '\r');
+      // Held at the service: the one request is there, and the lead spins meanwhile.
+      await waitFor(() => h.google.count === 1, { message: 'the request to reach the service' });
+      await waitFor(
+        () =>
+          h.shadow<boolean>(HOST, `(root) => root.querySelector('.r').hasAttribute('data-run')`),
+        { message: 'the lead to spin while the request runs' },
+      );
+    } finally {
+      release();
+    }
+    await waitFor(async () => (await resultText()) === mockTranslate(source), {
+      message: 'the translation to show',
+    });
+    expect(h.google.targets[h.google.texts.indexOf(source)]).toBe('zh-CN');
+    expect(await h.shadow<string>(HOST, `(root) => root.querySelector('.dr')?.textContent`)).toBe(
+      'English→简体中文',
+    );
+    expect(await isOpen()).toBe(true);
+    expect(await h.shadow<string>(HOST, `(root) => root.activeElement?.className`)).toBe('in');
+    // The copy row comes right after the translate row.
+    expect(await rowTitle(1)).toBe('复制译文');
+    h.assertNoErrors();
+  });
+
+  it('text in the target language goes into English (the request’s target is en)', async () => {
+    await h.openPage('e2e-article.html');
+    await openPalette();
+    const source = '今天的天气非常好，我们一起去公园散步，然后在湖边喝一杯咖啡吧。';
+    await h.input('Input.insertText', { text: source });
+    await press(ENTER, '\r');
+    await waitFor(() => h.google.texts.includes(source), { message: 'the request to be sent' });
+    expect(h.google.targets[h.google.texts.indexOf(source)]).toBe('en');
+    await waitFor(async () => (await resultText()) !== '', { message: 'the result to show' });
+    expect(await h.shadow<string>(HOST, `(root) => root.querySelector('.dr')?.textContent`)).toBe(
+      '简体中文→English',
+    );
+    h.assertNoErrors();
+  });
+
+  it('a leading slash only searches: Enter sends nothing', async () => {
+    await h.openPage('e2e-article.html');
+    await openPalette();
+    await h.input('Input.insertText', { text: '/hello world' });
+    await waitFor(() => h.shadow<boolean>(HOST, `(root) => !!root.querySelector('.em')`), {
+      message: 'no command to match',
+    });
+    await press(ENTER, '\r');
+    await new Promise((done) => setTimeout(done, 500));
+    expect(h.google.count).toBe(0);
+    expect(await resultText()).toBe('');
+    expect(await isOpen()).toBe(true);
+    h.assertNoErrors();
+  });
+
+  it('copies the translation with ↓ Enter and says so', async () => {
+    await h.openPage('e2e-article.html');
+    // The real clipboard cannot be read back here: in the content script's own (isolated)
+    // world, where the palette runs, writeText is replaced by a recorder.
+    await h.evalInContentWorld(`(() => {
+      window.__copied = [];
+      Object.defineProperty(navigator.clipboard, 'writeText', {
+        configurable: true,
+        value: async (text) => { window.__copied.push(text); },
+      });
+    })()`);
+    await openPalette();
+    const source = 'Lanterns glow along the old stone bridge.';
+    await h.input('Input.insertText', { text: source });
+    await press(ENTER, '\r');
+    await waitFor(async () => (await resultText()) === mockTranslate(source), {
+      message: 'the translation to show',
+    });
+    await press(ARROW_DOWN);
+    await press(ENTER, '\r');
+    await waitFor(async () => (await rowTitle(1)) === '已复制', {
+      message: 'the copy row to say it copied',
+    });
+    expect(await h.evalInContentWorld<string[]>('window.__copied')).toEqual([
+      mockTranslate(source),
+    ]);
+    expect(await isOpen()).toBe(true);
+    await waitFor(async () => (await rowTitle(1)) === '复制译文', {
+      message: 'the copy row to return',
+      timeout: 4000,
+    });
     h.assertNoErrors();
   });
 });

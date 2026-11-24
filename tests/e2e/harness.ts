@@ -80,8 +80,11 @@ export interface Harness {
   extensionId: string;
   /** The id of the test page's tab. */
   tabId: number;
-  /** Google requests seen (POST /t and GET /single) and every `q` they carried. */
-  google: { count: number; texts: string[] };
+  /**
+   * Google requests seen (POST /t and GET /single), every `q` they carried and, at the same
+   * index as each `q`, its request's target language (`tl`).
+   */
+  google: { count: number; texts: string[]; targets: string[] };
   /** Replaces the Google handler; no argument restores the default. */
   mockGoogle(handler?: GoogleHandler): void;
   /** Clears errors, unmocked requests, the worker log and the Google counters. */
@@ -337,7 +340,7 @@ async function start(
   const errors: string[] = [];
   const unmocked: string[] = [];
   const swLog: string[] = [];
-  const google = { count: 0, texts: [] as string[] };
+  const google = { count: 0, texts: [] as string[], targets: [] as string[] };
   let handler: GoogleHandler | undefined;
   /** Sessions we set up, by id; the test page is the first page, `sw` our worker. */
   const sessions = new Map<string, { targetId: string; label: string }>();
@@ -367,6 +370,8 @@ async function start(
     const texts = query.getAll('q');
     google.count += 1;
     google.texts.push(...texts);
+    const target = url.searchParams.get('tl') ?? '';
+    for (const _text of texts) google.targets.push(target);
     const replies = await Promise.all(
       texts.map(async (text) => (await handler?.(text, { html, single })) ?? mockTranslate(text)),
     );
@@ -551,7 +556,7 @@ async function start(
       handler = next;
     },
     resetLogs() {
-      for (const list of [errors, unmocked, swLog, google.texts]) list.length = 0;
+      for (const list of [errors, unmocked, swLog, google.texts, google.targets]) list.length = 0;
       google.count = 0;
     },
     async openPage(fixture) {

@@ -382,7 +382,7 @@ render:
 palette:
   # The dialog's accessible name.
   label: Command palette
-  placeholder: Type a command
+  placeholder: Type a command, or text to translate
   empty: No matching commands
   retryFailed: Retry failed paragraphs
   # Shown while the whole page is translated; opens the list of engines. Must end with "…"
@@ -392,3 +392,13 @@ palette:
   translateWith: Translate this page with…
   # Always available; opens the settings page in a new tab.
   openSettings: Open Settings
+  # Quick translate: the list's first row; Enter translates the typed text. $1: that text
+  # (cut on its own on screen, the closing quote kept).
+  translateText: Translate “$1”
+  # Quick translate: the text is over the limit and is not sent. $1: the limit, formatted (2000).
+  tooLong: The text is too long (over $1 characters). Shorten it and try again.
+  # The text is already in the target language, which is English, and so is the interface:
+  # nothing is sent.
+  alreadyTarget: Already in the target language
+  # The list's footnote, shown only while the input is empty.
+  slashHint: Start with / to search commands only

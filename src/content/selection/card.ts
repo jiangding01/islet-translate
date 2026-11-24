@@ -39,6 +39,7 @@ import {
   createCardRequests,
   MAX_SOURCE_LENGTH,
   type RequestEvent,
+  reliableLanguage,
   wantsPhonetic,
 } from './request';
 import { createSpeech, type SpeechEnv } from './speech';
@@ -175,16 +176,6 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 function languageLabel(tag: string): string | undefined {
   const code = normalizeLanguage(tag);
   return code ? languageName(code) : undefined;
-}
-
-/** The detected source language's tag when the detection is reliable. */
-function reliableLanguage(result: DetectedLanguages | undefined): string | undefined {
-  if (!result?.isReliable) return undefined;
-  let top: { language: string; percentage: number } | undefined;
-  for (const candidate of result.languages ?? []) {
-    if (!top || candidate.percentage > top.percentage) top = candidate;
-  }
-  return top?.language;
 }
 
 function sameRange(a: Range | undefined, b: Range | undefined): boolean {

@@ -4,6 +4,7 @@ import {
   defaultTargetLanguage,
   isObviouslyTargetScript,
   isTargetLanguage,
+  isTargetScript,
   normalizeLanguage,
 } from './languages';
 
@@ -102,5 +103,25 @@ describe('isObviouslyTargetScript', () => {
   it('does not pre-check other targets', () => {
     expect(isObviouslyTargetScript('Plain English text', 'en')).toBe(false);
     expect(isObviouslyTargetScript('これはテスト', 'en')).toBe(false);
+  });
+});
+
+describe('isTargetScript (the palette’s fallback when detection is unsure)', () => {
+  it.each([
+    ['你好', 'zh-CN', true],
+    ['你好', 'zh-TW', true],
+    ['漢字', 'ja', true],
+    ['你好', 'en', false],
+    ['ありがとう', 'ja', true],
+    ['ありがとう', 'zh-CN', false],
+    ['これは 한국어', 'ja', false],
+    ['안녕하세요 ok', 'ko', true],
+    ['안녕하세요', 'zh-CN', false],
+    ['hi there', 'en', true],
+    ['hi there', 'zh-CN', false],
+    ['hi 你', 'en', false],
+    ['123 !?', 'en', false],
+  ] as const)('%s in %s: %s', (text, target, expected) => {
+    expect(isTargetScript(text, target)).toBe(expected);
   });
 });

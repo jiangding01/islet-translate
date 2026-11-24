@@ -342,6 +342,7 @@ PR1 的范围：
 - **content**：7.5 → **7.75 KB**（PR1 合并时生效）。依据是审查实测：瘦身只省 9 B，最小实现在 7.53–7.57 KB，再加上互斥、失联处理和按住判断。
 - **page-runtime**：27 → **28 KB**（PR1 起生效）。PR1、PR4、PR5、PR6 都会改动它：Esc 让步、`region` 的两种用法、⌘ 与铰链联动，合计估算约 1.3–1.8 KB。
 - **palette-runtime**：新增预算 **15 KB**。估算 PR1 约 8 KB，PR3 约 +2.5 KB，PR4 约 +3.5 KB（引入 `dom-rules`、完整拦截列表、栈与稳定窗）。按实测落地，超出就再申请。
+  - 2026-11-24 用户批准：PR3 实测 14.26 KB，超出估算；palette-runtime 预算提到 **18 KB，已批准，PR4 合并时生效**（随 PR4 修改 `check-size.mjs`，PR3 不改）。
 - **background**：两条窄消息约 +0.3 KB，在 60 KB 预算内。
 
 ## 最脆弱的假设
@@ -424,7 +425,7 @@ PR1 的范围：
   - 打开期间页面状态不刷新：列表按打开时的 `state()` 计算。
   - 先关卡片再开指令台：若指令台因全屏或加载失败没有打开，卡片也已经被关掉。
   - 二级列表的占位复用灵岛的「这次用哪个引擎翻译」，与指令标题「切换翻译服务…」两种叫法并存。
-  - 占位文案在 PR1 用「输入指令」，PR3 加入快速翻译时改为方案定稿的「输入指令，或输入要翻译的文字」。
+  - 占位文案在 PR1 用「输入指令」：已在 PR3 更新为方案定稿的「输入指令，或输入要翻译的文字」。
   - 焦点交还到 iframe 内的元素时，keyup 落在 frame 里，顶层的 keyup 守卫会悬挂 1 s，这期间顶层同一个键的 keyup 可能被误吞。
   - halted 横条先打开、灵岛后展开时，一次 Esc 可能同时关掉两层（横条不持有焦点，Esc 由 window 监听；推测，未实测）。
 - **已知限制**（未实测，留给手测）：
@@ -504,6 +505,46 @@ PR1 的范围：
   - 扩展已失联、但会话尚未 halted 的窗口期内，点 ⌘ 没有反应，与快捷键路径一致（`togglePalette` 先做失联判断，不加载）。
   - 指令台打开期间切换停靠位置时，灵岛换到新边，指令台仍按打开时读到的停靠方向贴放（指令台不订阅配置），关掉重开即恢复。
   - 「焦点在地址栏时点 ⌘」与三种停靠的真实观感待真机验收。
+
+## PR3 实施记录（#77，分支 `feat/m3c-quick-translate`）
+- **范围**：拆分表第 3 行与「输入语义」一节：输入语义、方向反转（决定 7）、流式结果区、复制、过长与错误提示、列表脚注；顺带修过滤高亮的下标错位。视觉按 Design 原型 PaletteM3c 画板的结果态与脚注定稿值。
+- **代码**：
+  - `palette/palette.ts`：
+    - 输入语义：空输入列全部指令并显示脚注；以 `/` 开头只过滤（中文输入法打出的 `／`、`、` 视为同一个前缀，与 `normalizeQuery` 共用 `registry.ts` 的 `COMMAND_PREFIX`）；其他输入时列表第一行是「翻译“…”」（引号内文字单独截断，结尾引号保留），下面是匹配到的指令。Enter 在没有用 ↑↓ 移过高亮时永远执行翻译；用 ↓ 选中指令后 Enter 执行该指令。有输入、且没按过 ↑↓ 时，列表带 `data-hover`，指针悬停只显示比高亮淡一档的底色（`color-mix` 50%，只在这一状态下有），不改高亮和 `aria-activedescendant`，读屏听到的就是 Enter 会执行的那一行；其他状态下悬停直接移动高亮，不另画底色，所以不会同时出现两行高亮。点击翻译行以外的行后，Enter 跟随点击（与按过 ↑↓ 相同）。输入法组合期间沿用 `keys.ts` 的让步。
+    - 翻译：自建 `createCardRequests`（2000 字上限、SW 重启重试一次、迟到帧丢弃），请求 `stream: true`、`force: true`，方向反转时带 `target`。超过 2000 字直接显示指令台自己的过长提示，不做检测也不发请求。同一段文字再按 Enter 不重复请求，出错后再按 Enter 重试。
+    - 方向反转：纯函数 `quickDirection(from, target, ui)`。输入是目标语言时译成英文；目标是英文时译成浏览器界面语言；界面语言也是英文时显示「已经是目标语言」，不发请求。`detectLanguage` 失败（含同步抛出）或判为不可靠时，用 `lib/languages.ts` 的 `isTargetScript` 按书写系统兜底，同一书写系统就当作目标语言：有假名且没有谚文算日文；谚文占字母过半算韩文；汉字占字母过半时，目标是简体中文、繁体中文或日文都算同一书写系统；只有拉丁字母时，只在目标是英文时算同一书写系统。检测可靠、但检测到的是不支持的语言（如法语）时不兜底，按原目标语言翻译。读不到配置时按原目标语言翻译。
+    - 结果区在输入行与列表之间：方向行（语言名用 `languages.ts` 的自称，检测不到时用 `common.autoDetect`）、可选中的译文、流式光标、最大 168px 内部滚动并在下方有内容时加 22px 渐隐、`aria-live=polite`（流式期间 `aria-busy=true`）。流式增量用同一个 Text 节点 `appendData` 追加，遇到 reset 或最终文本不是延续时才整体替换；「是否贴底」在追加之前判断，所以一次长出超过 24px 也跟随到底，读者往上翻时不拉回。请求进行中输入行的琥珀点外加 1.5px 旋转弧。输入改变（去掉首尾空白后与已发送的文字不同）、进入引擎列表或关闭时，清掉结果并取消在途请求；检测结果迟到也丢弃。结果到达、列表重建时，高亮按行的身份（指令 id、引擎 id、翻译行）找回，不按下标。
+    - 复制：「复制译文」只在有译文时出现，排在翻译行之后的第一位（↓ 再 Enter）。用剪贴板 API，失败时在 Shadow 里用 textarea + `execCommand('copy')` 回退，焦点回到输入框；回退前核对译文与指令台仍是同一次，关闭后重开不会把旧译文复制进去。成功后该行约 1.5 s 显示对勾（`--et-color-isle-ok`）和「已复制」，指令台保持打开；关闭再打开后不残留。
+    - 译文可以用指针选中：译文区 `tabindex=-1`，按下时不拦默认动作，焦点留在指令台内。译文区有焦点时：可打印字符（含输入法开始组合）、Enter、Esc、Tab、↑↓ 交回输入框处理；Option（macOS）与 AltGr（Windows 上表现为 Ctrl+Alt）组合出的字符、死键也交回输入框；Shift+方向键、PageUp/PageDown、空格、Home/End 与 ⌘ / Ctrl 快捷键（复制等）留在原处，用来扩展选区和滚动；⌘A / Ctrl+A 只选中译文（`selectAllChildren`）。
+  - `palette/registry.ts`：`PaletteContext` 新增 `quick`（「最近一次快速翻译的结果」，决定 2）；新增指令 `quick.copy`（`sticky`：有结果时无论查询都排第一；`stays`：执行后不关闭）；`CommandApi` 新增 `copy()`；新增 `COMMAND_PREFIX`。新增纯函数 `matchRange(label, query)`：逐字符转小写并记下原串下标，在原串上切高亮，修掉「İ」这类转小写后变长的字符导致的错位。
+  - `lib/languages.ts`：新增 `isTargetScript`（复用已有的假名、谚文、字母正则；常驻层没有用到，tree-shaking 后 content 体积不变）。
+  - `selection/request.ts`：`TranslateArgs` 新增可选 `target`；`reliableLanguage` 从 `card.ts` 移到这里，卡片与指令台共用。
+  - `entrypoints/palette-runtime.ts`：自建 Port（写法同 `selection-runtime.ts`，首次请求时才连接），借入 `async (text) => browser.i18n.detectLanguage(text)`（同步抛出也变成 reject）。
+  - 常驻层（`content.ts`、bootstrap）与 `runtime-contract.ts` 都没有改动。
+- **语言检测放在 palette-runtime**：`check:build` 对按需模块只禁 `runtime.id`、`getURL` 与扩展地址，允许经 WXT 的 `browser` 调用 `i18n.detectLanguage`（page-runtime 已有同样写法）。所以没有经 deps 借用，content 体积不变。界面语言用 `lib/languages.ts` 的 `browserUiLanguage()`（`i18n.getUILanguage`），不是扩展加载的 locale 文件。
+- **文案**：新增 4 条 `palette.translateText`（带 `$1`）、`palette.alreadyTarget`、`palette.slashHint`、`palette.tooLong`（带 `$1`，2026-11-24 用户定稿：「文字太长（超过 $1 字），请删减后再翻译。」）；改 1 条 `palette.placeholder`。复用 `card.copy`「复制译文」、`card.copied`「已复制」、`card.unchanged`、`common.autoDetect`；错误文案用后台附带的 `userMessage`（`error-text.ts`）。zh_TW 的翻译行用「翻譯「$1」」。
+- **已知行为**：快速翻译用设置里的默认引擎，与划词卡片一致，不跟随本页会话的引擎（用户 2026-11-24 确认，代码不改）。
+- **体积**（gzip）：content 7.60 KB 不变；page-runtime 26.45 KB 不变；selection-runtime 18.19 → 18.20 KB（`target` 透传）；palette-runtime 9.54 → 14.26 KB（当前预算 15）。其中 Port 客户端约 1.0 KB，其余是请求层、语言表、书写系统兜底、结果区与样式。比方案估算的 +2.5 KB 多约 2.2 KB；用户已批准 PR4 合并时把预算提到 18 KB（见「体积」一节）。
+- **测试**：单测 +64（1957 → 2021，文件数 87 不变）：
+  - `palette.test.ts` +44：输入语义 10（空输入与脚注、`/` 只过滤不发请求、`／` 与 `、` 前缀、普通输入首行翻译并 Enter 翻译、↓ 选指令再 Enter、有输入时悬停不移动高亮、`data-hover` 随 ↑↓ 与输入切换、点击其他行后 Enter 跟随、输入法组合期间 Enter、长文字只截断引号内）；方向 12（译入目标、目标语言反转为英文、英文目标反转为界面语言、界面也是英文时提示且不发请求、检测失败与不可靠时汉字兜底为英文、其他书写系统不兜底、短「你好」、假名、谚文、拉丁字母只在英文目标时兜底、可靠检测到法语不兜底、`detectLanguage` 同步抛出）；结果 15（流式与光标与旋转弧、同一 Text 节点追加且一次长出超过 24px 仍跟随、往上翻时不拉回、结果到达时高亮跟着行走、同一文字不重复请求且出错后重试、溢出渐隐、输入变化取消请求并丢弃迟到帧、检测迟到不发请求、过长、错误用 `userMessage`、译文区可选中、译文区按键分流、Option / AltGr / 死键交回输入框而 ⌘C / Ctrl+C 留下、⌘A 只选译文、关闭取消请求）；复制 6（只在有结果时出现且排第一、↓ Enter 复制并约 1.5 s 后恢复、剪贴板失败回退 `execCommand`、两种方式都失败时不显示「已复制」、关闭重开后迟到的失败不回退复制、「已复制」不残留）；İ 高亮 1。
+  - `registry.test.ts` +3（快速翻译之后的情境、复制指令标题、`matchRange`），并补上 `copy` 的调用断言与 `／`、`、` 前缀断言；`request.test.ts` +2（`target` 透传、`reliableLanguage`）；`styles.test.ts` +2（结果区、脚注、翻译行截断；只在 `.ls[data-hover]` 下有较淡的悬停底色）；`languages.test.ts` +13（`isTargetScript` 表驱动）。
+  - 已有用例中按普通文字过滤再 Enter 的，改为 `/` 前缀（Enter 现在翻译文字）；占位断言改为新文案。happy-dom 没有 `document.execCommand`，复制回退用例在每条里定义、`afterEach` 删除。
+  - 先红后绿：首轮实现前 `palette.test.ts` 新增 24 条中 21 条失败、`registry.test.ts` 4 条失败。审查修复前新增与改写的用例中 15 条失败（`normalizeQuery` 前缀、全角前缀、悬停、汉字兜底、「你好」、假名、谚文、拉丁、同步抛出、Text 节点追加、高亮跟行、过长文案、译文区按键分流、⌘A、重开后迟到失败）；另有 5 条是旧实现本来就满足的回归保护（其他书写系统不兜底、法语不兜底、往上翻不拉回、同一文字不重复请求与出错重试、「已复制」不残留）。`request`、`styles`、`languages` 与首轮译文区 Esc 用例是实现后补的。
+  - e2e：`palette.e2e.test.ts` +4（70 → 74 通过，2 跳过不变）：英文句子 Enter 后，等到服务端收到这一个请求、看到旋转弧再放行（`try/finally` 保证放行），结果区出现 mock 译文，请求的 `tl` 为 `zh-CN`，方向行「English→简体中文」，「复制译文」排在翻译行之后；中文句子的请求 `tl` 为 `en`，方向行「简体中文→English」；`/hello world` Enter 不发任何请求；复制：先在内容脚本的隔离世界里把 `navigator.clipboard.writeText` 换成记录函数，↓ Enter 后断言写入的正是 mock 译文，该行显示「已复制」并恢复。harness 的 `google` 记录新增 `targets`，与 `texts` 按同一下标对齐（每个 `q` 记一次 `tl`）。已有的「只看」用例改为 ↓ 再 Enter，「打开设置」用例改为输入 `/设置`。
+- **审查修复**（check skill，两位 Opus 审查者，无阻断）：I1 短输入的书写系统兜底；I2 `／`、`、` 前缀；I3 文档写成终态；S1 `detectLanguage` 同步抛出；S2 高亮按行身份保持；S3 有输入时悬停不改高亮；S4 译文区按键分流与 ⌘A；S5 流式用同一 Text 节点追加、贴底判断前移；S6 回退复制前核对；S7 测试不再直接改写 `document.execCommand`，补重复 Enter、出错重试、「已复制」不残留；S8 e2e 的 `tl` 按 `q` 对齐、放行前等请求到达、读到真实写入内容；用户决定新增 `palette.tooLong`、快速翻译用默认引擎、预算 PR4 提到 18 KB。第 3 轮（增量审查，无阻断）：R1 悬停底色只在「悬停不移动高亮」的状态下启用（`.ls[data-hover]`），并比高亮淡一档，消除两行同时高亮；S-a 点击翻译行以外的行后 Enter 跟随点击；S-b 译文区把 Option / AltGr 组合出的字符与死键交回输入框；S-c 三份 locale 中 `alreadyTarget` 的注释移到该行正上方。第 3 轮单测 +3（2018 → 2021），实现前 4 条失败（含改写的样式断言），locale 注释的位置没有用例可测。
+- **与方案的偏差**：
+  - 决定 7 写的是用「bootstrap 借出的 `detectLanguage`」；实际在 palette-runtime 里直接调 `browser.i18n.detectLanguage`，理由见上，常驻层零改动。
+  - 快速翻译用设置里的默认引擎，不跟随本页会话的引擎（见「已知行为」）。
+  - 「Enter 永远执行翻译」落地为：只要没有用 ↑↓ 移过高亮，Enter 就翻译；这期间指针悬停只显示较淡的底色，不移动高亮；点击其他行后 Enter 跟随点击。
+  - 「复制译文排第一」指排在指令里的第一位，翻译行仍固定在列表第一行（「输入语义」一节写的是「按 ↓ 再按 Enter 即可复制」）。
+  - 过长提示没有复用卡片文案（卡片的写的是「选中的文字」），新增了指令台专用的 `palette.tooLong`。
+  - mock 引擎（Google）不分段返回，e2e 只能验证「请求进行中 → 整段出现」，逐段流式与光标由单测覆盖。
+- **已知限制**：
+  - 短输入：Chrome 对很短的文字（如「你好」）常判为不可靠，现在按书写系统兜底（规则见上）。兜底分不出同一书写系统里的不同语言：日文目标下输入纯汉字的中文、英文目标下输入其他拉丁字母语言的短词（检测不可靠时），都会被当作目标语言而反向翻译；方向行此时显示「自动检测」。
+  - 中文输入法下，在译文区按下的第一个键可能以原始字母落进输入框（焦点在 keydown 时才交回输入框，输入法还没接手）。
+  - 在译文区按可打印键时，依赖「keydown 期间把焦点移回输入框，字符落进输入框」的浏览器行为，单测只覆盖焦点交回。
+  - 翻译行引号内文字被截断时，省略号与结尾引号之间可能留出不到一个字宽的空隙（`text-overflow` 按整字裁切）。
+  - 真实剪贴板（系统剪贴板）的内容与回退路径未在 e2e 中验证：e2e 记录的是 `writeText` 收到的文字，待真机验收。
 
 ## 附录 A：第 1 稿审查处理记录（Opus 对抗式审查，2026-11-23）
 | 编号 | 问题 | 处理 |

@@ -12,7 +12,11 @@ const SANS = '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
 // .cn the content, placed at the final rectangle. Strip and rows: --et-h-strip 46,
 // --et-h-control-lg 36; radii --et-radius-xl 14, -md 8, -xs 4, -full; spacing --et-space-1…4
 // (4, 8, 12, 16); type --et-fs/lh-inject-lg 15/24, -md 13/20, -sm 12/18; weights 500, 600;
-// --et-dur-fast 120ms. Text starts 40px in on both the input and the rows.
+// --et-dur-fast 120ms. Text starts 40px in on both the input and the rows (and the footnote).
+// Quick translate (PR3): .qr the result above the list (padding --et-space-3/4, gap 6, at most
+// 168 tall), .dr its direction line (-sm 12/18), .qt the selectable translation (-lg 15/24)
+// with the card's caret and bottom fade; .ft the footnote (28 tall, --et-fs-inject-xs 11);
+// .arc the lead's spinning ring while a request runs (the isle's .arc, 1.5px).
 export const PALETTE_CSS = `
 .r{all:initial;position:absolute;inset:0;pointer-events:none;font:13px/20px ${SANS};color:var(--et-color-isle-text);cursor:default;-webkit-font-smoothing:antialiased}
 *{box-sizing:border-box}
@@ -31,12 +35,27 @@ svg{display:block;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;s
 .ld{position:relative;width:16px;height:16px;flex-shrink:0}
 .ld::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--et-color-accent)}
 .r[data-halted] .ld::after{background:var(--et-color-isle-warn)}
+.arc{position:absolute;inset:0;width:16px;height:16px;color:var(--et-color-accent);opacity:0;transform-origin:50% 50%;transition:opacity .2s}
+.arc path:last-child{stroke-dasharray:12 34}
+.r[data-run] .arc{opacity:1;animation:et-spin 1s linear infinite}
+@keyframes et-spin{to{transform:rotate(360deg)}}
 .bk{display:flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;color:var(--et-color-isle-dim)}
 .bk:hover{color:var(--et-color-isle-text)}
 .cp{display:flex;align-items:center;flex-shrink:0;height:24px;padding:0 8px;border-radius:999px;background:var(--et-color-isle-2);font-size:12px;line-height:18px;font-weight:500;white-space:nowrap}
 .in{flex:1;min-width:0;height:24px;margin:0;padding:0;border:0;outline:0;background:none;color:inherit;font:15px/24px ${SANS};caret-color:var(--et-color-accent);appearance:none;-webkit-appearance:none}
 .in::placeholder{color:var(--et-color-isle-dim)}
 .hs{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qr{display:flex;flex-direction:column;gap:6px;flex-shrink:0;max-height:168px;padding:12px 16px;border-top:1px solid var(--et-color-isle-2)}
+.dr{display:flex;align-items:center;gap:4px;flex-shrink:0;font-size:12px;line-height:18px;color:var(--et-color-isle-dim);white-space:nowrap}
+.dr svg{width:12px;height:12px}
+.qt{min-height:0;overflow-y:auto;overscroll-behavior:contain;outline:0;font-size:15px;line-height:24px;letter-spacing:.01em;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text;cursor:text;scrollbar-width:thin;scrollbar-color:color-mix(in oklab,var(--et-color-isle-dim) 40%,transparent) transparent}
+.qt::selection,.qt ::selection{background:color-mix(in oklab,var(--et-color-accent) 38%,transparent)}
+.qt[data-more]{mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
+.cr{display:inline-block;width:2px;height:15px;margin-left:2px;vertical-align:-2px;border-radius:1px;background:var(--et-color-accent);animation:et-pulse 1s ease-in-out infinite}
+@keyframes et-pulse{50%{opacity:.25}}
+.nc{margin:0;font-size:13px;line-height:20px;letter-spacing:0;white-space:normal;color:var(--et-color-isle-dim)}
+.nc[data-err]{color:var(--et-color-isle-text)}
+.nc[data-err]::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;border-radius:50%;vertical-align:2px;background:var(--et-color-isle-warn)}
 .ls{flex:1 1 auto;min-height:0;max-height:296px;margin:0;padding:4px;list-style:none;overflow-y:auto;overscroll-behavior:contain;border-top:1px solid var(--et-color-isle-2);scrollbar-width:thin;scrollbar-color:color-mix(in oklab,var(--et-color-isle-dim) 40%,transparent) transparent}
 .o,.em{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:8px;font-size:13px;line-height:20px}
 .o{cursor:pointer;user-select:none;-webkit-user-select:none}
@@ -48,7 +67,11 @@ svg{display:block;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;s
 .pi.pf{width:auto;min-width:16px;padding:0 2px;font-size:9px;white-space:nowrap}
 .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hl{color:var(--et-color-accent)}
+.qq{display:flex}
+.q{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ic .cd{color:var(--et-color-isle-ok)}
 .o[aria-selected="true"]{background:var(--et-color-isle-2)}
+.ls[data-hover] .o:hover:not([aria-disabled="true"]){background:color-mix(in oklab,var(--et-color-isle-2) 50%,transparent)}
 .o[aria-selected="true"] .ic{color:var(--et-color-accent)}
 .o[aria-disabled="true"]{cursor:default;color:var(--et-color-isle-dim)}
 .o[aria-disabled="true"] .ic{opacity:.5}
@@ -61,6 +84,9 @@ svg{display:block;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;s
 .tr+.ch{margin-left:-4px}
 .kb{flex-shrink:0;margin-left:12px;font-size:12px;letter-spacing:.08em;font-variant-numeric:tabular-nums;color:var(--et-color-isle-dim)}
 .kb:empty{display:none}
+.ft{display:flex;align-items:center;flex-shrink:0;height:28px;padding:0 16px 0 40px;font-size:11px;line-height:16px;color:var(--et-color-isle-dim);white-space:nowrap;overflow:hidden}
+.r[data-rm] .arc,.r[data-rm] .cr{animation:none}
+@media (prefers-reduced-motion:reduce){.arc,.cr{animation:none!important}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media print{.r{display:none}}
 `;

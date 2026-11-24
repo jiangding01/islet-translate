@@ -96,6 +96,8 @@ const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const HANGUL = /\p{Script=Hangul}/u;
 const LETTER = /\p{L}/gu;
 const HANGUL_LETTER = /\p{Script=Hangul}/gu;
+const HAN_LETTER = /\p{Script=Han}/gu;
+const LATIN_LETTER = /\p{Script=Latin}/gu;
 
 /**
  * The cheap, synchronous script precheck for the selection dot: true only for text that
@@ -114,4 +116,24 @@ export function isObviouslyTargetScript(text: string, target: LanguageCode): boo
     return hangul > 0 && hangul * 2 > letters;
   }
   return false;
+}
+
+/**
+ * The palette's quick translation, when detection fails or is unsure (docs/plans/m3c.md, PR3):
+ * whether `text` is written in `target`'s script, judged by its letters alone.
+ * - Kana and no hangul: Japanese.
+ * - Hangul for more than half the letters: Korean.
+ * - Han for more than half the letters: the script of Chinese (either) and Japanese targets.
+ * - Latin letters only: the script of an English target only.
+ */
+export function isTargetScript(text: string, target: LanguageCode): boolean {
+  const count = (letters: RegExp) => text.match(letters)?.length ?? 0;
+  const letters = count(LETTER);
+  if (!letters) return false;
+  if (KANA.test(text) && !HANGUL.test(text)) return target === 'ja';
+  if (count(HANGUL_LETTER) * 2 > letters) return target === 'ko';
+  if (count(HAN_LETTER) * 2 > letters) {
+    return target === 'zh-CN' || target === 'zh-TW' || target === 'ja';
+  }
+  return target === 'en' && count(LATIN_LETTER) === letters;
 }
