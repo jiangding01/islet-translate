@@ -214,3 +214,77 @@ describe('cleanTextOutput: labels and quotes the source already has', () => {
     expect(cleanTextOutput(output, source)).toBe(output);
   });
 });
+
+describe('decodeLlmOutput: reasoning inlined before the array', () => {
+  it('parses an output without reasoning, and reasoning without brackets', () => {
+    expect(decodeLlmOutput('[{"i":0,"t":"你好"}]', 1)).toEqual(['你好']);
+    const raw = '<think>Translate it plainly.</think>\n[{"i":0,"t":"你好"}]';
+    expect(decodeLlmOutput(raw, 1)).toEqual(['你好']);
+  });
+
+  it('ignores an array quoted in the reasoning', () => {
+    const raw = '<think>The input is [{"i":0,"t":"Hello"}], keep i.</think>\n[{"i":0,"t":"你好"}]';
+    expect(decodeLlmOutput(raw, 1)).toEqual(['你好']);
+  });
+
+  it('ignores a fenced source array in the reasoning instead of returning the source', () => {
+    const raw =
+      '<think>Input:\n```json\n[{"i":0,"t":"Hello world"}]\n```\nNow translate.</think>\n[{"i":0,"t":"你好世界"}]';
+    expect(decodeLlmOutput(raw, 1)).toEqual(['你好世界']);
+  });
+
+  it('cuts at the right place when lowercasing would change the length (İ)', () => {
+    const raw = 'İstanbul is [x].</think>[{"i":0,"t":"你好"}]';
+    expect(decodeLlmOutput(raw, 1)).toEqual(['你好']);
+  });
+
+  it('handles reasoning whose opening tag is missing', () => {
+    const quoted = 'The input is [{"i":0,"t":"Hello"}], keep i.</think>\n[{"i":0,"t":"你好"}]';
+    expect(decodeLlmOutput(quoted, 1)).toEqual(['你好']);
+    const fenced =
+      'Input:\n```json\n[{"i":0,"t":"Hello"}]\n```\n</think>\n\n```json\n[{"i":0,"t":"你好"}]\n```';
+    expect(decodeLlmOutput(fenced, 1)).toEqual(['你好']);
+  });
+
+  it('keeps think tags that are part of a translation', () => {
+    expect(decodeLlmOutput('[{"i":0,"t":"用 <think> 包住推理"}]', 1)).toEqual([
+      '用 <think> 包住推理',
+    ]);
+    // Cut at the first closing tag, so the one inside the translation stays.
+    const afterReasoning = '<think>Keep [tags].</think>[{"i":0,"t":"用 </think> 结束"}]';
+    expect(decodeLlmOutput(afterReasoning, 1)).toEqual(['用 </think> 结束']);
+    // Nothing usable after the tag: the whole output is read as before.
+    const fencedOnly = '```json\n[{"i":0,"t":"用 </think> 结束"}]\n```';
+    expect(decodeLlmOutput(fencedOnly, 1)).toEqual(['用 </think> 结束']);
+  });
+});
+
+describe('cleanTextOutput: reasoning before the translation', () => {
+  it('drops a think block (control)', () => {
+    expect(cleanTextOutput('<think>hmm</think>\n你好', 'Hello')).toBe('你好');
+  });
+
+  it('drops reasoning whose opening tag is missing', () => {
+    expect(cleanTextOutput('Hello means 你好.</think>\n\n你好', 'Hello')).toBe('你好');
+  });
+
+  it('cuts at the right place when lowercasing would change the length (İ)', () => {
+    expect(cleanTextOutput('İ means I.</think>Merhaba', 'Hello')).toBe('Merhaba');
+  });
+
+  it('drops reasoning that mentions a closing tag itself', () => {
+    const output = '<think>End with </think> here? No.</think>\n你好';
+    expect(cleanTextOutput(output, 'Hello')).toBe('你好');
+  });
+
+  it('drops reasoning before a translation that keeps the source think tag', () => {
+    const output = '<think>Keep the tag.</think>\n用 <think> 开始';
+    expect(cleanTextOutput(output, 'Start with <think>')).toBe('用 <think> 开始');
+  });
+
+  it('keeps a closing tag the source has', () => {
+    expect(cleanTextOutput('用 </think> 结束推理', 'Close with </think>')).toBe(
+      '用 </think> 结束推理',
+    );
+  });
+});

@@ -158,6 +158,8 @@ function isWrapped(text: string): boolean {
 
 /**
  * Cleans a `text` reply before it is used or cached:
+ * - drops everything up to the last `</think>` (reasoning, with or without its
+ *   opening tag, may itself mention the closing tag);
  * - drops `<think>…</think>` blocks (an unclosed one runs to the end);
  * - drops a leading label such as "译文：" or "Translation:";
  * - drops one pair of quotes around the whole reply.
@@ -167,6 +169,8 @@ function isWrapped(text: string): boolean {
 export function cleanTextOutput(output: string, source: string): string {
   const original = source.trim();
   let text = output;
+  // Split, not toLowerCase + lastIndexOf: lowercasing can change the length ("İ").
+  if (!original.toLowerCase().includes(THINK_CLOSE)) text = text.split(/<\/think>/i).at(-1) ?? '';
   if (!original.toLowerCase().includes(THINK_OPEN)) {
     text = text.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '');
   }
@@ -196,10 +200,23 @@ function parseArray(text: string): unknown[] | undefined {
 }
 
 /**
- * Tolerates Markdown fences and prose around the array. The whole output is
- * tried first, so a translation that itself contains a fence still parses.
+ * Reads the array out of the model output. The whole output is tried first, so
+ * a translation that itself contains a fence or think tag still parses. Then,
+ * when there is a `</think>`, the text after the first one: reasoning inlined
+ * ahead of the answer, with or without its opening tag, may quote the input
+ * array. Last, the whole output again, tolerating fences and prose.
  */
 function extractArray(raw: string): unknown[] | undefined {
+  const tail = /<\/think>([\s\S]*)/i.exec(raw)?.[1];
+  return (
+    parseArray(raw.trim()) ??
+    (tail === undefined ? undefined : extractLoose(tail)) ??
+    extractLoose(raw)
+  );
+}
+
+/** Tolerates Markdown fences and prose around the array. */
+function extractLoose(raw: string): unknown[] | undefined {
   const direct = parseArray(raw.trim());
   if (direct) return direct;
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw)?.[1];
