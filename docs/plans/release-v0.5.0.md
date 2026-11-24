@@ -1,6 +1,6 @@
 # 发版 v0.5.0 方案
 
-> 状态：发版 PR #待补；`v0.5.0` 标签在 PR 合并、main CI 全绿后，经用户确认再推送（第 2 步）。依据：发版节奏（主题批次收尾后发 0.x，M3c 收尾后发 v0.5.0，2026-11-24 用户说「开始发版」）；做法沿用 `docs/plans/release-v0.4.0.md`（发版工作流 `.github/workflows/release.yml` 已就绪，本次不改）。
+> 状态：发版 PR #82；`v0.5.0` 标签在 PR 合并、main CI 全绿后，经用户确认再推送（第 2 步）。依据：发版节奏（主题批次收尾后发 0.x，M3c 收尾后发 v0.5.0，2026-11-24 用户说「开始发版」）；做法沿用 `docs/plans/release-v0.4.0.md`（发版工作流 `.github/workflows/release.yml` 已就绪，本次不改）。
 
 ## 现状（2026-11-24，main `95818e5`）
 - `package.json` / `package-lock.json` 版本 `0.4.0`；已有 `v0.4.0` 标签与 GitHub Release。
