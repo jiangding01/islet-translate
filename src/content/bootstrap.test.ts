@@ -54,6 +54,11 @@ function fakeSession() {
     toggleAt: vi.fn(async () => {
       events.push('toggleAt');
     }),
+    region: vi.fn(async () => {
+      events.push('region');
+      phase = 'running';
+      return true;
+    }),
     state: vi.fn(snapshot),
     subscribe: vi.fn(() => () => {}),
   };
@@ -623,8 +628,30 @@ describe('palette runtime', () => {
     expect(deps.getConfig).toBe(paletteDeps.getConfig);
     expect(deps.send).toBe(paletteDeps.send);
     expect(Object.keys(deps.page).sort()).toEqual(
-      ['getState', 'retryFailed', 'setMode', 'start', 'stop', 'toggle'].sort(),
+      ['getState', 'region', 'retryFailed', 'setMode', 'start', 'stop', 'toggle'].sort(),
     );
+  });
+
+  it('region is the palette’s only: no page.region message; it loads the page runtime', async () => {
+    const t = setup();
+    // The six page messages, nothing more (an element cannot travel in a message).
+    expect(() => t.send('page.region')).toThrow('no handler for page.region');
+    await t.send('palette.toggle');
+    // A stand-in: the bootstrap only passes it through (this file runs without a DOM).
+    const root = {} as Element;
+    expect(t.load).not.toHaveBeenCalled();
+    expect(await paletteDepsOf(t).page.region('translate', root)).toBe(true);
+    expect(t.load).toHaveBeenCalledOnce();
+    expect(t.session.region).toHaveBeenCalledWith('translate', root);
+  });
+
+  it('region adds nothing once the session has halted', async () => {
+    const t = setup();
+    await t.send('page.start');
+    t.halt();
+    await t.send('palette.toggle');
+    expect(await paletteDepsOf(t).page.region('translate', {} as Element)).toBe(false);
+    expect(t.session.region).not.toHaveBeenCalled();
   });
 
   it('page actions lent to the palette give the same results as the page messages', async () => {
@@ -742,7 +769,7 @@ describe('palette runtime', () => {
     expect(t.loadPalette).toHaveBeenCalledOnce();
     expect(t.paletteRuntime.toggle).toHaveBeenCalledTimes(3);
     expect(Object.keys(paletteDepsOf(t).page).sort()).toEqual(
-      ['getState', 'retryFailed', 'setMode', 'start', 'stop', 'toggle'].sort(),
+      ['getState', 'region', 'retryFailed', 'setMode', 'start', 'stop', 'toggle'].sort(),
     );
   });
 

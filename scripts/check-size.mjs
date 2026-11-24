@@ -67,9 +67,10 @@ const entries = [
   {
     name: 'palette-runtime',
     // The command palette (M3c). Budget 15KB (2026-11-23, user approved, M3c plan): about
-    // 8KB in PR1, then quick translate (PR3) and the region picker (PR4). Raise explicitly,
-    // never quietly.
-    budget: 15 * KB,
+    // 8KB in PR1, then quick translate (PR3) and the region picker (PR4). Raised to 18KB
+    // (2026-11-24, user approved) after PR3 measured 14.26KB; in effect from PR4 (the region
+    // picker). Raise explicitly, never quietly.
+    budget: 18 * KB,
     files: runtimeFiles('palette-runtime'),
   },
   {

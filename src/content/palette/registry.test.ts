@@ -19,7 +19,7 @@ const ids = (ctx: PaletteContext, query = '') => listCommands(ctx, query).map((c
 describe('availability and order (empty input)', () => {
   // The seventh context, after a quick translation, is below (it needs a result in `ctx`).
   it.each([
-    ['idle', {}, ['page.translate', 'engine.switch', 'options.open']],
+    ['idle', {}, ['page.translate', 'engine.switch', 'region.translate', 'options.open']],
     [
       'a whole-page session in bilingual mode',
       { phase: 'running', engine: 'google' },
@@ -46,7 +46,7 @@ describe('availability and order (empty input)', () => {
     [
       'held paragraphs only (a local session)',
       { phase: 'done', scope: 'units' },
-      ['page.translate', 'page.restore', 'engine.switch', 'options.open'],
+      ['page.translate', 'page.restore', 'engine.switch', 'region.translate', 'options.open'],
     ],
     ['a halted session: nothing at all', { phase: 'running', halted: true }, []],
   ] as [string, Partial<PageState>, string[]][])('%s', (_label, state, expected) => {
@@ -55,7 +55,13 @@ describe('availability and order (empty input)', () => {
 
   it('after a quick translation: “复制译文” first, whatever the query', () => {
     const ctx: PaletteContext = { state: { ...IDLE_PAGE_STATE }, quick: { copied: false } };
-    expect(ids(ctx)).toEqual(['quick.copy', 'page.translate', 'engine.switch', 'options.open']);
+    expect(ids(ctx)).toEqual([
+      'quick.copy',
+      'page.translate',
+      'engine.switch',
+      'region.translate',
+      'options.open',
+    ]);
     // The input is the text that was translated: it matches no title, the copy row stays.
     expect(ids(ctx, 'hello world')).toEqual(['quick.copy']);
     expect(ids({ ...ctx, state: { ...IDLE_PAGE_STATE, phase: 'done', failed: 1 } })[0]).toBe(
@@ -73,6 +79,18 @@ describe('availability and order (empty input)', () => {
     expect(copy?.title({ state: IDLE_PAGE_STATE, quick: { copied: false } })).toBe('复制译文');
     expect(copy?.title({ state: IDLE_PAGE_STATE, quick: { copied: true } })).toBe('已复制');
     expect(copy?.stays).toBe(true);
+  });
+
+  it('offers “选择要翻译的区域” when idle or with held paragraphs only, as “翻译此页”', () => {
+    const region = COMMANDS.find((c) => c.id === 'region.translate');
+    expect(region?.title(ctxOf({}))).toBe('选择要翻译的区域');
+    expect(region?.when(ctxOf({}))).toBe(true);
+    expect(region?.when(ctxOf({ phase: 'running', scope: 'units' }))).toBe(true);
+    expect(region?.when(ctxOf({ phase: 'running' }))).toBe(false);
+    expect(region?.when(ctxOf({ phase: 'done' }))).toBe(false);
+    // Found by its title and by English keywords.
+    expect(ids(ctxOf({}), '/区域')).toEqual(['region.translate']);
+    expect(ids(ctxOf({}), 'area')).toEqual(['region.translate']);
   });
 
   it('titles the engine command by state: switch while translating, translate with … when idle', () => {
@@ -142,7 +160,7 @@ describe('running', () => {
       setMode: vi.fn(async () => IDLE_PAGE_STATE),
       retryFailed: vi.fn(async () => IDLE_PAGE_STATE),
     };
-    return { page, engines: vi.fn(), openSettings: vi.fn(), copy: vi.fn() };
+    return { page, engines: vi.fn(), openSettings: vi.fn(), copy: vi.fn(), pickRegion: vi.fn() };
   }
   const run = (id: string, ctx = ctxOf({ phase: 'running' })) => {
     const a = api();
@@ -165,6 +183,9 @@ describe('running', () => {
     expect(
       run('quick.copy', { state: IDLE_PAGE_STATE, quick: { copied: false } }).copy,
     ).toHaveBeenCalledOnce();
+    const region = run('region.translate', ctxOf({}));
+    expect(region.pickRegion).toHaveBeenCalledOnce();
+    expect(region.page.start).not.toHaveBeenCalled();
   });
 
   it('swallows a rejected action (the isle and the panel report the session)', async () => {

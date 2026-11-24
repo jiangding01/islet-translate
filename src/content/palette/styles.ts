@@ -1,9 +1,10 @@
-// The palette's shadow stylesheet (Design prototype, PaletteM3c board): every palette style
-// lives here. A string only (the sheet is built at mount, so evaluating the module touches no
-// DOM). Colors and the shadow come from tokens-isle.css, the only token file in the shadow;
-// sizes, radii and type follow tokens.css and are written out as values, with the token named
-// beside each group. `.r` resets what the page could pass down to the host. No `url(`
-// anywhere: the module may not load resources by address.
+// The palette's and the region picker's shadow stylesheets (Design prototype, PaletteM3c
+// board): every palette and picker style lives here. Strings only, plus the one function that
+// adopts them at mount, so evaluating the module touches no DOM. Colors and the shadow come
+// from tokens-isle.css, the only token file in the shadow; sizes, radii and type follow
+// tokens.css and are written out as values, with the token named beside each group. `.r`
+// resets what the page could pass down to the host. No `url(` anywhere: the module may not
+// load resources by address.
 
 /** tokens.css `--et-font-sans` (system fonts only). */
 const SANS = '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
@@ -88,5 +89,59 @@ svg{display:block;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.5;s
 .r[data-rm] .arc,.r[data-rm] .cr{animation:none}
 @media (prefers-reduced-motion:reduce){.arc,.cr{animation:none!important}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media print{.r{display:none}}
+`;
+
+/** Both hosts' inline styles: not hidden by the page's own rules, nor by `[data-et-only] > *`. */
+export const HOST_STYLE: readonly [string, string][] = [
+  ['position', 'fixed'],
+  ['inset', '0'],
+  ['pointer-events', 'none'],
+  ['z-index', '2147483647'],
+  ['contain', 'layout paint style'],
+  ['display', 'block'],
+];
+
+/**
+ * Gives a shadow root its stylesheet: a constructed sheet (the page's CSP does not apply), or
+ * a <style> element where that is not available.
+ */
+export function adoptSheet(win: Window, shadow: ShadowRoot, css: string): void {
+  const Sheet = (win as Window & { CSSStyleSheet?: typeof CSSStyleSheet }).CSSStyleSheet;
+  try {
+    if (Sheet && 'adoptedStyleSheets' in shadow) {
+      const sheet = new Sheet();
+      sheet.replaceSync(css);
+      shadow.adoptedStyleSheets = [sheet];
+      return;
+    }
+  } catch {
+    // Fall through to a <style> element.
+  }
+  const style = win.document.createElement('style');
+  style.textContent = css;
+  shadow.append(style);
+}
+
+// The region picker (PR4, boards 5 and 5b): .bx the box around the picked block (4px outside
+// it, --et-radius-sm 6), coral (`--et-color-warn`) with [data-over] when it is too large;
+// .hn the hint bar centred 24px above the viewport's bottom (36 tall, --et-radius-full,
+// --et-fs/lh-inject-sm 12/18), .k a key cap (20 tall, --et-radius-xs 4, -xs 11/16), .sp the
+// dots between hints, .dt the coral dot of the too-large hint. The box moves within
+// --et-dur-fast 120ms between blocks ([data-t]), not while the page scrolls.
+export const PICK_CSS = `
+.r{all:initial;position:absolute;inset:0;pointer-events:none;font:12px/18px ${SANS};color:var(--et-color-isle-dim);-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+.bx{position:absolute;left:0;top:0;border:2px solid var(--et-color-accent);border-radius:6px;background:color-mix(in oklab,var(--et-color-accent) 12%,transparent);box-shadow:0 0 0 1px color-mix(in oklab,var(--et-color-isle) 45%,transparent);pointer-events:none}
+.bx[data-t]{transition:left .12s,top .12s,width .12s,height .12s}
+.bx[data-over]{border-color:var(--et-color-warn);background:color-mix(in oklab,var(--et-color-warn) 9%,transparent)}
+.hn{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;max-width:calc(100% - 32px);height:36px;padding:0 16px;overflow:hidden;border-radius:999px;background:var(--et-color-isle);box-shadow:var(--et-shadow-isle);font-size:12px;line-height:18px;color:var(--et-color-isle-dim);white-space:nowrap}
+.k{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;min-width:20px;height:20px;padding:0 5px;border-radius:4px;background:var(--et-color-isle-2);color:var(--et-color-isle-text);font-size:11px;line-height:16px}
+.sp{margin:0 4px}
+.dt{width:6px;height:6px;flex-shrink:0;border-radius:50%;background:var(--et-color-isle-warn)}
+.wt{color:var(--et-color-isle-text)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;outline:0}
+@media (prefers-reduced-motion:reduce){.bx{transition:none!important}}
 @media print{.r{display:none}}
 `;

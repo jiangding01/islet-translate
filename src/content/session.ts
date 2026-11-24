@@ -11,6 +11,7 @@ import type {
 } from '@/lib/messaging/protocol';
 import { createPacer, discoverUnits, type Unit } from './discover';
 import {
+  HOLD_BLOCK_CHARS,
   HOST_TAGS,
   isInlineElement,
   isSingleLineLocked,
@@ -18,6 +19,7 @@ import {
   OWN_TAG,
   protectedAncestor,
   type StyleReader,
+  sourceLength,
 } from './dom-rules';
 import { errorText } from './error-text';
 import { routeKeyOf, watchMutations } from './mutations';
@@ -86,6 +88,14 @@ export interface PageSession {
    * and until a page session's first scan is registered.
    */
   toggleAt(point: { x: number; y: number }): Promise<void>;
+  /**
+   * The palette's region picker (docs/plans/m3c.md, PR4): every paragraph in `root` is
+   * translated as held paragraphs are (a `scope: 'units'` session, started here when idle,
+   * added to otherwise), under the page scan's rules. Paragraphs held away there come back.
+   * Changes nothing once halted, during a page session, or for a region over the hold limit.
+   * Resolves to whether anything was added to the translation (sent, from memory, retried).
+   */
+  region(kind: 'translate', root: Element): Promise<boolean>;
   state(): PageState;
   /**
    * Called with the current state at most once per frame after anything visible changed.
@@ -106,8 +116,6 @@ const LOOP_LIMIT = 3;
 const VIEWPORT_CHUNK = 500;
 const LOADING_DELAY_MS = 600;
 const LOADING_SCAN_MS = 300;
-/** A held paragraph's block is not scanned past this much text. */
-const HOLD_BLOCK_CHARS = 20_000;
 
 /** Engine-level problems: shown once, the session pauses instead of failing every paragraph. */
 export function isEngineLevel(error: AppError): boolean {
@@ -333,7 +341,9 @@ export function createPageSession(deps: SessionDeps): PageSession {
     const at = now();
     for (const [unit, since] of wantedAt) {
       if (shown.has(unit) || at - since < loadingDelay) continue;
-      if (!unfinished(unit) || !visibleRoots.has(unit.root) || !inView(unit.root)) continue;
+      // Held paragraphs and regions have no viewport observer: the real viewport alone decides.
+      const near = scope === 'units' || visibleRoots.has(unit.root);
+      if (!unfinished(unit) || !near || !inView(unit.root)) continue;
       shown.add(unit);
       void renderer.showLoading(unit);
     }
@@ -1056,15 +1066,13 @@ export function createPageSession(deps: SessionDeps): PageSession {
   /** The block a held paragraph is looked for in, unless it holds too much source text. */
   function holdBlock(el: Element): Element | undefined {
     const block = blockOf(el);
-    if (!block) return;
-    // Source text only: translations would double a translated block's length.
-    let size = block.textContent?.length ?? 0;
-    for (const tr of block.querySelectorAll(OWN_TAG)) size -= tr.textContent?.length ?? 0;
-    if (size <= HOLD_BLOCK_CHARS) return block;
+    if (block && sourceLength(block) <= HOLD_BLOCK_CHARS) return block;
   }
 
   async function toggleAt({ x, y }: { x: number; y: number }) {
     if (halted) return;
+    // Fresh layout reads for the block the paragraph is looked for in.
+    readStyle = deps.createReadStyle();
     const range = doc.caretRangeFromPoint(x, y);
     let hit = range?.startContainer;
     // Between an element's children (a mixed block): the child at the caret.
@@ -1085,7 +1093,12 @@ export function createPageSession(deps: SessionDeps): PageSession {
     const began = phase === 'idle';
     if (began) {
       if (own || !holdBlock(el)) return;
-      await begin({}, true);
+      // Its own session: `begin` bumps the epoch before its first await. Stopped and replaced
+      // by another meanwhile, it is not this hold's any more.
+      const starting = begin({}, true);
+      const mine = epoch;
+      await starting;
+      if (epoch !== mine) return;
     }
     if (!renderer || phase === 'idle' || halted || held) return;
     const current = epoch;
@@ -1117,8 +1130,9 @@ export function createPageSession(deps: SessionDeps): PageSession {
       }
     }
     if (!unit) {
-      // Begun for nothing (a too-long paragraph, say): leave no trace.
-      if (began) await stop();
+      // Begun for nothing (a too-long paragraph, say): leave no trace, unless a start has
+      // grown the session into the page meanwhile (that keeps the epoch).
+      if (began && scope === 'units') await stop();
       return;
     }
     const { root, seg } = unit;
@@ -1140,10 +1154,63 @@ export function createPageSession(deps: SessionDeps): PageSession {
     report();
   }
 
+  async function region(_kind: 'translate', root: Element): Promise<boolean> {
+    if (halted || (phase !== 'idle' && scope === 'page')) return false;
+    // The picker checked the size already; the page may have grown since.
+    if (root === doc.body || !doc.body.contains(root) || sourceLength(root) > HOLD_BLOCK_CHARS) {
+      return false;
+    }
+    // Fresh layout reads, as the picker's: the rescan's block must not reach past `root`.
+    readStyle = deps.createReadStyle();
+    const began = phase === 'idle';
+    let mine = epoch;
+    if (began) {
+      // `begin` bumps the epoch before its first await: from then on, that session is ours.
+      const starting = begin({}, true);
+      mine = epoch;
+      await starting;
+    }
+    // Stopped (and maybe replaced) meanwhile, or grown into the page: not ours to change.
+    if (epoch !== mine || !renderer || phase === 'idle' || halted || scope !== 'units') {
+      return false;
+    }
+    // The same reconciliation as a hold: old units there go, new ones register.
+    await rescan([root]);
+    if (epoch !== mine || scope !== 'units') return false;
+    let added = false;
+    for (const [unitRoot, units] of unitsByRoot) {
+      if (!root.contains(unitRoot)) continue;
+      for (const unit of units) {
+        // Held away before: picked again, it comes back.
+        excluded.get(unitRoot)?.delete(unit.seg.text);
+        const was = queued.has(unit);
+        if (failed.has(unit)) {
+          retry([unit]);
+          added = true;
+        } else if (want(unit)) {
+          // No `chosen`: a paragraph pinned to one line stays as the page scan leaves it.
+          added = true;
+          // Asked for just now: the dot shows at once on what is on screen.
+          if (inView(unit.root)) showNow(unit);
+          // From memory: queued for rendering, no request.
+        } else if (!was && queued.has(unit)) added = true;
+      }
+    }
+    if (!added) {
+      // Begun for nothing: leave no trace (still ours: no await since the check above).
+      if (began) await stop();
+      return false;
+    }
+    scheduleFlush(true);
+    report();
+    return true;
+  }
+
   return {
     start,
     stop,
     toggleAt,
+    region,
     async autoStart() {
       // Held paragraphs alone grow into the page like a start.
       if (phase !== 'idle' && scope !== 'units') return state();

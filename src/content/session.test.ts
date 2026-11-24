@@ -3124,3 +3124,238 @@ describe('page session: toggleAt (hold Ctrl over a paragraph)', () => {
     });
   });
 });
+
+describe('page session: region (the palette’s region picker)', () => {
+  const PAGE =
+    '<div id="r"><p id="a">First paragraph text.</p><p id="b">Second paragraph text.</p></div>' +
+    '<p id="c">Outside paragraph text.</p>';
+  const el = (selector: string) => document.querySelector(selector) as Element;
+  const point = document as unknown as { caretRangeFromPoint?: (x: number, y: number) => unknown };
+  const dots = () => document.querySelectorAll('et-tr[data-et-state="loading"]').length;
+  const styleSheets = () => document.head.querySelectorAll('style').length;
+
+  afterEach(() => {
+    delete point.caretRangeFromPoint;
+  });
+
+  it('with no session: translates only the region’s paragraphs, as held paragraphs', async () => {
+    const t = setup(PAGE);
+    expect(await t.session.region('translate', el('#r'))).toBe(true);
+    expect(t.session.state()).toMatchObject({ phase: 'running', scope: 'units' });
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    expect(t.sentTexts()).toEqual(['First paragraph text.', 'Second paragraph text.']);
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+    expect(el('#c').querySelector('et-tr')).toBeNull();
+    // No page scan: nothing observed, no status dot.
+    expect(t.observed).toEqual([]);
+    expect(t.statuses).toEqual([]);
+    expect(t.session.state()).toMatchObject({ phase: 'done', scope: 'units', translated: 2 });
+    await wait();
+    expect(t.port.calls).toHaveLength(1);
+  });
+
+  it('adds to a session of held paragraphs: what is translated stays, the rest comes', async () => {
+    const t = setup(PAGE);
+    await t.session.region('translate', el('#a'));
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(1));
+    expect(await t.session.region('translate', el('#r'))).toBe(true);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text)).toEqual([
+      'Second paragraph text.',
+    ]);
+    t.port.calls[1]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+    expect(el('#a').querySelectorAll('et-tr')).toHaveLength(1);
+    expect(t.session.state()).toMatchObject({ scope: 'units', translated: 2 });
+    // Everything there is translated already: nothing added.
+    expect(await t.session.region('translate', el('#r'))).toBe(false);
+  });
+
+  it('brings back a paragraph held away in the region (from memory: added all the same)', async () => {
+    const t = setup(PAGE);
+    await t.session.region('translate', el('#r'));
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+    // Held away (hold-to-toggle): restored and left alone.
+    point.caretRangeFromPoint = () => ({ startContainer: el('#a').firstChild, startOffset: 0 });
+    await t.session.toggleAt({ x: 1, y: 1 });
+    expect(translations()).toEqual(['译:Second paragraph text.']);
+    expect(await t.session.region('translate', el('#r'))).toBe(true);
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+    expect(el('#a').querySelectorAll('et-tr')).toHaveLength(1);
+    expect(t.port.calls).toHaveLength(1);
+  });
+
+  it('retries the region’s failed paragraphs', async () => {
+    const t = setup(PAGE);
+    await t.session.region('translate', el('#r'));
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    const call = t.port.calls[0] as Call;
+    const [first, second] = call.payload.items;
+    call.onChunk?.({
+      id: first?.id ?? '',
+      error: appError('provider', 'provider/bad-response', 'x'),
+    });
+    call.onChunk?.({
+      id: second?.id ?? '',
+      text: '译:Second paragraph text.',
+      disposition: 'translated',
+      cached: false,
+    });
+    call.finish({ status: 'done', data: { total: 2, failed: 1 } });
+    await vi.waitFor(() => expect(t.session.state().failed).toBe(1));
+    expect(await t.session.region('translate', el('#r'))).toBe(true);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text)).toEqual([
+      'First paragraph text.',
+    ]);
+  });
+
+  it('shows the loading dot at once on what is on screen; the rest gets it once scrolled in', async () => {
+    const near = new Set<Element>();
+    const t = setup(PAGE, undefined, {
+      loadingDelayMs: 0,
+      loadingScanMs: 10,
+      inViewport: (element) => near.has(element),
+    });
+    near.add(el('#a'));
+    await t.session.region('translate', el('#r'));
+    await vi.waitFor(() =>
+      expect(el('#a').querySelector('et-tr[data-et-state="loading"]')).not.toBeNull(),
+    );
+    expect(el('#b').querySelector('et-tr[data-et-state="loading"]')).toBeNull();
+    // #b scrolls in while still waiting: its dot comes; scrolled out, it goes; back, it returns.
+    near.add(el('#b'));
+    await vi.waitFor(() =>
+      expect(el('#b').querySelector('et-tr[data-et-state="loading"]')).not.toBeNull(),
+    );
+    near.delete(el('#b'));
+    await vi.waitFor(() =>
+      expect(el('#b').querySelector('et-tr[data-et-state="loading"]')).toBeNull(),
+    );
+    near.add(el('#b'));
+    await vi.waitFor(() => expect(dots()).toBe(2));
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+  });
+
+  it('changes nothing while the whole page is translated', async () => {
+    const t = setup(PAGE);
+    await t.session.start();
+    const before = t.session.state();
+    expect(await t.session.region('translate', el('#r'))).toBe(false);
+    expect(t.session.state()).toEqual(before);
+    await wait();
+    expect(t.port.calls).toEqual([]);
+  });
+
+  it('changes nothing for a region over the limit, though each paragraph would fit', async () => {
+    const part = `<div>${'word '.repeat(900)}</div>`;
+    const t = setup(`<div id="r">${part.repeat(5)}</div>`);
+    expect(await t.session.region('translate', el('#r'))).toBe(false);
+    await wait();
+    expect(t.port.calls).toEqual([]);
+    expect(t.session.state()).toEqual(IDLE_PAGE_STATE);
+    expect(styleSheets()).toBe(0);
+  });
+
+  it('leaves no trace when the region has nothing to translate', async () => {
+    const t = setup('<div id="r"><button>OK</button><code>x = 1</code></div><p>Page text.</p>');
+    expect(await t.session.region('translate', el('#r'))).toBe(false);
+    await wait();
+    expect(t.port.calls).toEqual([]);
+    expect(t.session.state()).toEqual(IDLE_PAGE_STATE);
+    expect(styleSheets()).toBe(0);
+    expect(t.configListeners).toEqual([]);
+  });
+
+  it('changes nothing for an element outside the page body', async () => {
+    const t = setup(PAGE);
+    const detached = document.createElement('p');
+    detached.textContent = 'Not in the page.';
+    expect(await t.session.region('translate', detached)).toBe(false);
+    expect(await t.session.region('translate', document.body)).toBe(false);
+    await wait();
+    expect(t.port.calls).toEqual([]);
+  });
+
+  it('reads the layout afresh for each region and each hold', async () => {
+    const createReadStyle = vi.fn(() => readStyle);
+    const t = setup(PAGE, undefined, { createReadStyle });
+    await t.session.region('translate', el('#a'));
+    const afterFirst = createReadStyle.mock.calls.length;
+    await t.session.region('translate', el('#b'));
+    expect(createReadStyle.mock.calls.length).toBeGreaterThan(afterFirst);
+    const beforeHold = createReadStyle.mock.calls.length;
+    point.caretRangeFromPoint = () => ({ startContainer: el('#c').firstChild, startOffset: 0 });
+    await t.session.toggleAt({ x: 1, y: 1 });
+    expect(createReadStyle.mock.calls.length).toBeGreaterThan(beforeHold);
+  });
+
+  it('a start afterwards grows it into the page, keeping the region’s translations', async () => {
+    const t = setup(PAGE);
+    await t.session.region('translate', el('#r'));
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    t.port.calls[0]?.answer();
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+    await t.session.start();
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(t.port.calls[1]?.payload.items.map((item) => item.text)).toEqual([
+      'Outside paragraph text.',
+    ]);
+  });
+
+  describe('a session it did not begin is never stopped by it', () => {
+    it('a start growing the session into the page during the region’s rescan', async () => {
+      const markup = '<div id="r"><button>OK</button></div><p id="p">Page text here.</p>';
+      let grow = false;
+      // The rescan reads the region's root first: the page start comes in right then.
+      const reader: StyleReader = (element) => {
+        if (grow && element.id === 'r') {
+          grow = false;
+          void t.session.start();
+        }
+        return readStyle(element);
+      };
+      const t = setup(markup, undefined, { createReadStyle: () => reader });
+      grow = true;
+      expect(await t.session.region('translate', el('#r'))).toBe(false);
+      await wait();
+      expect(t.session.state().phase).not.toBe('idle');
+      expect(t.session.state().scope).toBeUndefined();
+      t.show();
+      await vi.waitFor(() => expect(t.sentTexts()).toEqual(['Page text here.']));
+    });
+
+    it('a stop, then a hold beginning its own session, while the region set up', async () => {
+      const markup = '<div id="r"><button>OK</button></div><p id="p">Held paragraph text.</p>';
+      let release: () => void = () => {};
+      let calls = 0;
+      const t = setup(markup, async () => {
+        calls += 1;
+        // The region's own setup waits until the hold has begun its session.
+        if (calls === 1)
+          await new Promise<void>((done) => {
+            release = done;
+          });
+        return createDefaultConfig('zh-CN');
+      });
+      const pending = t.session.region('translate', el('#r'));
+      await t.session.stop();
+      point.caretRangeFromPoint = () => ({ startContainer: el('#p').firstChild, startOffset: 0 });
+      await t.session.toggleAt({ x: 1, y: 1 });
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+      release();
+      expect(await pending).toBe(false);
+      await wait();
+      expect(t.session.state()).toMatchObject({ scope: 'units' });
+      t.port.calls[0]?.answer();
+      await vi.waitFor(() => expect(translations()).toEqual(['译:Held paragraph text.']));
+    });
+  });
+});

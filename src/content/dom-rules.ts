@@ -7,11 +7,13 @@ export const OWN_TAG = 'ET-TR';
 export const ISLE_TAG = 'ET-ISLE';
 export const SELECTION_TAG = 'ET-SELECTION';
 export const PALETTE_TAG = 'ET-PALETTE';
+export const PICK_TAG = 'ET-PICK';
 /**
- * The page isle (M2b), the selection card (M3a) and the palette (M3c): never page content,
- * whatever node they end up under (the palette joins an open modal dialog).
+ * The page isle (M2b), the selection card (M3a), the palette and its region picker (M3c):
+ * never page content, whatever node they end up under (the palette and the picker join an
+ * open modal dialog).
  */
-export const HOST_TAGS: readonly string[] = [ISLE_TAG, SELECTION_TAG, PALETTE_TAG];
+export const HOST_TAGS: readonly string[] = [ISLE_TAG, SELECTION_TAG, PALETTE_TAG, PICK_TAG];
 
 /** Never descended into: their text is not prose, or not ours to touch. */
 export const SKIP_TAGS: ReadonlySet<string> = new Set([
@@ -35,6 +37,7 @@ export const SKIP_TAGS: ReadonlySet<string> = new Set([
   'ET-ISLE',
   'ET-SELECTION',
   'ET-PALETTE',
+  'ET-PICK',
   'PRE',
   'HEAD',
   // Ruby readings (furigana) are pronunciation, not text to translate.
@@ -211,6 +214,19 @@ export function isProtected(el: Element): boolean {
   if (isCodeToolbar(el)) return true;
   const selector = siteSelector(el);
   return selector !== '' && el.matches(selector);
+}
+
+/** A held paragraph's block, and a picked region, are never scanned past this much source text. */
+export const HOLD_BLOCK_CHARS = 20_000;
+
+/**
+ * The element's source text length: our translations (`et-tr`) inside do not count, so a
+ * translated block is not taken for twice its size.
+ */
+export function sourceLength(el: Element): number {
+  let size = el.textContent?.length ?? 0;
+  for (const tr of el.querySelectorAll(OWN_TAG)) size -= tr.textContent?.length ?? 0;
+  return size;
 }
 
 /** Skipped together with its whole subtree (cheap attribute checks only, no layout). */

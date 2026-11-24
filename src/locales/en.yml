@@ -402,3 +402,18 @@ palette:
   alreadyTarget: Already in the target language
   # The list's footnote, shown only while the input is empty.
   slashHint: Start with / to search commands only
+  # Command: picks an area of the page and translates only that (idle, or only some paragraphs
+  # translated).
+  regionTranslate: Select an area to translate
+  # The hint bar while picking an area: the key names (↑ ↓ Enter Esc) are not translated and
+  # live in the code; these are the verbs after them.
+  pick:
+    expand: Expand
+    shrink: Shrink
+    confirm: Confirm
+    cancel: Cancel
+    # The picked area holds over 20,000 characters: confirming does nothing, only shrinking
+    # or cancelling.
+    tooLarge: Area too large. Translate the whole page instead
+    # Screen reader announcement: confirmed, the area's paragraphs are being translated.
+    done: Area translated

@@ -213,7 +213,7 @@ chrome.commands "open-palette" ──► background（context-menu.ts onCommand�
   - `region('translate')` 沿用按住的 2 万字上限（`session.ts:1033-1041` 的 `holdBlock` 同一计数口径）。
   - 超过上限时，高亮框变成珊瑚色，提示「区域太大，可直接翻译此页」，Enter 不生效。
   - 局部会话可以用 `page.restore`（PR1）一次撤销。
-- **会话接口**：page-runtime 新增一个方法 `region(kind, root): Promise<PageState>`。
+- **会话接口**：page-runtime 新增一个方法 `region(kind, root): Promise<boolean>`，返回本次是否有单元加入翻译（PR4 实施时由 `Promise<PageState>` 改定，选择器据此决定是否播报）。
   - **`translate`（PR4）**：
     - 没有会话时，建立局部会话（`scope:'units'`），把 `root` 内的单元全部加入；
     - 已有局部会话时，追加到其中；
@@ -545,6 +545,87 @@ PR1 的范围：
   - 在译文区按可打印键时，依赖「keydown 期间把焦点移回输入框，字符落进输入框」的浏览器行为，单测只覆盖焦点交回。
   - 翻译行引号内文字被截断时，省略号与结尾引号之间可能留出不到一个字宽的空隙（`text-overflow` 按整字裁切）。
   - 真实剪贴板（系统剪贴板）的内容与回退路径未在 e2e 中验证：e2e 记录的是 `writeText` 收到的文字，待真机验收。
+
+## PR4 实施记录（#78，分支 `feat/m3c-region-translate`）
+- **范围**：拆分表第 4 行与「区域选择器」一节的 `translate` 部分：区域选择器、拦截、2 万字上限、`region('translate')`、`ET-PICK` 及其 DOM 约定。视觉按 Design 原型 PaletteM3c 画板第 5、5b 号定稿值。`region('exclude')` 留给 PR5。
+- **代码**：
+  - `palette/pick.ts`（新增）：选择器本体，由指令台创建并持有。
+    - 宿主 `ET-PICK`：closed shadow（`env.shadowMode ?? 'closed'`），挂法、主题探测与指令台相同（有模态对话框时挂进该对话框，`probeTheme` 取提示条位置），材质只引用 tokens-isle.css。shadow 里有高亮框 `.bx`、提示条 `.hn`（`role="status"`）、选择期间持有焦点的隐藏元素（`tabindex=-1`、`role="application"`、`aria-label` 为指令标题，不在选择期间时设 `hidden`，读屏浏览模式里不会留下一个「应用程序」节点）和一个读屏播报区。
+    - 进入：沿视口竖直中线依次在 50%、40%、60%、30%、70% 高度取点，取到第一个候选为止；都没有时提示条照常显示，Enter 无效。焦点移到隐藏元素上。结束（确认、取消、右键、`pagehide`、被打断）时隐藏框和提示条，`restoreFocus` 还给指令台打开时保存的焦点。
+    - 拦截：选择期间在 window 捕获阶段注册，只处理 `isTrusted` 事件。`keydown`/`keyup` 一律 `stopImmediatePropagation`，不带 ⌘ / Ctrl / Alt 的再 `preventDefault`；↑ 扩大、↓ 缩小、Enter 确认（以上不带修饰键）、Esc 取消；按住不放的 Enter、Esc（`event.repeat`）不再生效，按住的 ↑↓ 照常连续扩缩。`pointerdown`、`pointerup`、`mousedown`、`mouseup`、`click`、`dblclick`、`auxclick`、`contextmenu` 与悬停类的 `pointerover`/`mouseover`/`pointerenter`/`mouseenter`/`pointerout`/`mouseout`/`pointerleave`/`mouseleave` 一律 `preventDefault` + `stopImmediatePropagation`（不冒泡的事件也经过 window 的捕获阶段）。悬停跟踪用 window 捕获阶段的 passive `pointermove`，不拦截。由按键结束时，该键的 keyup 交给指令台已有的 `swallowKeyUp` 拦下；由点击确认或右键取消结束时，之后 500 ms 内在 window 捕获阶段继续吞掉按压类事件（`pointerdown` 到 `auxclick` 七种），同一手势的后续部分（双击的第二击、右键取消后漏出的 `mouseup`/`auxclick`）落不到网页上；落在自家宿主上的按压（指令台、灵岛；closed shadow 里的目标在 window 上被重定向为宿主）放行，开始新一轮选择时守卫立即撤掉。
+    - 点击：`detail >= 2` 的 click 只吞不确认；其余左键 click 取点击位置的候选：落在当前框内（含 ↑ 扩大后）确认当前框，落在别的块上就切到该块并确认它，没有候选时只吞不确认。
+    - 候选块：`elementsFromPoint` 取第一个不属于插件宿主的元素（`isOwnNode`），`et-tr` 归到它所在的原文元素；从该元素到 body 的祖先链上有 `isSkipped` 命中（含 `protectedAncestor` 的全部规则）时无候选；再向上找最近的块级祖先（`isInlineElement` 取反，每次进入选择新建一个 `createStyleReader`），`body`/`html` 不算。
+    - 扩缩：↑ 换成父级块并压栈，到 body 的直接子级为止；↓ 出栈，栈空时无操作。指针换到别的候选时清栈；指针在「它选中的那块」里移动不清栈（比较的是指针选中的块，不是 ↑ 之后的块）。
+    - 80 ms 稳定窗：新候选先不切换，到期后用指针最新位置再取一次，仍是同一候选才切换。
+    - 上限：`sourceLength(块) > HOLD_BLOCK_CHARS` 时框加 `data-over`（珊瑚色），提示条换成「区域太大，可直接翻译此页 · ↓ 缩小 · Esc 取消」，Enter 与点击确认无效。提示条内容只在正常态与超限态之间切换时重建（它是 `role="status"`，重建会被读出）。
+    - 框位置：按候选 `getBoundingClientRect()` 向外扩 4px；换块时带 120 ms 过渡（`data-t`），滚动、resize 时在 rAF 里重算且不带过渡；候选已离开文档就清掉高亮与栈。
+    - 挂载检查（`mounted()`，rAF 重算、每次按键、每次按压时都做）：`parent()` 变了就把宿主挂过去并重新聚焦——模态对话框打开时挂进去，被脚本关掉的对话框已不算 `:modal`，`parent()` 回到 `<html>`，宿主随之挂回；宿主仍不可见（`<html>` 或对话框本身被设成 `display:none`，`checkVisibility()` 为 false）就结束选择，这次按键或按压交还网页，不再看不见却吞掉所有输入。`prefers-reduced-motion` 下无过渡，打印时隐藏。
+    - 确认：结束选择、还焦点，再调用 `translate(root)`（即 `deps.page.region('translate', root)`）。每次进入、确认、取消都给序号加一；返回 true（确实有单元加入翻译）且序号仍是这次确认的，才在播报区写「已翻译该区域」，5 秒后清空。宿主在第一次进入时创建，之后留在页面上复用，播报不会因宿主移除而丢失；下次进入时清空播报区。
+  - `palette/palette.ts`：创建选择器（借出 `raf`、`matchMedia`、`elementsFromPoint`、`isTrusted`、模态对话框查找与 `swallowKeyUp`）。`CommandApi.pickRegion()`：先取出打开时保存的焦点，`close(false)`（不还焦点），再 `picker.start(焦点)`。`toggle()` 先 `picker.cancel()`（还焦点）再按原逻辑打开或关闭，所以选择期间按 ⌃⇧K 是「取消选择 + 打开指令台」；`close()`（划词卡片打开、失联时 bootstrap 会调）与 `dispose()` 也先结束选择。`HOST_STYLE` 与样式表挂载函数移到 `styles.ts`，两个宿主共用。指令行图标：选区四角（`PATH.region`）。
+  - `palette/registry.ts`：新增指令 `region.translate`（标题「选择要翻译的区域」，`when` 为 `canTranslate`，英文别名 `region`、`area`、`section`、`pick`），表中位置在 `engine.switch` 之后、`options.open` 之前。
+  - `palette/styles.ts`：新增 `PICK_CSS`（画板 5、5b 定稿值）、`HOST_STYLE`、`adoptSheet`。
+  - `dom-rules.ts`：新增 `PICK_TAG = 'ET-PICK'`，加进 `HOST_TAGS` 与 `SKIP_TAGS`；新增 `HOLD_BLOCK_CHARS`（2 万，原在 `session.ts`）与 `sourceLength(el)`（`textContent` 长度减去其中 `et-tr` 的长度），session 的 `holdBlock` 与选择器共用。`selection/watch.ts` 的 `isOwnNode` 走 `HOST_TAGS`，自动认 `ET-PICK`（只改了注释）。
+  - `session.ts`：
+    - `PageSession.region(kind, root): Promise<boolean>`，返回本次是否有单元加入翻译。halted、整页会话进行中、`root` 是 body 或不在 body 内、`sourceLength(root)` 超上限时返回 false。开头刷新 `readStyle`（与选择器的块级判断一致，`rescan` 的 `blockOf` 不会越过 `root`）。空闲时建立局部会话：`begin({}, true)` 在第一个 `await` 之前同步自增 epoch，调用后立即记下这个 epoch 作为「本次的会话」；`await` 回来后 epoch 变了（被停止、被别处新建）、会话已不是局部（被「翻译此页」长成整页）或没有 renderer 时返回 false，不碰别人的会话。`rescan([root])` 后再按同样条件检查一次。随后对 `root.contains(unit.root)` 的单元：删掉它在 `excluded` 里的记录；失败的 `retry`；其余 `want(unit)`（不传 `chosen`，单行锁定的段沿用整页扫描规则不翻译），进入翻译且在视口内的立即显示加载点；`want` 命中缓存直接进入渲染队列的也算加入。一个都没加入时返回 false，若会话是本次新建的就 `stop()`（同一个同步段里刚检查过所有权）；否则 `scheduleFlush(true)`、`report()`，返回 true。
+    - `toggleAt`：开头刷新 `readStyle`；新建局部会话时同样在 `begin` 调用后立即记下 epoch，`await` 回来 epoch 变了就返回；「新建却没找到单元就 `stop()`」加上 `scope === 'units'` 条件，不会停掉已被「翻译此页」长成整页的会话。
+    - `scanLoading`：局部会话（按住与区域）没有视口观察，加载点只按真实视口判断（`scope === 'units' || visibleRoots.has(unit.root)`，再加 `inView`）。区域里视口外的段滚进视口后会出现加载点，滚出后消失、滚回再现；按住的段同样受益。
+  - `runtime-contract.ts`：新增 `PaletteActions extends PageActions`，多一个 `region(kind: 'translate', root: Element): Promise<boolean>`；`PaletteRuntimeDeps.page` 改用它。`PageActions` 仍是 6 个动作。
+  - `bootstrap.ts`：`paletteActions = { ...actions, region }`，`region` 用 `load()` 加载 page-runtime，session 已 halted 时返回 false。`page.${name}` 消息循环仍只遍历 `actions`，没有 `page.region` 消息。
+  - `scripts/check-size.mjs`：palette-runtime 预算 15 → 18 KB（2026-11-24 用户批准，见「体积」一节）。
+- **文案**（三种语言同步）：`palette.regionTranslate`「选择要翻译的区域」；`palette.pick.expand`「扩大」、`.shrink`「缩小」、`.confirm`「确认」、`.cancel`「取消」、`.tooLarge`「区域太大，可直接翻译此页」、`.done`「已翻译该区域」。英文为 Select an area to translate / Expand / Shrink / Confirm / Cancel / Area too large. Translate the whole page instead / Area translated；繁体为 選擇要翻譯的區域 / 擴大 / 縮小 / 確認 / 取消 / 區域太大，可直接翻譯此頁 / 已翻譯該區域。键名 ↑ ↓ Enter Esc 写在代码里，不翻译。现有的「取消」都在设置页的对话框按钮下（`options.*.cancel`），也没有「确认」，所以没有跨界面复用，新增在 `palette.pick` 下。
+- **体积**（gzip）：content 7.60 → 7.63 KB（`paletteActions`）；page-runtime 26.45 → 26.67 KB（`region`、`sourceLength`、所有权与加载点修正）；palette-runtime 14.26 → 17.69 KB（预算 18）。palette-runtime 增加 3.43 KB，与方案估算的 +3.5 KB 相当（包含引入的 `dom-rules` 跳过与块级判断、完整拦截列表、栈与稳定窗、按压守卫与播报序号）。PR5 只剩约 0.31 KB 余量。
+- **测试**：单测 +73（2021 → 2094，文件 87 → 88）：
+  - `pick.test.ts`（新增）47：候选块 10（视口中心取块、中心无候选时依次试 40%/60%/30%/70%、跳过宿主与 `et-tr` 归属、body / html / nav / aria-hidden / 可编辑 / 输入框 / 空处无候选且 Enter 无效）；扩缩 3；稳定窗 3；上限 2；按键与按压 17（按键不到网页且不带修饰键的被 `preventDefault`、带 ⌘ / Ctrl 的不 `preventDefault`；按住的 Enter / Esc 无效而 ↑↓ 连续；伪造事件不处理；点击链接被拦下；悬停类事件含 enter/leave/out 都拦下；右键取消；点框内确认框住的块；不悬停直接点别的块确认被点的块；点在无候选处只吞；双击第二击只吞；稳定窗内点击确认点到的块；点击确认后 500 ms 内双击余下部分不到网页（`pointer*`、`mouse*` 用 Chrome 实际的 `detail: 0`）、之后恢复；守卫期间开始新一轮选择时点击立即可用；守卫期间点自家宿主不被吞；右键取消后漏出的 `mouseup`/`auxclick` 被吞）；焦点与结束 12（焦点在 `ET-PICK` 内、Esc 后还给原输入框并拦 keyup；Enter 翻译、还焦点、播报且 5 秒后清空、宿主复用；没有加入翻译时不播报；新一轮选择或被取消后迟到的结果不播报（2 条）；`cancel` 与 `dispose`；焦点元素不在选择期间时隐藏；`pagehide` 结束；跟随模态对话框重挂、宿主不可见时结束；按键与按压时也检查挂载点与可见性（不等 rAF），不可见时这次按键或按压交还网页；结束后按键与点击回到网页）；高亮框 2。断言读页面 DOM（框的位置与提示条），`Picker` 只暴露 `start`、`cancel`、`dispose`。
+  - `session.test.ts` +13：空闲时只译区域内的段（局部会话、不观察视口、不点亮状态点）；已有局部会话时追加、全部已译时返回 false；按住还原过的段从缓存回来也算加入；区域里失败的段 `retry`；在视口内的段立即有加载点、视口外的滚入后出现、滚出消失、滚回再现；整页会话中不动；5 段各 4500 字、合计超过 2 万字时不动；没有可译单元时不留痕迹（含 config 监听已注销）；body 与文档外元素不动；每次区域与按住都重新读布局；之后「翻译此页」沿用区域译文；并发 2 条（区域 rescan 期间「翻译此页」把会话长成整页、区域建会话期间被停止又被按住新建会话，两种都不会被区域 `stop()` 掉）。
+  - `palette.test.ts` +5：指令行有自己的图标，指令关闭指令台但焦点交给选择器、Esc 后还给页面输入框；Enter 经 `page.region` 翻译；选择期间再 toggle 先取消再打开指令台；`close()` 与 `dispose()` 打断选择。已有用例中空闲时的指令列表与快捷键列补上新指令（9 处）。
+  - `bootstrap.test.ts` +2（`page.region` 不是消息、`region` 加载 page-runtime 并转给 session；halted 时返回 false），两处借出动作表的键名断言补上 `region`；`registry.test.ts` +1（`region.translate` 的 `when` 与匹配）并补上空闲、局部、快速翻译之后三种情境的列表与执行断言；`styles.test.ts` +2（框与超限态、提示条与按键小方块的定稿值）；`dom-rules.test.ts` +2（`sourceLength` 口径、上限常量）并更新 `HOST_TAGS` 断言；`selection/watch.test.ts` +1（`isOwnNode` 认 `et-pick`）；`render.test.ts` 的宿主名锁定断言补上 `ET-PICK`；`isle.test.ts` 的假会话补上 `region`。
+  - 先红后绿：首轮实现前 `session.test.ts` 8 条、`bootstrap.test.ts` 4 条、`registry.test.ts` 5 条、`palette.test.ts` 集成用例 4 条失败，`pick.test.ts` 在模块存在前整体失败；`dom-rules`、`watch`、`styles` 的用例是实现后补的。审查修复前新增与改写的用例中 `pick.test.ts` 15 条、`session.test.ts` 12 条失败（其中多数先因返回值改为布尔失败）；另用变异逐条确认会话用例确实能抓住问题：上限改成无穷大、`scanLoading` 改回只看 `visibleRoots`、epoch 改回 `begin` 返回后才记录、去掉 rescan 后的局部检查、去掉 `readStyle` 刷新、去掉 `retry`，各有 1 条用例失败。e2e「按键不滚动页面」在去掉 `preventDefault` 的构建上失败（`scrollY` 变成 1120）。
+  - e2e：`palette.e2e.test.ts` +5（74 → 79 通过，2 跳过不变）：从指令台用键盘进入（`/区域` 后 Enter），指针移到 `#intro` 后框贴住它，↑ 扩到 `#article`，Enter 后只有 `#article` 内的段有译文、请求里没有区域外的文字、状态为局部；选择期间真实点击链接不跳转，点击确认的是链接所在段落；鼠标先停在 `#word` 上再用键盘进入（框从视口中心开始，不在 `#word`），在同一点只派发按下与松开、不带移动，确认的是 `#word`（在「总是确认当前框」的旧实现构建上确认会失败）；焦点在页面输入框时进入选择，按 Space、PageDown、↓、↑、← 后页面 `scrollY` 不变（页面可滚动），Esc 后焦点与光标位置回到输入框、网页冒泡阶段没收到任何按键；超过 2 万字的区域框变珊瑚色、提示条换文案，Enter 后仍在选择、没有请求。
+- **与方案的偏差**：
+  - `ET-PICK` 宿主第一次进入区域选择时创建，之后留在页面上复用（结束后只剩空的读屏播报区），不是只在选择期间存在。这样「已翻译该区域」不会因宿主移除而丢播报；`docs/dom-contract.md` 按实际行为写明。
+  - 右键取消只认 `contextmenu`；同一次右键漏出的 `pointerup`/`mouseup`/`auxclick` 由结束后的 500 ms 按压守卫吞掉。Chrome 里每次右键都会派发 `contextmenu`，macOS 上 Ctrl+点击也一样会取消。
+  - 左键点击确认的是点到的块（点在框内则是框住的块），不总是「当前候选」；`detail >= 2` 的点击不确认。
+  - `region` 返回布尔值（方案原写 `Promise<PageState>`），「已翻译该区域」只在确实加入了翻译时播报，5 秒后清空。
+  - Esc 带修饰键时也取消；↑ ↓ Enter 带 ⌘ / Ctrl / Alt 时不作为选择操作，只拦截不 `preventDefault`。
+  - 纯键盘进入时，视口中心没有候选会再试 40%、60%、30%、70% 高度。
+  - `session.region` 对失败的单元调用 `retry`，对进入翻译且在视口内的单元立即显示加载点。
+  - bootstrap 与 session 都判断 halted（bootstrap 返回 false，session 自身也守住）。
+  - 「取消」「确认」没有复用设置页对话框按钮的文案（理由见「文案」）。
+  - 结束后的按压守卫在 500 ms 内吞掉全部按压类事件，不只 `detail >= 2` 的：Chrome 的 `pointerdown`/`pointerup` 的 `detail` 为 0，按 `detail` 判断挡不住双击第二击的 `pointerdown`。代价是确认后半秒内的一次新单击也会被吞。
+- **已知限制**：
+  - 网页比我们更早在 window 捕获阶段注册的监听，仍会先收到按键和点击（与方案「残余风险」一致）。
+  - 候选块被网页移除后，高亮要等下一次滚动、resize 或换块时才清掉；这期间 Enter 与点击会先检查块是否还在文档里，不会翻译已移除的块。
+  - 确认后区域里新出现的内容不会自动翻译，与按住翻译的局部状态一致。
+  - 局部会话（按住与区域）里超过 5000 字的单段会被静默跳过，不加「此段过长，未翻译」的提示（整页扫描才加）。
+  - 指向 `pre`、按钮、输入框、导航、可编辑区等受保护或跳过的元素时没有候选，需要把指针移到旁边的正文上再 ↑ 扩大；在这些地方点击只吞不确认。
+  - 选择期间窗口失去焦点（切到别的应用）不会结束选择，回来后继续；离开页面（`pagehide`）会结束。
+  - 纯键盘时候选只能从视口中线的几个点开始，用 ↑ ↓ 调整，不能横向移动。
+- **审查修复（check skill 第 1 轮，两位 Opus 审查者，无高危）**：
+  1. 点击确认点到的块：框内确认框住的块，框外切到被点的块再确认，无候选只吞；改正原先在无候选处点击仍确认框住块的用例，补「不悬停直接点另一段」的 e2e。
+  2. `detail >= 2` 的点击只吞不确认（双击指令行时第二击不会立刻确认视口中心的块）。
+  3. 点击确认或右键取消后 500 ms 的按压守卫，吞掉同一手势的后续事件；dispose 时一并注销。
+  4. 按住的 Enter / Esc 不再生效，↑↓ 的重复保留。
+  5. 播报改为看 `region` 的布尔返回值，带序号丢弃过期结果，5 秒后清空播报区。
+  6. rAF 重算时跟随模态对话框重挂宿主，宿主不可见时结束选择。
+  7. `pagehide` 时结束选择。
+  8. 焦点元素不在选择期间时隐藏。
+  9. 纯键盘时视口中心无候选，沿中线依次试 40%、60%、30%、70% 高度。
+  10. 悬停类事件对称拦截：加上 enter / out / leave 六种。
+  11. 删掉初始化时多建的 `createStyleReader`；用例改为断言页面 DOM，`Picker` 去掉 `picking()`、`current()`。
+  12. e2e「光标不动」的断言换成选择期间按 Space、PageDown、↓ 后 `scrollY` 不变（在去掉 `preventDefault` 的构建上确认会失败）。
+  13. `region` 返回 `Promise<boolean>`，契约、bootstrap、选择器与「会话接口」一节同步。
+  14. 会话所有权：`begin` 调用后立即记下 epoch；结尾的 `stop()` 只停本次新建且仍是局部的会话；`toggleAt` 同样修正；补两条并发用例。
+  15. 局部会话的加载点只按真实视口判断，视口外的段滚入后也有加载点。
+  16. 「超上限不动」用例改为 5 段各 4500 字（单段不超过 5000 字），并确认把上限改成无穷大时它会失败。
+  17. 补测失败段 `retry`、视口内立即显示加载点、「不留痕迹」时 config 监听已注销。
+  18. 删掉 `region` 条件里不会成立的 `held`。
+  19. `region` 与 `toggleAt` 开头刷新 `readStyle`。
+  20. 文档：`et-pick` 的「遮罩」改为「区域选择框」；已知限制补局部会话静默跳过超长单段；实施记录里与代码不符的描述改准确。
+- **审查修复第 2 轮（增量审查，无中高危）**：
+  1. 守卫不误吞：`start()` 在 `listen(true)` 之前撤掉上一轮的按压守卫；守卫放行落在自家宿主上的事件（`isOwnNode(event.target)`）。补「500 ms 内开始新一轮选择，点击仍能确认」「守卫期间点指令台宿主不被吞」两条单测，实现前都失败。
+  2. 对话框被脚本关掉后选择器隐身：挂载与可见性检查抽成 `mounted()`，rAF 重算、`onKey`、`onPress` 开头都调用；注释改准（关闭的对话框已不算 `:modal`，由重挂处理；`checkVisibility` 管 `<html>` 或对话框本身被设成 `display:none`）。补两条单测（按键时随对话框重挂、不可见时按键与按压都交还网页并结束），实现前都失败。
+  3. e2e「不移动直接点另一段」改为：先把鼠标停在 `#word` 上再用键盘进入，在同一点只派发按下与松开；在旧实现（总是确认当前框）的构建上确认会失败（等不到 `#word` 的译文）。没有改 harness，直接用 `Input.dispatchMouseEvent`。
+  4. 双击守卫用例里 `pointer*` 与 `mouse*` 的余下事件改用 `detail: 0`（与 Chrome 一致）；把守卫改成只吞 `detail >= 2` 的变异会让它失败。
 
 ## 附录 A：第 1 稿审查处理记录（Opus 对抗式审查，2026-11-23）
 | 编号 | 问题 | 处理 |

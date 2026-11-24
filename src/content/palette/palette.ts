@@ -31,6 +31,7 @@ import {
 import { engineMark, SVG_NS } from '../svg-icon';
 import { restoreFocus, type SavedFocus, saveFocus } from './focus';
 import { keyAction, moveActive } from './keys';
+import { createPicker } from './pick';
 import { type PanelRect, placePanel } from './place';
 import {
   COMMAND_PREFIX,
@@ -40,7 +41,7 @@ import {
   normalizeQuery,
   type PaletteContext,
 } from './registry';
-import { PALETTE_CSS } from './styles';
+import { adoptSheet, HOST_STYLE, PALETTE_CSS } from './styles';
 
 // The command palette (docs/plans/m3c.md, PR1; Design prototype board PaletteM3c): its own
 // host `ET-PALETTE`, pulled out of the isle's edge; beside the isle when it shows (PR6: its
@@ -51,6 +52,8 @@ import { PALETTE_CSS } from './styles';
 // layer's box and the content's opacity and transform; layout is read only after the content
 // changed. Plain text typed (no leading `/`) is a quick translation (PR3): the list's first
 // row, run by Enter, streams the result above the list through the palette's own Port.
+// "选择要翻译的区域" (PR4) closes the palette and hands its saved focus to the region picker
+// (pick.ts), which gives it back to the page when the pick ends.
 
 type MediaQuery = Pick<MediaQueryList, 'matches'> &
   Partial<Pick<MediaQueryList, 'addEventListener' | 'removeEventListener'>>;
@@ -139,16 +142,6 @@ interface Row {
   run(): void;
 }
 
-const HOST_STYLE: [string, string][] = [
-  ['position', 'fixed'],
-  ['inset', '0'],
-  ['pointer-events', 'none'],
-  ['z-index', '2147483647'],
-  ['contain', 'layout paint style'],
-  // Not hidden by the page's own rules, nor by translation-only's `[data-et-only] > *`.
-  ['display', 'block'],
-];
-
 /** Keys and text input stop at the shadow root: the page sees none of them (blocker B1). */
 const ISOLATED = [
   'keydown',
@@ -187,6 +180,8 @@ const PATH = {
   back: 'M10 3.5 5.5 8l4.5 4.5',
   more: 'M6 3.5 10.5 8 6 12.5',
   check: 'M3.5 8.4l3 3 6-6.4',
+  /** Four corners of a selection: the region picker. */
+  region: 'M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3',
   copy: 'M7.3 5.5h4.4a1.8 1.8 0 0 1 1.8 1.8v4.4a1.8 1.8 0 0 1-1.8 1.8H7.3a1.8 1.8 0 0 1-1.8-1.8V7.3a1.8 1.8 0 0 1 1.8-1.8zM10.5 5.5V4.3a1.8 1.8 0 0 0-1.8-1.8H4.3a1.8 1.8 0 0 0-1.8 1.8v4.4a1.8 1.8 0 0 0 1.8 1.8h1.2',
   /** 12px grid: the result's direction line. */
   arrow: 'M2 6h8M7 3l3 3-3 3',
@@ -211,6 +206,7 @@ const COMMAND_ICONS: Record<string, string> = {
   'engine.switch': PATH.engine,
   'options.open': PATH.settings,
   'quick.copy': PATH.copy,
+  'region.translate': PATH.region,
 };
 /** The commands that show their bound key, and the manifest command each one reads. */
 const SHORTCUT_OF: Record<string, keyof PaletteShortcuts> = {
@@ -301,6 +297,22 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
   /** The arrows moved the highlight since the last input: Enter runs it, not the translation. */
   let keyed = false;
   const requests = createCardRequests({ port, currentSource: () => quick?.source });
+  /** "选择要翻译的区域" (PR4): its own host, started once the palette has closed. */
+  const picker = createPicker({
+    env: {
+      win,
+      raf,
+      cancelRaf,
+      matchMedia: media,
+      elementsFromPoint: env.elementsFromPoint,
+      getComputedStyle: env.getComputedStyle,
+      shadowMode: env.shadowMode,
+      isTrusted: trusted,
+    },
+    parent: () => modalDialog() ?? doc.documentElement,
+    guardKeyUp: swallowKeyUp,
+    translate: (root) => deps.page.region('translate', root),
+  });
   /** The streamed translation's text node, and its caret (moved, never rebuilt). */
   let streamed: Text | undefined;
   const caret = doc.createElement('span');
@@ -337,22 +349,6 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
     return svg;
   }
 
-  function adoptStyles(shadow: ShadowRoot) {
-    const css = `${isleTokens}\n${PALETTE_CSS}`;
-    const Sheet = (win as Window & { CSSStyleSheet?: typeof CSSStyleSheet }).CSSStyleSheet;
-    try {
-      if (Sheet && 'adoptedStyleSheets' in shadow) {
-        const sheet = new Sheet();
-        sheet.replaceSync(css);
-        shadow.adoptedStyleSheets = [sheet];
-        return;
-      }
-    } catch {
-      // Fall through to a <style> element.
-    }
-    shadow.append(node('style', {}, css));
-  }
-
   /**
    * The top-most modal dialog: everything outside it is inert, so the host goes inside it
    * (docs/plans/m3c.md, weakest assumption 2). Undefined when none is open.
@@ -377,7 +373,7 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
     // The page's own language must not leak in: it picks fonts and the screen reader's voice.
     element.setAttribute('lang', uiLocale());
     const shadowRoot = element.attachShadow({ mode: env.shadowMode ?? 'closed' });
-    adoptStyles(shadowRoot);
+    adoptSheet(win, shadowRoot, `${isleTokens}\n${PALETTE_CSS}`);
     const label = message('palette.label');
     const lead = node(
       'span',
@@ -502,6 +498,13 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
     page: deps.page,
     copy() {
       void copy();
+    },
+    pickRegion() {
+      // The page's focus goes to the picker, not back to the page (decision 2): the picker
+      // hands it back when the pick ends.
+      const focus = saved;
+      close(false);
+      picker.start(focus);
     },
     openSettings() {
       close();
@@ -1425,6 +1428,9 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
 
   return {
     toggle() {
+      // One floating layer at a time (decision 5): the shortcut ends a pick (the focus goes
+      // back to the page), then opens the palette.
+      picker.cancel();
       // A host the page removed, or hid with the dialog it sat in, is not open whatever the
       // flag says: the shortcut opens a new palette instead of closing an invisible one.
       if (open && host?.isConnected && host.checkVisibility?.() !== false) close();
@@ -1437,10 +1443,12 @@ export function createPalette({ deps, port, env }: PaletteOptions): PaletteRunti
       }
     },
     close() {
+      picker.cancel();
       close();
     },
     dispose() {
       if (disposed) return;
+      picker.dispose();
       close();
       disposed = true;
       unguard();
