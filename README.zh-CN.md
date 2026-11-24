@@ -52,7 +52,7 @@
 | 控制条（灵岛） | 翻译时，一个小条贴在网页边缘。<br>可以切换显示方式、重试没译出的段落，并只为本页更换引擎；末尾的 ⌘ 按钮打开指令台。<br>可停靠在右侧、左侧或底部。 | <img src="docs/assets/readme/zh-isle.png" width="240" alt="停靠在右侧的控制条"> |
 | 单段翻译 | 不必翻译整页：指针停在段落上，按住 Ctrl（macOS 为 ⌃）约 0.6 秒，只翻译这一段，再按住还原；可在设置中改为 Alt（macOS 为 ⌥ Option）或关闭。<br>此时灵岛不出现，面板仍显示「翻译此页」；之后再开整页翻译，已译的段会沿用。<br>整页翻译进行中，同样的手势可以还原已译的段并不再翻译它，或立即翻译还没轮到的段。 | <sub>示例图待补充</sub> |
 | 划词卡片与音标 | 选中外文，选区末尾出现琥珀小点；点击或停留片刻，翻译卡片就长出来。右键菜单和快捷键同样可用。<br>AI 引擎的译文边生成边显示。卡片可以换引擎、折叠原文、复制译文、朗读原文，也可以固定并拖动。<br>选中单个英文单词时显示 **UK** / **US** 音标，来自离线词表（约 17.5 万 / 11.7 万词），点击按对应口音朗读。 | <img src="docs/assets/readme/zh-card.png" width="240" alt="划词卡片，单词带英美音标"> |
-| 指令台 | 在任何网页上按 `⌃⇧K`（Windows / Linux 为 `Alt+Shift+K`），焦点在输入框里也行，或点灵岛上的 ⌘ 按钮，弹出一个指令输入框（灵岛在页面上时贴着它展开）：翻译此页、显示原文、切换双语 / 只看译文、重试失败的段落、为本页选择翻译服务、打开设置；翻译此页 / 显示原文的行尾显示当前生效的快捷键。输入即过滤，↑↓ 选择、Enter 执行、Esc 返回。<br>输入其他文字后按 Enter 即可就地翻译：译文流式显示在列表上方，输入已经是目标语言时反过来翻译：译成英文，目标语言本身是英文时译成浏览器界面语言；按 ↓ 再按 Enter 复制译文，以 `/` 开头则只搜索指令。<br>在指令台里打的字不会触发网页自己的快捷键；关闭后焦点和选区原样还给网页。 | <sub>示例图待补充</sub> |
+| 指令台 | 在任何网页上按 `⌃⇧K`（Windows / Linux 为 `Alt+Shift+K`），焦点在输入框里也行，或点灵岛上的 ⌘ 按钮，弹出一个指令输入框（灵岛在页面上时贴着它展开）：翻译此页、显示原文、切换双语 / 只看译文、重试失败的段落、为本页选择翻译服务、打开设置；翻译此页 / 显示原文的行尾显示当前生效的快捷键。输入即过滤，↑↓ 选择、Enter 执行、Esc 返回。<br>输入其他文字后按 Enter 即可就地翻译：译文流式显示在列表上方，输入已经是目标语言时反过来翻译：译成英文，目标语言本身是英文时译成浏览器界面语言；按 ↓ 再按 Enter 复制译文，以 `/` 开头则只搜索指令。<br>「选择要翻译的区域」只翻译框住的一块（↑ 扩大、↓ 缩小、Enter 确认、Esc 取消）；整页翻译时「选择不翻译的区域」把侧栏、评论区等排除在外。<br>在指令台里打的字不会触发网页自己的快捷键；关闭后焦点和选区原样还给网页。 | <sub>示例图待补充</sub> |
 | 仅译文 | 隐藏原文，只显示译文，同时保持网页版面。随时切回双语，页面会原样恢复。 | <img src="docs/assets/readme/zh-only.png" width="240" alt="仅译文模式下的网页"> |
 | 工具栏面板 | 显示当前网站和页面语言，切换目标语言和默认引擎。<br>母语页面、浏览器页面、需要刷新的页面各有安静的提示。页面已声明为你的语言时，仍保留「仍然翻译」和目标语言选择。 | <sub>示例图待补充</sub> |
 | 设置页 · 通用 | 目标语言、源语言、外观、带预览的译文样式、打开时显示、灵岛位置和划词小点。 | <img src="docs/assets/readme/zh-options-general.png" width="240" alt="设置页通用页"> |
@@ -68,7 +68,7 @@
 
 **从 GitHub Release 下载**
 
-1. 打开 [Releases](https://github.com/jiangding01/islet-translate/releases) 页面，在最新版本里下载 `Islet-Translate-v<版本号>-chrome.zip`（例如 `Islet-Translate-v0.4.0-chrome.zip`）。
+1. 打开 [Releases](https://github.com/jiangding01/islet-translate/releases) 页面，在最新版本里下载 `Islet-Translate-v<版本号>-chrome.zip`（例如 `Islet-Translate-v0.5.0-chrome.zip`）。
 2. 解压后打开 `chrome://extensions`，启用「开发者模式」，点击「加载已解压的扩展程序」，选择解压出的文件夹。
 3. 可选：每个版本还附带一个 `.sha256` 文件。在 zip 所在目录运行 `sha256sum -c Islet-Translate-v<版本号>-chrome.zip.sha256`（macOS 用 `shasum -a 256 -c`）即可校验下载。
 
@@ -169,7 +169,7 @@ npm run dev
 | content | 7.75 KB |
 | page-runtime | 28 KB |
 | selection-runtime | 19 KB |
-| palette-runtime | 15 KB |
+| palette-runtime | 18 KB |
 | background | 60 KB |
 | popup | 90 KB |
 | options | 150 KB |
@@ -357,7 +357,9 @@ node scripts/screenshots/shoot.mjs --ui zh_CN --article en
 | ✅ 已完成 | v0.3.0（GitHub Release） |
 | ✅ 已完成 | M3b 段落级交互 |
 | ✅ 已完成 | v0.4.0（GitHub Release） |
-| 进行中 | M3c 指令台与控制条键盘操作（PR1 指令台本体、PR2 设置入口与快捷键显示、PR6 灵岛 ⌘ 入口、PR3 快速翻译框已完成；下一步 PR4 翻译一个区域，再做 PR5） |
+| ✅ 已完成 | M3c 指令台与控制条键盘操作 |
+| ✅ 已完成 | v0.5.0（GitHub Release） |
+| 下一步 | 体验债小批：AI 批量翻译逐段显示等 |
 | 之后 | M3e Chrome 内置本地引擎 |
 | 之后 | M4 专家风格、术语库、输入翻译、卡片多引擎对比 |
 | 之后 | M5 YouTube 字幕、文章精翻、生词本、双语导出 |
