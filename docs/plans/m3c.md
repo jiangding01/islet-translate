@@ -627,7 +627,7 @@ PR1 的范围：
   3. e2e「不移动直接点另一段」改为：先把鼠标停在 `#word` 上再用键盘进入，在同一点只派发按下与松开；在旧实现（总是确认当前框）的构建上确认会失败（等不到 `#word` 的译文）。没有改 harness，直接用 `Input.dispatchMouseEvent`。
   4. 双击守卫用例里 `pointer*` 与 `mouse*` 的余下事件改用 `detail: 0`（与 Chrome 一致）；把守卫改成只吞 `detail >= 2` 的变异会让它失败。
 
-## PR5 实施记录（#待补，分支 `feat/m3c-region-exclude`）
+## PR5 实施记录（#79，分支 `feat/m3c-region-exclude`）
 - **范围**：拆分表第 5 行与「区域选择器」一节的 `exclude` 部分（重要项 I3）：指令 `region.exclude`、选择器的种类参数、`region('exclude')`、`excludedRoots` 的判断、取消区域里待发与在途的段（不取消 Port 请求，见「与方案的偏差」）、路由变化与 `stop` 时清空、按住时解除整个区域。没有新宿主，DOM 约定不变。
 - **代码**：
   - `runtime-contract.ts`：新增 `RegionKind = 'translate' | 'exclude'`；`PaletteActions.region(kind: RegionKind, root)`，返回仍是 `Promise<boolean>`（本次是否改变了什么）。
