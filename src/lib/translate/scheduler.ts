@@ -93,9 +93,12 @@ export interface ScheduleRequest {
   /** `key` is the cache key: equal keys share one translation. */
   segments: readonly { key: string; text: string }[];
   /**
-   * Called with every non-empty translation of a finished batch, including
-   * segments nobody waits for anymore, except those that echo source sentences
-   * (see isEchoedTranslation). Omit to skip caching.
+   * Called once when an attempt succeeds while its job still runs, with every
+   * non-empty translation it delivered, including segments nobody waits for
+   * anymore, except those that echo source sentences (see isEchoedTranslation).
+   * Never after a failed, timed-out or abandoned attempt, even for the items it
+   * delivered early: they were not checked against the whole answer. Omit to skip
+   * caching.
    */
   persist?: (entries: CacheEntry[]) => unknown;
   /** Shorter segment deadline than the adapter kind's default (connection tests). */
@@ -179,6 +182,12 @@ interface Job {
   retryTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
+/** A segment and its translation from one attempt. */
+interface Pair {
+  segment: Segment;
+  text: string;
+}
+
 interface CooldownState {
   cooldownUntil: number;
   /** Set by a 429; cleared only by a successful probe started after the latest 429. */
@@ -196,6 +205,11 @@ function isBlank(text: string): boolean {
 
 function failure(error: AppError): ItemOutcome {
   return { ok: false, error };
+}
+
+/** An empty translation fails its segment. */
+function outcomeOf(text: string): ItemOutcome {
+  return isBlank(text) ? failure(emptyTranslationError()) : { ok: true, text };
 }
 
 /** Listener errors never reach the attempt. */
@@ -281,6 +295,9 @@ function createAttemptFetch(
  * - round-robin across callers; interactive (stream) jobs go first, alone, skip the
  *   start interval (without moving it for page jobs) and may use the reserved LLM slot;
  * - segment-level dedupe by cache key, subscriptions counted per segment;
+ * - page jobs: each item is delivered (and leaves the job) as soon as it arrives;
+ *   retries, splits and the deadline apply to what is left; only a successful
+ *   attempt is cached;
  * - streams: reset before every attempt, increments coalesced, output capped.
  */
 export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
@@ -468,14 +485,16 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     subscriber.resolve(outcome);
   }
 
-  function settle(job: Job, outcomeAt: (index: number) => ItemOutcome) {
+  /** Releases the segment and hands the outcome to everyone waiting for it. */
+  function resolveSegment(segment: Segment, outcome: ItemOutcome) {
+    release(segment);
+    for (const subscriber of [...segment.subscribers]) deliver(subscriber, outcome);
+    segment.subscribers.clear();
+  }
+
+  function settle(job: Job, outcomeFor: (segment: Segment) => ItemOutcome) {
     retire(job);
-    job.segments.forEach((segment, index) => {
-      release(segment);
-      const outcome = outcomeAt(index);
-      for (const subscriber of [...segment.subscribers]) deliver(subscriber, outcome);
-      segment.subscribers.clear();
-    });
+    for (const segment of job.segments) resolveSegment(segment, outcomeFor(segment));
   }
 
   /** Segment deadline reached: abort whatever is running and fail every segment. */
@@ -569,9 +588,14 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     const attemptFetch = createAttemptFetch(baseFetch, limits.headerTimeoutMs, (request) => {
       requests.push(request);
     });
-    const texts = job.segments.map((segment) => segment.text);
+    // Indices refer to the members at the start of the attempt: job.segments shrinks
+    // as items are delivered.
+    const members = [...job.segments];
+    const texts = members.map((segment) => segment.text);
+    /** Translations this attempt delivered, cached together when it ends. */
+    const pairs: Pair[] = [];
 
-    let result: Result<string[]>;
+    let result: Result<undefined>;
     try {
       const events = adapter.translate(texts, {
         ...context,
@@ -579,21 +603,45 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
         fetch: attemptFetch,
         idleTimeoutMs: limits.idleTimeoutMs,
       });
-      result = { ok: true, data: await collectItems(events, texts.length, stream?.push) };
+      if (stream) {
+        // Streams deliver only after their last increment, never early.
+        const data = await collectItems(events, texts.length, stream.push);
+        for (const [index, segment] of members.entries()) {
+          pairs.push({ segment, text: data[index] ?? '' });
+        }
+      } else {
+        const seen = new Set<number>();
+        for await (const event of events) {
+          if (event.type !== 'item') continue;
+          const segment = members[event.index];
+          if (!segment || seen.has(event.index)) throw badResponseError('Unexpected item index');
+          seen.add(event.index);
+          // A job that already ended (deadline, every subscriber gone) takes nothing more.
+          if (job.state !== 'running') continue;
+          pairs.push({ segment, text: event.text });
+          job.segments = job.segments.filter((member) => member !== segment);
+          resolveSegment(segment, outcomeOf(event.text));
+        }
+        if (seen.size < members.length) throw badResponseError('Item count mismatch');
+      }
+      result = { ok: true, data: undefined };
     } catch (error) {
       result = { ok: false, error: toAppError(error) };
     }
     stream?.close(result.ok);
 
+    // Only an attempt checked as a whole is cached: a prefix cut short by an error, a
+    // deadline or a cancel may be misplaced (ids in order, texts one segment off).
+    if (result.ok && job.state === 'running') persist(job.task, pairs);
     observeCooldown(job, result);
-    if (job.state === 'running') handleResult(job, result);
+    if (job.state === 'running') handleResult(job, result, pairs);
     // Aborting does not end a fetch at once: keep the slot until it really has.
     await Promise.all(requests);
     active[adapter.kind] -= 1;
     pump();
   }
 
-  function observeCooldown(job: Job, result: Result<string[]>) {
+  function observeCooldown(job: Job, result: Result<unknown>) {
     const cooldown = cooldownState(job.task.cooldownKey);
     if (!result.ok && result.error.kind === 'rate-limit') {
       cooldown.epoch += 1;
@@ -608,9 +656,10 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     }
   }
 
-  function handleResult(job: Job, result: Result<string[]>) {
-    if (result.ok) {
-      complete(job, result.data);
+  function handleResult(job: Job, result: Result<unknown>, pairs: readonly Pair[]) {
+    // Errors apply only to the segments still left; none left is a success.
+    if (result.ok || job.segments.length === 0) {
+      complete(job, pairs);
       return;
     }
     const { error } = result;
@@ -642,26 +691,33 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     settle(job, () => failure(error));
   }
 
-  function complete(job: Job, texts: string[]) {
+  /** Delivers the pairs' translations; a segment without one fails as a bad response. */
+  function complete(job: Job, pairs: readonly Pair[]) {
+    const texts = new Map(pairs.map(({ segment, text }) => [segment, text]));
+    settle(job, (segment) => {
+      const text = texts.get(segment);
+      return text === undefined ? failure(badResponseError()) : outcomeOf(text);
+    });
+  }
+
+  /**
+   * Caches the non-empty translations, except those that echo source sentences (so
+   * the next request tries again). Cached even for segments whose subscribers have
+   * all left: the cost is already paid.
+   */
+  function persist(task: Task, pairs: readonly Pair[]) {
     const entries: CacheEntry[] = [];
-    const outcomes = texts.map((text, index): ItemOutcome => {
-      if (isBlank(text)) return failure(emptyTranslationError());
-      const segment = job.segments[index];
-      // An echoed source sentence is shown but not cached, so the next request tries again.
-      if (segment && !isEchoedTranslation(segment.text, text, job.task.context)) {
+    for (const { segment, text } of pairs) {
+      if (!isBlank(text) && !isEchoedTranslation(segment.text, text, task.context)) {
         entries.push({ key: segment.key, text });
       }
-      return { ok: true, text };
-    });
-    // Cached even for segments whose subscribers have all left: the cost is already paid.
-    if (entries.length > 0 && job.task.persist) {
-      try {
-        Promise.resolve(job.task.persist(entries)).catch(() => undefined);
-      } catch {
-        // Caching is best effort.
-      }
     }
-    settle(job, (index) => outcomes[index] ?? failure(badResponseError()));
+    if (entries.length === 0 || !task.persist) return;
+    try {
+      Promise.resolve(task.persist(entries)).catch(() => undefined);
+    } catch {
+      // Caching is best effort.
+    }
   }
 
   /** Halves stay internal: they only carry the parent's segments and never take new ones. */

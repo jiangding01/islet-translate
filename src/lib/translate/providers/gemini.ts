@@ -1,8 +1,15 @@
 import { appError } from '@/lib/errors';
-import { cleanTextOutput, createThinkFilter, decodeLlmOutput, renderMessages } from '../codec';
+import {
+  cleanTextOutput,
+  createBatchScanner,
+  createThinkFilter,
+  finishBatch,
+  renderMessages,
+} from '../codec';
 import { readSse } from '../sse';
 import type { ProviderAdapter, ProviderContext, ProviderEvent } from '../types';
 import {
+  badResponseError,
   contentBlockedError,
   errorFromResponse,
   MAX_LLM_OUTPUT_CHARS,
@@ -58,40 +65,47 @@ async function* translate(batch: string[], ctx: ProviderContext): AsyncGenerator
   if (!response.ok) throw await errorFromResponse(response);
 
   // The stream has no terminator: it simply ends. A broken connection throws in readSse.
+  // Page batches: items are yielded as soon as the scanner commits them.
+  const scanner = streaming ? undefined : createBatchScanner(batch);
   let text = '';
-  for await (const data of readSse(response, { signal: ctx.signal, idleMs: ctx.idleTimeoutMs })) {
-    let chunk: GeminiChunk;
-    try {
-      chunk = JSON.parse(data) as GeminiChunk;
-    } catch {
-      continue;
+  try {
+    for await (const data of readSse(response, { signal: ctx.signal, idleMs: ctx.idleTimeoutMs })) {
+      let chunk: GeminiChunk;
+      try {
+        chunk = JSON.parse(data) as GeminiChunk;
+      } catch {
+        continue;
+      }
+      if (chunk.error) {
+        throw appError('provider', 'provider/server-error', 'Provider reported a stream error', {
+          retryable: true,
+        });
+      }
+      if (chunk.promptFeedback?.blockReason) throw contentBlockedError();
+      const candidate = chunk.candidates?.[0];
+      let content = '';
+      for (const part of candidate?.content?.parts ?? []) {
+        if (typeof part.text === 'string' && part.thought !== true) content += part.text;
+      }
+      text += content;
+      const items = scanner?.push(content) ?? [];
+      if (BLOCKED_FINISH_REASONS.has(candidate?.finishReason)) throw contentBlockedError();
+      if (candidate?.finishReason === 'MAX_TOKENS') throw outputTruncatedError();
+      if (text.length > MAX_LLM_OUTPUT_CHARS) throw outputTruncatedError();
+      for (const item of items) yield { type: 'item', ...item };
+      const shown = streaming && content !== '' ? visible(content) : '';
+      if (shown !== '') yield { type: 'delta', index: 0, delta: shown };
     }
-    if (chunk.error) {
-      throw appError('provider', 'provider/server-error', 'Provider reported a stream error', {
-        retryable: true,
-      });
-    }
-    if (chunk.promptFeedback?.blockReason) throw contentBlockedError();
-    const candidate = chunk.candidates?.[0];
-    if (BLOCKED_FINISH_REASONS.has(candidate?.finishReason)) throw contentBlockedError();
-    if (candidate?.finishReason === 'MAX_TOKENS') throw outputTruncatedError();
-    let content = '';
-    for (const part of candidate?.content?.parts ?? []) {
-      if (typeof part.text === 'string' && part.thought !== true) content += part.text;
-    }
-    text += content;
-    if (text.length > MAX_LLM_OUTPUT_CHARS) throw outputTruncatedError();
-    const shown = streaming && content !== '' ? visible(content) : '';
-    if (shown !== '') yield { type: 'delta', index: 0, delta: shown };
+  } catch (error) {
+    // Items may have come from a draft: nothing of this attempt may be cached.
+    throw scanner?.state === 'tainted' ? badResponseError('Draft output') : error;
   }
 
-  if (streaming) {
+  if (!scanner) {
     yield { type: 'item', index: 0, text: cleanTextOutput(text, batch[0] ?? '') };
     return;
   }
-  for (const [index, item] of decodeLlmOutput(text, batch.length).entries()) {
-    yield { type: 'item', index, text: item };
-  }
+  yield* finishBatch(scanner, text, batch.length);
 }
 
 export function createGeminiAdapter(): ProviderAdapter {

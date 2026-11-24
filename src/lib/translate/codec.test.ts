@@ -3,14 +3,17 @@ import { appError } from '@/lib/errors';
 import {
   chunkByLimits,
   cleanTextOutput,
+  createBatchScanner,
   createThinkFilter,
   decodeLlmOutput,
   encodeBatch,
+  finishBatch,
   renderUserMessage,
   settleWithSplit,
   splitInHalf,
   USER_INPUT_TOKEN,
 } from './codec';
+import type { ProviderEvent } from './types';
 
 describe('chunkByLimits', () => {
   it('splits by item count', () => {
@@ -285,6 +288,393 @@ describe('cleanTextOutput: reasoning before the translation', () => {
   it('keeps a closing tag the source has', () => {
     expect(cleanTextOutput('用 </think> 结束推理', 'Close with </think>')).toBe(
       '用 </think> 结束推理',
+    );
+  });
+});
+
+// ------------------------------------------------------------ incremental batch scanner
+
+const item = (index: number, text: string) => ({ index, text });
+
+function scan(sources: readonly string[], chunks: readonly string[]) {
+  const scanner = createBatchScanner(sources);
+  const items = chunks.flatMap((chunk) => scanner.push(chunk));
+  return { scanner, items };
+}
+
+/** Scans `raw` in one go, then split at every position and one code unit at a time. */
+function scanEverySplit(sources: readonly string[], raw: string) {
+  const whole = scan(sources, [raw]);
+  const same = (other: ReturnType<typeof scan>) => {
+    expect(other.items).toEqual(whole.items);
+    expect(other.scanner.state).toBe(whole.scanner.state);
+    expect(other.scanner.array).toBe(whole.scanner.array);
+    expect(other.scanner.committed).toEqual(whole.scanner.committed);
+    expect(other.scanner.draft).toBe(whole.scanner.draft);
+  };
+  for (let at = 0; at <= raw.length; at += 1)
+    same(scan(sources, [raw.slice(0, at), raw.slice(at)]));
+  same(scan(sources, raw.split('')));
+  return whole;
+}
+
+describe('createBatchScanner: split points', () => {
+  const SOURCES = ['Hello', 'Say "hi" [x] {y}', 'Line\nbreak 😀', 'd'];
+  const ANSWER = [
+    { i: 0, t: '你好' },
+    { i: 1, t: '说 "嗨" [x] {y} \\ }] {' },
+    { i: 2, t: '换\n行 😀' },
+    { i: 3, t: '丁' },
+  ];
+  const json = JSON.stringify(ANSWER);
+
+  it.each([
+    ['plain', json],
+    ['indented, with whitespace around', `  \n${JSON.stringify(ANSWER, null, 2)}\n`],
+    ['a think block first', `<think>Input is [{"i":0}] … "quoted" }</think>\n\n${json}`],
+    ['a json fence', `\`\`\`json\n${json}\n\`\`\``],
+    ['a think block and a bare fence', `<think>plan</think>\n\`\`\`\n${json}\n\`\`\`\n`],
+  ])('gives the same items at every split point (%s)', (_name, raw) => {
+    const { scanner, items } = scanEverySplit(SOURCES, raw);
+    expect(items).toEqual(ANSWER.map(({ i, t }) => item(i, t)));
+    expect(scanner.state).toBe('closed');
+    expect(scanner.array).toBe('closed');
+  });
+
+  it.each([
+    ['whitespace', '\n  '],
+    ['a closed think block', '<think>Keep [i] as is.</think>\n'],
+    ['a json fence', '```json\n'],
+    ['a think block and a bare fence', '<THINK>x</THINK>```\n'],
+  ])('commits the first item before the array ends, after %s', (_name, lead) => {
+    const scanner = createBatchScanner(['Hello', 'World']);
+    expect(scanner.push(`${lead}[{"i":0,"t":"你好"}`)).toEqual([item(0, '你好')]);
+    expect(scanner.state).toBe('open');
+    expect(scanner.array).toBe('open');
+    expect(scanner.push(',{"i":1,"t":"世界"}]')).toEqual([item(1, '世界')]);
+    expect(scanner.committed).toEqual(['你好', '世界']);
+  });
+
+  it.each([
+    ['an uppercase JSON fence', '```JSON\n', true],
+    ['whitespace before the think block', ' \n<think>x</think>', true],
+    ['a fence with the array on the same line', '```json', true],
+    ['a byte order mark', '\uFEFF', true],
+    ['an ideographic space', '\u3000', true],
+    ['a <thinking> block (only <think> is skipped)', '<thinking>x</thinking>\n', false],
+    ['a partial json tag', '```js\n', false],
+  ])('reads a lead-in of %s', (_name, lead, starts) => {
+    const scanner = createBatchScanner(['Hello', 'World']);
+    expect(scanner.push(`${lead}[{"i":0,"t":"你好"}`)).toEqual(starts ? [item(0, '你好')] : []);
+    expect(scanner.array).toBe(starts ? 'open' : 'none');
+  });
+
+  it('reads brackets in strings and nested values as content', () => {
+    const raw = '[{"i":0,"t":"a ] b","x":[1,{"y":"]"}]},{"i":1,"t":"乙"}]';
+    expect(scanEverySplit(['a', 'b'], raw).items).toEqual([item(0, 'a ] b'), item(1, '乙')]);
+  });
+});
+
+describe('createBatchScanner: what it never commits', () => {
+  it.each([
+    ['prose', 'Sure! Here it is: [{"i":0,"t":"你好"},{"i":1,"t":"世界"}]'],
+    [
+      'reasoning without its opening tag',
+      '推理 [{"i":0,"t":"Hello"}]</think>[{"i":0,"t":"你好"},{"i":1,"t":"世界"}]',
+    ],
+    ['an unclosed think block', '<think>[{"i":0,"t":"你好"},{"i":1,"t":"世界"}]'],
+    ['a second think block', '<think>a</think><think>b</think>[{"i":0,"t":"你好"}]'],
+    ['a fence of another language', '```js\n[{"i":0,"t":"你好"}]'],
+  ])('commits nothing when the output starts with %s', (_name, raw) => {
+    const { scanner, items } = scanEverySplit(['Hello', 'World'], raw);
+    expect(items).toEqual([]);
+    expect(scanner.array).toBe('none');
+    expect(scanner.state).not.toBe('tainted');
+  });
+
+  it.each([
+    ['strings', '["你好","世界"]'],
+    ['objects without i', '[{"t":"你好"},{"t":"世界"}]'],
+    ['a string i', '[{"i":"0","t":"你好"},{"i":1,"t":"世界"}]'],
+  ])('commits nothing when the items are %s', (_name, raw) => {
+    expect(scanEverySplit(['Hello', 'World'], raw).items).toEqual([]);
+  });
+
+  it.each([
+    [
+      'ids out of order',
+      4,
+      '[{"i":0,"t":"甲"},{"i":2,"t":"丙"},{"i":1,"t":"乙"},{"i":3,"t":"丁"}]',
+      1,
+    ],
+    ['a first id past 0', 2, '[{"i":1,"t":"乙"},{"i":0,"t":"甲"}]', 0],
+    ['a skipped id', 4, '[{"i":0,"t":"甲"},{"i":1,"t":"乙"},{"i":3,"t":"丁"},{"i":2,"t":"丙"}]', 2],
+    ['an id out of range', 1, '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]', 1],
+    [
+      'a duplicate id',
+      3,
+      '[{"i":0,"t":"甲"},{"i":0,"t":"甲"},{"i":1,"t":"乙"},{"i":2,"t":"丙"}]',
+      1,
+    ],
+    [
+      'a fractional id',
+      3,
+      '[{"i":0,"t":"甲"},{"i":1.5,"t":"x"},{"i":1,"t":"乙"},{"i":2,"t":"丙"}]',
+      1,
+    ],
+    ['an empty translation', 3, '[{"i":0,"t":"甲"},{"i":1,"t":" \\n"},{"i":2,"t":"丙"}]', 1],
+    ['a non-string translation', 3, '[{"i":0,"t":"甲"},{"i":1,"t":2},{"i":2,"t":"丙"}]', 1],
+    ['malformed JSON', 3, '[{"i":0,"t":"甲"},{"i":1,t:"乙"},{"i":2,"t":"丙"}]', 1],
+    ['a bare value', 3, '[{"i":0,"t":"甲"},"乙",{"i":1,"t":"乙"},{"i":2,"t":"丙"}]', 1],
+  ])('stops committing at %s', (_name, count, raw, committed) => {
+    const sources = Array.from({ length: count }, (_, index) => `s${index}`);
+    const { scanner, items } = scanEverySplit(sources, raw);
+    expect(items).toHaveLength(committed);
+    expect(items.map((entry) => entry.index)).toEqual([...Array(committed).keys()]);
+    expect(scanner.state).toBe('closed');
+  });
+
+  it('holds back echoed items until an item that differs from its source', () => {
+    const scanner = createBatchScanner(['GitHub', '  Hello   World ', 'Bye', 'x']);
+    expect(scanner.push('[{"i":0,"t":"github"},')).toEqual([]);
+    expect(scanner.push('{"i":1,"t":"hello world"},')).toEqual([]);
+    expect(scanner.push('{"i":2,"t":"再见"}')).toEqual([
+      item(0, 'github'),
+      item(1, 'hello world'),
+      item(2, '再见'),
+    ]);
+    // A trailing echo stays held: the end of the batch decides it.
+    expect(scanner.push(',{"i":3,"t":"X"}]')).toEqual([]);
+    expect(scanner.committed).toEqual(['github', 'hello world', '再见']);
+  });
+
+  it('commits nothing when every item echoes its source', () => {
+    const raw = '[{"i":0,"t":"Hello"},{"i":1,"t":"World"}]';
+    expect(scanEverySplit(['Hello', 'World'], raw).items).toEqual([]);
+  });
+
+  it('drops held echoes on a deviation', () => {
+    const raw = '[{"i":0,"t":"Hello"},{"i":2,"t":"丙"},{"i":1,"t":"世界"}]';
+    expect(scanEverySplit(['Hello', 'World', 'c'], raw).items).toEqual([]);
+  });
+
+  it.each([
+    ['a second array', '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]\n[{"i":2,"t":"丙"},{"i":3,"t":"丁"}]'],
+    ['bare objects', '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}],{"i":2,"t":"丙"},{"i":3,"t":"丁"}'],
+  ])('stops at the end of the top-level array, even when ids go on in %s', (_name, raw) => {
+    const { scanner, items } = scanEverySplit(['a', 'b', 'c', 'd'], raw);
+    expect(items).toEqual([item(0, '甲'), item(1, '乙')]);
+    expect(scanner.array).toBe('closed');
+  });
+});
+
+describe('createBatchScanner: tainted output', () => {
+  it.each([
+    [
+      'a closing think tag after the array',
+      '[{"i":0,"t":"草稿"}]</think>[{"i":0,"t":"终稿"}]',
+      true,
+    ],
+    ['a closing think tag inside the array', '[{"i":0,"t":"草稿"}</THINK>', true],
+    ['prose after the array', '[{"i":0,"t":"甲"}]\nHope this helps.', false],
+    ['a second array', '[{"i":0,"t":"甲"}] [{"i":0,"t":"乙"}]', true],
+    ['an object after the array', '[{"i":0,"t":"甲"}]\nAlso {"i":0}', true],
+    ['an uppercase closing tag after prose', '[{"i":0,"t":"甲"}]\nOK </THINK>', true],
+    ['prose after the closing fence', '```json\n[{"i":0,"t":"甲"}]\n```\nDone.', false],
+    ['an array after the closing fence', '```json\n[{"i":0,"t":"甲"}]\n```\nFixed: [', true],
+    ['a closing fence that was never opened', '[{"i":0,"t":"甲"}]\n```', false],
+    ['a fourth backtick', '```json\n[{"i":0,"t":"甲"}]\n````', false],
+    [
+      'a bracketed note after the fence',
+      '```json\n[{"i":0,"t":"甲"}]\n```\nNote: item [1] stays.',
+      false,
+    ],
+    [
+      'a Markdown link after the fence',
+      '```json\n[{"i":0,"t":"甲"}]\n```\nSee [docs](https://x.test).',
+      false,
+    ],
+    ['a placeholder named in a note', '[{"i":0,"t":"甲"}]\nI kept {name} as is.', false],
+    ['a second array with spaces inside', '[{"i":0,"t":"甲"}]\nFixed: [ \n {"i":0', true],
+    ['an object with spaces inside', '[{"i":0,"t":"甲"}]\nAlso { "i":0}', true],
+    ['a second array of loose objects', '[{"i":0,"t":"甲"}]\nFixed: [{\'i\':0}]', true],
+    ['an object left open at the end', '[{"i":0,"t":"甲"}]\nAlso {', true],
+    ['text after the closing fence on its line', '```\n[{"i":0,"t":"甲"}]\n``` x', false],
+  ])('marks %s as tainted', (_name, raw, draft) => {
+    const { scanner } = scanEverySplit(['a'], raw);
+    expect(scanner.state).toBe('tainted');
+    expect(scanner.draft).toBe(draft);
+  });
+
+  it.each([
+    ['trailing whitespace', '[{"i":0,"t":"甲"}]\n\n'],
+    ['a closing fence', '```json\n[{"i":0,"t":"甲"}]\n```\n'],
+    ['a closing fence right after the array', '```[{"i":0,"t":"甲"}]```'],
+    ['a closing think tag inside a string', '[{"i":0,"t":"用 </think> 结束"}]'],
+    ['a closing think tag before the array starts', 'Plan.</think>[{"i":0,"t":"甲"}]'],
+  ])('does not taint %s', (_name, raw) => {
+    const { scanner } = scanEverySplit(['a'], raw);
+    expect(scanner.state).toBe('closed');
+    expect(scanner.draft).toBe(false);
+  });
+
+  // 131072 characters each way: well under a second when linear, seconds when rescanned.
+  const LONG = 131_072;
+
+  it('reads long whitespace before and after the array in linear time', () => {
+    for (const fence of ['', '```json\n']) {
+      const scanner = createBatchScanner(['a']);
+      const started = performance.now();
+      for (let k = 0; k < LONG; k += 1) scanner.push(' ');
+      expect(scanner.push(`${fence}[{"i":0,"t":"甲"}]`)).toEqual([item(0, '甲')]);
+      for (let k = 0; k < LONG; k += 1) scanner.push(' ');
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(scanner.state).toBe('closed');
+    }
+  });
+
+  // Guards against a future rescan of the block: the think filter used before was
+  // already linear here, so this case does not tell the two apart.
+  it('stays linear over a long think block', () => {
+    const scanner = createBatchScanner(['a']);
+    const started = performance.now();
+    scanner.push('<think>');
+    for (let k = 0; k < LONG; k += 1) scanner.push('x');
+    expect(scanner.push('</think>\n[{"i":0,"t":"甲"}')).toEqual([item(0, '甲')]);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe('finishBatch', () => {
+  function finish(sources: string[], raw: string) {
+    const scanner = createBatchScanner(sources);
+    const early = scanner.push(raw);
+    const late: ProviderEvent[] = [];
+    let error: unknown;
+    try {
+      for (const event of finishBatch(scanner, raw, sources.length)) late.push(event);
+    } catch (caught) {
+      error = caught;
+    }
+    return { early, late, error };
+  }
+  const late = (index: number, text: string): ProviderEvent => ({ type: 'item', index, text });
+  const code = (value: string) => expect.objectContaining({ code: value });
+
+  it('yields the items not committed yet when the whole output agrees', () => {
+    const result = finish(['Hello', 'x'], '[{"i":0,"t":"你好"},{"i":1,"t":"X"}]');
+    expect(result).toEqual({ early: [item(0, '你好')], late: [late(1, 'X')], error: undefined });
+  });
+
+  it('yields the rest, then fails with bad-response, when the whole output disagrees', () => {
+    const raw =
+      '[{"i":0,"t":"草稿"},{"i":1,"t":"World"}]</think>[{"i":0,"t":"终稿"},{"i":1,"t":"世界"}]';
+    const result = finish(['a', 'World'], raw);
+    expect(result.early).toEqual([item(0, '草稿')]);
+    expect(result.late).toEqual([late(1, '世界')]);
+    expect(result.error).toEqual(code('validation/bad-response'));
+  });
+
+  it('keeps a tainted output that still parses and agrees (a note after the array)', () => {
+    const result = finish(['a', 'b'], '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]\nHope this helps.');
+    expect(result).toEqual({
+      early: [item(0, '甲'), item(1, '乙')],
+      late: [],
+      error: undefined,
+    });
+  });
+
+  it.each([
+    [
+      'a fenced draft, then a corrected array',
+      '```json\n[{"i":0,"t":"草稿0"},{"i":1,"t":"草稿1"}]\n```\nActually corrected:\n[{"i":0,"t":"终稿0"},{"i":1,"t":"终稿1"}]',
+      [],
+    ],
+    [
+      'the same array again after a closing think tag',
+      '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]</think>[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]',
+      [],
+    ],
+    [
+      'a draft followed by prose that opens an array without closing it',
+      '[{"i":0,"t":"草稿0"},{"i":1,"t":"草稿1"}]\nBetter: [{"i":0,"t":"终稿0"',
+      [],
+    ],
+    [
+      'a closing think tag inside the array, then the answer',
+      '[{"i":0,"t":"甲"}</think>[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]',
+      [late(1, '乙')],
+    ],
+  ])(
+    'yields the rest, then fails with bad-response, after %s even when it agrees',
+    (_name, raw, rest) => {
+      const result = finish(['a', 'b'], raw);
+      expect(result.early.length + result.late.length).toBe(2);
+      expect(result.late).toEqual(rest);
+      expect(result.error).toEqual(code('validation/bad-response'));
+    },
+  );
+
+  it.each([
+    ['a bracketed note after the fence', '```json\n{A}\n```\nNote: item [1] stays short.'],
+    ['a Markdown link after the fence', '```json\n{A}\n```\nSee [the docs](https://x.test).'],
+    ['a placeholder named in a note', '{A}\nI kept {name} as is.'],
+  ])('ends normally with %s', (_name, template) => {
+    const raw = template.replace('{A}', '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]');
+    expect(finish(['a', 'b'], raw)).toEqual({
+      early: [item(0, '甲'), item(1, '乙')],
+      late: [],
+      error: undefined,
+    });
+  });
+
+  it('tells a draft apart from a mismatch in the error message', () => {
+    const draft = finish(['a', 'b'], '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]\n[{"i":0,"t":"甲"}');
+    expect(draft.error).toEqual(expect.objectContaining({ message: 'Draft output' }));
+    const differ = finish(
+      ['a', 'b'],
+      '[{"i":0,"t":"草稿"},{"i":1,"t":"b"}]</think>[{"i":0,"t":"终稿"},{"i":1,"t":"乙"}]',
+    );
+    expect(differ.error).toEqual(
+      expect.objectContaining({ message: 'Streamed items differ from the output' }),
+    );
+  });
+
+  it('keeps a draft followed only by prose, even if the prose says it is a draft', () => {
+    const raw =
+      '[{"i":0,"t":"草稿0"},{"i":1,"t":"草稿1"}]\nActually the second line reads better shorter.';
+    expect(finish(['a', 'b'], raw)).toEqual({
+      early: [item(0, '草稿0'), item(1, '草稿1')],
+      late: [],
+      error: undefined,
+    });
+  });
+
+  it('fails a tainted output that does not parse with bad-response, never as truncated', () => {
+    const result = finish(['a', 'b'], '[{"i":0,"t":"草稿"}</think>');
+    expect(result.error).toEqual(code('validation/bad-response'));
+  });
+
+  it('reports an array cut short as output-truncated', () => {
+    const result = finish(['a', 'b'], '[{"i":0,"t":"甲"},{"i":1,"t":"乙');
+    expect(result.early).toEqual([item(0, '甲')]);
+    expect(result.error).toEqual(code('provider/output-truncated'));
+  });
+
+  it('reports a closed array with missing items as bad-response', () => {
+    const result = finish(['a', 'b'], '[{"i":0,"t":"甲"}]');
+    expect(result.early).toEqual([item(0, '甲')]);
+    expect(result.error).toEqual(code('validation/bad-response'));
+  });
+
+  it('decodes an output the scanner never started on as before', () => {
+    expect(finish(['a', 'b'], 'Sure: [{"i":0,"t":"甲"},{"i":1,"t":"乙"}] done')).toEqual({
+      early: [],
+      late: [late(0, '甲'), late(1, '乙')],
+      error: undefined,
+    });
+    expect(finish(['a', 'b'], 'Sure: [{"i":0,"t":"甲"}').error).toEqual(
+      code('validation/bad-response'),
     );
   });
 });

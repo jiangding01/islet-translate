@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeBaseURL } from '@/lib/endpoint';
-import { collect, jsonResponse, makeCtx, mockFetch, sseResponse, TEXT_PROMPT } from '../test-utils';
+import {
+  collect,
+  collectSettled,
+  gatedSseResponse,
+  jsonResponse,
+  makeCtx,
+  mockFetch,
+  sseResponse,
+  stalledSseResponse,
+  TEXT_PROMPT,
+} from '../test-utils';
 import { createOpenAICompatAdapter } from './openai-compat';
 
 const adapter = createOpenAICompatAdapter();
@@ -159,6 +169,87 @@ describe('openai-compat adapter', () => {
     const end = `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: reason }] })}\n\n`;
     const fn = mockFetch(sseResponse([delta(OUTPUT), end, 'data: [DONE]\n\n']));
     await expect(run(fn)).rejects.toMatchObject({ code, retryable: false });
+  });
+});
+
+describe('openai-compat adapter: items as they complete', () => {
+  const finish = (reason: string) =>
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: reason }] })}\n\n`;
+  const runBatch = (fn: ReturnType<typeof mockFetch>, overrides = {}) =>
+    collectSettled(adapter.translate(['a', 'b', 'c'], makeCtx({ fetch: fn, ...overrides })));
+  const item = (index: number, text: string) => ({ type: 'item', index, text });
+  const code = (value: string) => expect.objectContaining({ code: value });
+
+  it('yields the first item before the stream ends', async () => {
+    const { response, release } = gatedSseResponse(
+      [delta('[{"i":0,"t":"你好"},'), delta('{"i":1,')],
+      [delta('"t":"世界"}]'), 'data: [DONE]\n\n'],
+    );
+    const events = adapter.translate(['hello', 'world'], makeCtx({ fetch: mockFetch(response) }));
+    const iterator = events[Symbol.asyncIterator]();
+    // The rest is held back until release(): a late first item never resolves here.
+    expect(await iterator.next()).toEqual({ done: false, value: item(0, '你好') });
+    release();
+    expect(await iterator.next()).toEqual({ done: false, value: item(1, '世界') });
+    expect(await iterator.next()).toEqual({ done: true, value: undefined });
+  });
+
+  it('fills in the rest from the whole output, then fails with bad-response, when they differ', async () => {
+    const raw =
+      '[{"i":0,"t":"草稿"},{"i":1,"t":"b"}]</think>[{"i":0,"t":"终稿"},{"i":1,"t":"乙"},{"i":2,"t":"丙"}]';
+    const result = await runBatch(mockFetch(sseResponse([delta(raw), 'data: [DONE]\n\n'])));
+    expect(result.events).toEqual([item(0, '草稿'), item(1, '乙'), item(2, '丙')]);
+    expect(result.error).toEqual(code('validation/bad-response'));
+  });
+
+  const CLEAN = [delta('[{"i":0,"t":"甲"},'), delta('{"i":1,"t":"乙"},{"i":2,"t":"丙')];
+  const TAINTED = [delta('[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]'), delta('</think>[{"i":0,"t":"甲')];
+  const ENDINGS: [string, (chunks: string[]) => Response, object, string][] = [
+    [
+      'finish_reason length',
+      (chunks) => sseResponse([...chunks, finish('length')]),
+      {},
+      'provider/output-truncated',
+    ],
+    ['no [DONE]', (chunks) => sseResponse(chunks), {}, 'network/stream-interrupted'],
+    [
+      'a broken connection',
+      (chunks) => sseResponse(chunks, new Error('reset')),
+      {},
+      'network/fetch-failed',
+    ],
+    [
+      'an idle timeout',
+      (chunks) => stalledSseResponse(chunks),
+      { idleTimeoutMs: 20 },
+      'network/timeout',
+    ],
+  ];
+
+  it.each(ENDINGS)(
+    'yields two items, then fails with %s as is',
+    async (_name, reply, ctx, error) => {
+      const result = await runBatch(mockFetch(reply(CLEAN)), ctx);
+      expect(result.events).toEqual([item(0, '甲'), item(1, '乙')]);
+      expect(result.error).toEqual(code(error));
+    },
+  );
+
+  it.each(ENDINGS)('turns %s after a draft array into bad-response', async (_name, reply, ctx) => {
+    const result = await runBatch(mockFetch(reply(TAINTED)), ctx);
+    expect(result.events).toEqual([item(0, '甲'), item(1, '乙')]);
+    expect(result.error).toEqual(code('validation/bad-response'));
+  });
+
+  it('reports an array that never closes as output-truncated, a short one as bad-response', async () => {
+    const open = await runBatch(mockFetch(sseResponse([...CLEAN, 'data: [DONE]\n\n'])));
+    expect(open.events).toEqual([item(0, '甲'), item(1, '乙')]);
+    expect(open.error).toEqual(code('provider/output-truncated'));
+    const short = await runBatch(
+      mockFetch(sseResponse([delta('[{"i":0,"t":"甲"}]'), 'data: [DONE]\n\n'])),
+    );
+    expect(short.events).toEqual([item(0, '甲')]);
+    expect(short.error).toEqual(code('validation/bad-response'));
   });
 });
 
