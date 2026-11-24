@@ -460,7 +460,7 @@ PR1 的范围：
   - 未就绪服务的品牌色图标 50% 不透明度偏暗，与灵岛一致，不改。
   - Windows / Linux 上 `Alt+Shift+K` 与浏览器 accesskey 是否冲突仍未验证。
 
-## PR6 实施记录（分支 `feat/m3c-isle-entry`）
+## PR6 实施记录（#74，分支 `feat/m3c-isle-entry`）
 - **范围**：拆分表第 6 行。实施前另定 7 条细则（定位不加接口、⌘ 按钮、接线、文案、互不误伤、焦点、体积），按细则实现。#72 合并后的补丁验收已记在上一节。
 - **代码**：
   - 灵岛（`isle/isle.ts`）：工具栏在引擎按钮之后加 `.ib[data-act="palette"]`，14 格线条 ⌘ 图标，笔画同模式图标（1.5、圆头），不加分隔线。按钮加入 `renderState` 的 title 循环、悬停提示的监听数组与 `measureSpots`。`act('palette')` 先 `publishRect()` 再调 `deps.openPalette()`。`open()` 每次展开读一次 `deps.paletteShortcut()`，把 `aria-label` 写成 `isle.palette`（「指令台（⌃⇧K）」），空串时用 `palette.label`（「指令台」）；侧边停靠的 title 与底部停靠的提示都跟着 `aria-label` 走。指令台开着时（`et-palette[data-open]`，判断方式见审查修复 S2、S3，模态对话框里的宿主也认），悬停意图的离开收起与外部按下都不收起灵岛；Esc 让步改用同一个判断。指令台关闭后，下一次指针移动照常判断离开。
