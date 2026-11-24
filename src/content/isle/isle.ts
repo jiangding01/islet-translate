@@ -785,7 +785,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
       if (mount === 'leaving') unmountNow();
       else {
         switchDock();
-        setView('dot');
+        setView(regrown());
       }
       return;
     }
@@ -813,13 +813,15 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   /**
    * `data-et-rect="x,y,w,h"` on the host: what the selection card keeps clear of (it
    * cannot see inside the closed shadow). The toolbar even while a dot, since that is
-   * what the dot grows into; the list while open. Written only at rest.
+   * what the dot grows into; the list while open. Written only at rest. With it
+   * `data-et-dock`, the edge it sits on: the palette beside it follows a dock change.
    */
   function publishRect() {
     if (!host) return;
     const target = shapes[view === 'list' ? 'list' : 'isle'];
     const base = isVertical(dock) ? MARGIN : liftOf(springs.B.t, springs.C.t, target.D / 2);
     const rect = rectOf(dock, viewport, target.L, target.D, springs.O.t, base);
+    setAttr(host, 'data-et-dock', dock);
     setAttr(host, 'data-et-rect', [rect.x, rect.y, rect.w, rect.h].map(Math.round).join(','));
   }
 
@@ -1109,6 +1111,12 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
     }
     return false;
   }
+
+  /**
+   * What a fold for a dock change grows back into: the toolbar while the palette is open (it
+   * keeps the isle open, and sits beside the toolbar), the dot otherwise.
+   */
+  const regrown = (): View => (paletteOpen() ? 'isle' : 'dot');
 
   function inside(x: number, y: number): boolean {
     const offset = targetOffset();
@@ -1465,7 +1473,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
       if (next === dock) {
         // Changed back before the fold finished: grow again where it is.
         pendingDock = undefined;
-        if (mount === 'mounted') setView('dot');
+        if (mount === 'mounted') setView(regrown());
       } else {
         // Fold into the dot's spot, then grow on the new edge (settle does the switch).
         pendingDock = next;

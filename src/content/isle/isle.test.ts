@@ -1063,6 +1063,52 @@ describe('palette entry (PR6)', () => {
     expect(t.deps.openPalette).not.toHaveBeenCalled();
   });
 
+  it('publishes its dock beside its rectangle, and the new one after a dock change', async () => {
+    const t = await setup();
+    await t.start();
+    expect(t.host()?.getAttribute('data-et-dock')).toBe('right');
+    t.setConfig({ isleDock: 'left' });
+    t.frame();
+    // Folding away: the old edge until it regrows.
+    expect(t.host()?.getAttribute('data-et-dock')).toBe('right');
+    await t.settle();
+    expect(t.host()?.getAttribute('data-et-dock')).toBe('left');
+    expect(t.host()?.getAttribute('data-et-rect')).toMatch(/^16,\d+,40,186$/);
+    t.setConfig({ isleDock: 'bottom' });
+    await t.settle();
+    expect(t.host()?.getAttribute('data-et-dock')).toBe('bottom');
+  });
+
+  it('regrows on the new edge as the toolbar while the palette is open, as a dot otherwise', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    const palette = openPalette();
+    t.setConfig({ isleDock: 'left' });
+    await t.settle();
+    expect(t.root().getAttribute('data-dock')).toBe('left');
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    expect(t.host()?.getAttribute('data-et-dock')).toBe('left');
+    expect(t.host()?.getAttribute('data-et-rect')).toMatch(/^16,\d+,40,186$/);
+    // The toolbar as drawn: the same rectangle it publishes.
+    const { x, y, w, h } = t.clipRect();
+    expect(t.host()?.getAttribute('data-et-rect')).toBe([x, y, w, h].map(Math.round).join(','));
+    // Changed and changed back mid-fold: grows back as the toolbar too.
+    t.setConfig({ isleDock: 'bottom' });
+    t.frame();
+    t.frame();
+    t.setConfig({ isleDock: 'left' });
+    await t.settle();
+    expect(t.root().getAttribute('data-dock')).toBe('left');
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    // The palette closed: the next change regrows a dot, as before.
+    palette.remove();
+    t.setConfig({ isleDock: 'right' });
+    await t.settle();
+    expect(t.root().getAttribute('data-dock')).toBe('right');
+    expect(t.root().getAttribute('data-view')).toBe('dot');
+  });
+
   it('a press elsewhere closes it again once the palette is closed', async () => {
     const t = await setup();
     await t.start();
