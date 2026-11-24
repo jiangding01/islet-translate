@@ -89,6 +89,16 @@
 
 三项渲染小修合成一个 PR、三个提交，各带用例；等 PR6 合并后再从 main 拉分支，体积在 PR6 之上实测。
 
+**实际修法（#76）**：
+- 2.2 等帧空窗（`render.ts`）：`drops = new WeakMap<Unit, number>()`，`drop()` 在提前返回之前自增；`insert` 读阶段把代数记进每个计划，写阶段代数变了就跳过该单元（不算 stale，会话已遗忘它）；`note()`（`fail` 与 `skip` 共用）等帧前记、等帧后比对。原 `skipping` 集合由同一机制取代并删除，`skip` 的「块根离开页面 / run 末节点离开父元素」两道检查保留。
+- 2.3 `known()`（`session.ts`）：不再调用 `isCurrent`。新单元刚从当前 DOM 分段出来，判断改为「同类型、同文本，run 再要求节点逐个相同」；块不比节点（与 `stillSame` 一致：块的子节点被换成同样内容的克隆时仍保留）。`mayBeHidden` 分支照旧用 `isCurrent`。
+  - 与裁决的差异：没有另比 `seg.digest`。`digest` 就是 `text` 的哈希（`segment.ts`），原条件已比 `text`，再比摘要是冗余；只比摘要反而会在哈希碰撞时误认。
+  - 补充：run 比节点前先滤掉 `et-tr`。行内译文与失败提示是 `display:inline`，加载点是 `inline-block`，但 `isInlineElement` 把 `inline-*` 一律视作行内，结论不变：它们重扫时会被并进 run 的 `nodes`（`segment` 忽略它们，文本不变），不滤会让每个已译 run 在重扫时都被当成新单元、删掉重插。
+  - 补充：另加 `unit.root.isConnected` 前置判断，对应 `stillSame` 的第一道检查。
+- 2.4 首批防抖（`session.ts`）：`eager` 标记在 `scan()` 建好视口观察器时置位，到第一次 `send()` 才清除；视口报告有新进入范围的段落时用 `scheduleFlush(eager)`。因此首屏没有要发的内容时，之后第一次进入范围的报告仍会立即发出；按住段落的局部会话升级为整页时同样经过 `scan()`，但若升级后先有别的 `send()`，就退回 50 ms 防抖。两种情况都不比改动前差。超过 500 条的回调分块处理（`onViewportChunked`），只在最后一块处理完后才按 `eager` 立即 flush，首屏跨块时仍合并成一次 flush、整体排序；中间块在非 `eager` 时照旧走防抖，不分块的路径不变。
+- 用例：`render.test.ts` 4 条（等帧期间 drop 的 insert 与 fail、遗忘后继任单元同帧写入只留一份、同一单元两次 insert 同帧重叠、drop 后再 insert），`session.test.ts` 6 条（重扫未变单元不再分段且 `et-tr` 节点不变、块内元素换成相同克隆仍保留、run 节点换成相同文本节点视为新单元并从内存补回、块改文字与 run 增节点重新发送、首屏 0 ms 发出而后续仍防抖、首屏跨分块时在最后一块后合并为一次发送）。先红后绿（逐项换回 main 的实现）：4 红（等帧 2 条、分段次数 9≠5、首屏 0 条），等价性 3 条在 main 的 `known()` 上即绿（判断等价）；「照搬集合」替身让重叠两条变红；去掉 `et-tr` 过滤的替身让分段次数用例变红（8≠5）；跨分块用例在「每块都按 `eager` flush」的上一版上变红（只发出第一块的段落）。
+- 体积：page-runtime 26.33 → 26.45 KB（gzip 26 958 → 27 086 B，+128 B），content 不变（7.60 KB）。
+
 ## 3. 其余核实要点
 
 - 2.1 扫描阻塞（主体）：`discover.ts:62-138` 后序遍历整棵 body，`session.ts:961-983` 扫完才 `register`。实测首译额外延迟约为扫描 + IO 首次回调 + 50 ms：几千元素的页面不到 0.1 s；60 004 元素的 issue-1500 页 4x 降速下 0.9–1.2 s，接近或超过 m2 目标「Google 首批 ≤ 800 ms」。合成页样式极简，数值只能作下限。
@@ -169,9 +179,9 @@ Phase 1 裁决改判：子代理结论是「做」；裁决为「暂不做，条
 
 | # | 分支 | 范围 | 依赖 | 体积影响 | 需用户批准 |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `feat/m3c-isle-entry`（进行中） | M3c PR6，不改范围 | — | page 26.18、content 7.60 KB | 已有 |
+| 0 | `feat/m3c-isle-entry`（#74） | M3c PR6，不改范围 | — | page 26.18、content 7.60 KB | 已有 |
 | 1 | `fix/batch-think-strip`（#75） | 2.1：batch 与 text 终稿剥离前导推理 + 13 条用例 + known-issues 记流式缺口 | 无，可与 PR6 并行 | background 实测 +0.07 KB（57.85 KB） | 否 |
-| 2 | `fix/render-frame-gap-and-rescan` | 2.2–2.4：drop 代数守卫、`known()` 比 digest、首次 IO 不防抖；划掉 known-issues #57-2 | PR6 合并后拉分支 | page-runtime 约 +0.1 KB | 否 |
+| 2 | #76（已完成） | 2.2–2.4：drop 代数守卫、`known()` 不再重分段、首次 IO 不防抖 + 10 条用例；划掉 known-issues #57-2 | PR6 合并后拉分支 | page-runtime 实测 +0.13 KB（26.45 KB） | 否 |
 | 3 | 原计划 PR3 → PR4 → PR5 | 不变 | — | 按 m3c 方案 | 新文案照旧先问 |
 | 4 | 发版 v0.5.0 | 含 #1、#2 | #1–#3 | — | 打 tag 前问 |
 | 5 | `feat/llm-batch-incremental` | 方案一 PR①：provider 逐项产出、调度器部分提交、只对剩余段重试 / 二分；带 4.1 两条硬约束；不改提示词与缓存键 | 先用 think 写方案并过审 | background 约 +0.6–1.0 KB（余 2.22） | 方案确认；若超 60 KB 需批预算 |

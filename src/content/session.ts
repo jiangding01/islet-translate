@@ -153,6 +153,11 @@ export function createPageSession(deps: SessionDeps): PageSession {
   let readStyle: StyleReader = deps.createReadStyle();
   let lastScroll = Number.NEGATIVE_INFINITY;
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * From the page scan until the first request: the viewport's first report is the first
+   * screen, sent at once, not after the debounce (the scan's own flush often runs before it).
+   */
+  let eager = false;
   let renderTimer: ReturnType<typeof setTimeout> | undefined;
   let nextId = 0;
   let inFlight = 0;
@@ -426,7 +431,8 @@ export function createPageSession(deps: SessionDeps): PageSession {
     flushTimer = setTimeout(flush, immediate ? 0 : FLUSH_DEBOUNCE_MS);
   }
 
-  function onViewport(targets: Element[], visible: boolean[]) {
+  /** Queues what came into range and lets go of what left; whether anything changed. */
+  function onViewport(targets: Element[], visible: boolean[]): boolean {
     let changed = false;
     targets.forEach((target, index) => {
       const inRange = visible[index] === true;
@@ -441,25 +447,33 @@ export function createPageSession(deps: SessionDeps): PageSession {
         }
       }
     });
-    if (changed) scheduleFlush();
+    return changed;
   }
 
   function onViewportChunked(targets: Element[], visible: boolean[]) {
     if (targets.length <= VIEWPORT_CHUNK) {
-      onViewport(targets, visible);
+      if (onViewport(targets, visible)) scheduleFlush(eager);
       return;
     }
     // A first callback on a huge page can carry tens of thousands of entries.
     const current = epoch;
     let offset = 0;
+    let changed = false;
     const step = () => {
       if (current !== epoch) return;
-      onViewport(
-        targets.slice(offset, offset + VIEWPORT_CHUNK),
-        visible.slice(offset, offset + VIEWPORT_CHUNK),
-      );
+      if (
+        onViewport(
+          targets.slice(offset, offset + VIEWPORT_CHUNK),
+          visible.slice(offset, offset + VIEWPORT_CHUNK),
+        )
+      )
+        changed = true;
       offset += VIEWPORT_CHUNK;
-      if (offset < targets.length) setTimeout(step, 0);
+      const more = offset < targets.length;
+      // The first screen goes out at once, but only after the last slice: one flush, ranked
+      // as a whole, as when every slice waited for the debounce.
+      if (changed && !(more && eager)) scheduleFlush(eager && !more);
+      if (more) setTimeout(step, 0);
     };
     step();
   }
@@ -503,6 +517,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
   function send(batch: Unit[], attempt: number) {
     if (!config || batch.length === 0) return;
     const current = epoch;
+    eager = false;
     for (const unit of batch) {
       pending.delete(unit);
       sent.add(unit);
@@ -670,15 +685,22 @@ export function createPageSession(deps: SessionDeps): PageSession {
   /**
    * The registered unit a freshly discovered one stands for (same root, shape and text,
    * still in the page), so its translation and state carry over; `kept` ones are taken.
+   * The fresh unit was just segmented from the page, so the old one needs no segmenting
+   * again (a whole-page rescan would do it for every unit in one task): the same text is
+   * the same digest, a block's text is its children's, and a run must still be the same
+   * nodes. Our own `et-tr` is in a run's nodes or not, and never in its text.
    */
   function known(unit: Unit, kept?: Set<Unit>): Unit | undefined {
-    return (unitsByRoot.get(unit.root) ?? []).find(
-      (other) =>
-        !kept?.has(other) &&
-        other.kind === unit.kind &&
-        other.seg.text === unit.seg.text &&
-        renderer?.isCurrent(other) === true,
-    );
+    if (!unit.root.isConnected) return;
+    const source = (nodes: Node[]) => nodes.filter((node) => node.nodeName !== OWN_TAG);
+    const nodes = source(unit.nodes);
+    return (unitsByRoot.get(unit.root) ?? []).find((other) => {
+      if (kept?.has(other) || other.kind !== unit.kind || other.seg.text !== unit.seg.text)
+        return false;
+      if (other.kind === 'block') return true;
+      const was = source(other.nodes);
+      return was.length === nodes.length && was.every((node, index) => node === nodes[index]);
+    });
   }
 
   /**
@@ -960,6 +982,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
   /** The page scan: every unit registers, and held paragraphs keep their translation. */
   async function scan(current: number): Promise<PageState> {
     viewport = deps.createViewport(onViewportChunked);
+    eager = true;
     for (const root of unitsByRoot.keys()) viewport.observe(root);
     const found = await discoverUnits(doc.body, {
       readStyle,

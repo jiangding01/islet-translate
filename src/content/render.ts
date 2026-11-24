@@ -163,8 +163,14 @@ export function createRenderer(options: RenderOptions): Renderer {
    * fail, a mode switch) must not land after it, or they would outlive the session.
    */
   let disposed = false;
-  /** Units whose "too long" note waits for its frame; drop() cancels by removing the unit. */
-  const skipping = new Set<Unit>();
+  /**
+   * How many times each unit was dropped. A write that waits for its frame (insert, fail,
+   * skip) notes the count first and gives up if a drop came meanwhile: the unit was
+   * forgotten, and writing would leave an orphan, or a second copy once its successor is in.
+   * A count, not a set of units in flight: two writes of one unit may wait for the same frame.
+   */
+  const drops = new WeakMap<Unit, number>();
+  const dropsOf = (unit: Unit) => drops.get(unit) ?? 0;
   /** The mode switch in flight, and the mode the last request asked for. */
   let switching: Promise<void> | undefined;
   let wanted: PageMode = mode;
@@ -462,12 +468,13 @@ export function createRenderer(options: RenderOptions): Renderer {
     const dark = isDark(unit.root);
     const flexRoot = unit.kind === 'block' && isFlexOrGrid(unit.root, readStyle);
     if (disposed) return;
-    if (skippedNote) skipping.add(unit);
+    const dropped = dropsOf(unit);
     await frame();
-    if (disposed) return;
+    // Forgotten while waiting (dropped): no orphan note.
+    if (disposed || dropsOf(unit) !== dropped) return;
     if (skippedNote) {
-      // Forgotten while waiting (drop removed it), or its place is gone: no orphan note.
-      if (!skipping.delete(unit) || !unit.root.isConnected) return;
+      // Its place is gone: no orphan note.
+      if (!unit.root.isConnected) return;
       const last = unit.nodes[unit.nodes.length - 1];
       if (unit.kind === 'run' && last?.parentNode !== unit.root) return;
     }
@@ -513,6 +520,7 @@ export function createRenderer(options: RenderOptions): Renderer {
       const stale: Unit[] = [];
       const plans: {
         result: Result;
+        dropped: number;
         flexRoot: boolean;
         visible: boolean;
         dark: boolean;
@@ -528,6 +536,7 @@ export function createRenderer(options: RenderOptions): Renderer {
         const flexRoot = unit.kind === 'block' && isFlexOrGrid(unit.root, readStyle);
         plans.push({
           result,
+          dropped: dropsOf(unit),
           flexRoot,
           visible: inViewport(unit.root, win),
           dark: isDark(unit.root),
@@ -542,8 +551,10 @@ export function createRenderer(options: RenderOptions): Renderer {
       const onlyReadings: OnlyReading[] = [];
       const fresh: Rendered[] = [];
       let staggered = 0;
-      for (const { result, flexRoot, visible, dark, clamp } of plans) {
+      for (const { result, dropped, flexRoot, visible, dark, clamp } of plans) {
         const { unit, translation } = result;
+        // Forgotten while waiting for the frame: its successor gets its own translation.
+        if (dropsOf(unit) !== dropped) continue;
         const previous = rendered.get(unit);
         if (previous) detach(previous);
         clearLoading(unit);
@@ -648,7 +659,8 @@ export function createRenderer(options: RenderOptions): Renderer {
     },
 
     drop(unit) {
-      skipping.delete(unit);
+      // Before the early return below: a write waiting for its frame has no record yet.
+      drops.set(unit, dropsOf(unit) + 1);
       clearLoading(unit);
       const record = rendered.get(unit);
       if (!record) return;
