@@ -1,4 +1,12 @@
 import type { Engine, IsleDock } from '@/lib/config/types';
+import {
+  browserUiLanguage,
+  type DetectedLanguages,
+  isTargetScript,
+  type LanguageCode,
+  languageName,
+  normalizeLanguage,
+} from '@/lib/languages';
 import type {
   EngineOption,
   EngineOptions,
@@ -7,16 +15,31 @@ import type {
 } from '@/lib/messaging/protocol';
 import isleTokens from '@/styles/tokens-isle.css?inline';
 import { ISLE_TAG, PALETTE_TAG } from '../dom-rules';
+import { errorText } from '../error-text';
 import { message, type NoArgKey, uiLocale } from '../i18n';
 import { type ProbeEnv, probeTheme } from '../isle/probe';
 import { createSpring, LIST, retarget, SHRINK, snap, step } from '../isle/spring';
 import { isActive } from '../page-state';
 import { IDLE_PAGE_STATE, type PaletteRuntime, type PaletteRuntimeDeps } from '../runtime-contract';
+import {
+  type CardPort,
+  createCardRequests,
+  MAX_SOURCE_LENGTH,
+  type RequestEvent,
+  reliableLanguage,
+} from '../selection/request';
 import { engineMark, SVG_NS } from '../svg-icon';
 import { restoreFocus, type SavedFocus, saveFocus } from './focus';
 import { keyAction, moveActive } from './keys';
 import { type PanelRect, placePanel } from './place';
-import { type CommandApi, listCommands, normalizeQuery, type PaletteContext } from './registry';
+import {
+  COMMAND_PREFIX,
+  type CommandApi,
+  listCommands,
+  matchRange,
+  normalizeQuery,
+  type PaletteContext,
+} from './registry';
 import { PALETTE_CSS } from './styles';
 
 // The command palette (docs/plans/m3c.md, PR1; Design prototype board PaletteM3c): its own
@@ -26,7 +49,8 @@ import { PALETTE_CSS } from './styles';
 // typed here never reach the page's own shortcuts (decision 4), and closing hands focus and
 // the selection back to the page. Every frame writes the shape's clip-path, the shadow
 // layer's box and the content's opacity and transform; layout is read only after the content
-// changed.
+// changed. Plain text typed (no leading `/`) is a quick translation (PR3): the list's first
+// row, run by Enter, streams the result above the list through the palette's own Port.
 
 type MediaQuery = Pick<MediaQueryList, 'matches'> &
   Partial<Pick<MediaQueryList, 'addEventListener' | 'removeEventListener'>>;
@@ -47,15 +71,55 @@ export interface PaletteEnv {
    * Defaults to `event.isTrusted` (test DOMs dispatch only untrusted events).
    */
   isTrusted?(event: Event): boolean;
+  /** `i18n.detectLanguage`; absent or rejecting: the detection failed. */
+  detectLanguage?(text: string): Promise<DetectedLanguages>;
+  /** The browser's interface language; defaults to `i18n.getUILanguage`. */
+  uiLanguage?(): string;
+  /** Defaults to `navigator.clipboard.writeText`. */
+  writeClipboard?(text: string): Promise<void>;
 }
 
 export interface PaletteOptions {
   deps: PaletteRuntimeDeps;
+  /** The quick translation's own Port (connects on its first request). */
+  port: CardPort;
   env: PaletteEnv;
+}
+
+/**
+ * Decision 7: where a quick translation goes. Text in the target language goes into English;
+ * with an English target, into the browser's interface language; undefined when that is
+ * English too (nothing to send). `from` is the reliably detected language, if any.
+ */
+export function quickDirection(
+  from: LanguageCode | undefined,
+  target: LanguageCode,
+  ui: string,
+): { to: LanguageCode; reversed: boolean } | undefined {
+  if (from !== target) return { to: target, reversed: false };
+  if (target !== 'en') return { to: 'en', reversed: true };
+  const own = normalizeLanguage(ui);
+  return own && own !== 'en' ? { to: own, reversed: true } : undefined;
+}
+
+/** What the quick translation shows. */
+interface Quick {
+  /** The trimmed text sent; frames for any other are dropped. */
+  source: string;
+  status: 'detecting' | 'loading' | 'partial' | 'done' | 'notice';
+  /** The translation so far, or the notice (error, too long, already there, unchanged). */
+  text: string;
+  error?: boolean;
+  /** The reliably detected language's tag. */
+  from?: string;
+  /** Where it goes, once a request was sent. */
+  to?: LanguageCode;
 }
 
 /** One row of the list: a command, or an engine in the engine list. */
 interface Row {
+  /** Who the row is (command id, engine id, 'tr' for the translate row): the highlight follows it. */
+  key: string;
   label: string;
   icon(): Node;
   /** Trailing text: an engine's note, the engine a command opens the list of. */
@@ -70,6 +134,8 @@ interface Row {
   more?: boolean;
   /** The key bound to the command, shown in the shortcut slot. */
   kb?: string;
+  /** The translate row: the typed text, cut on its own between the quotes. */
+  quoted?: string;
   run(): void;
 }
 
@@ -104,6 +170,8 @@ const KEYUP_GUARD_MS = 1000;
 /** The input row (--et-h-strip): the shape starts as this strip, 0 wide, at the edge. */
 const STRIP = 46;
 const RADIUS = 14;
+/** How long the copy row says "Copied" (as the card's button). */
+const COPIED_MS = 1500;
 /** Reduced motion: the closing fade (--et-dur-fast). */
 const FADE_MS = 120;
 /** Closing: the content fades over the first 35% and moves this far toward the edge. */
@@ -119,6 +187,11 @@ const PATH = {
   back: 'M10 3.5 5.5 8l4.5 4.5',
   more: 'M6 3.5 10.5 8 6 12.5',
   check: 'M3.5 8.4l3 3 6-6.4',
+  copy: 'M7.3 5.5h4.4a1.8 1.8 0 0 1 1.8 1.8v4.4a1.8 1.8 0 0 1-1.8 1.8H7.3a1.8 1.8 0 0 1-1.8-1.8V7.3a1.8 1.8 0 0 1 1.8-1.8zM10.5 5.5V4.3a1.8 1.8 0 0 0-1.8-1.8H4.3a1.8 1.8 0 0 0-1.8 1.8v4.4a1.8 1.8 0 0 0 1.8 1.8h1.2',
+  /** 12px grid: the result's direction line. */
+  arrow: 'M2 6h8M7 3l3 3-3 3',
+  /** The lead dot's ring (r 7.25): a faint track and a spinning arc (stylesheet dash). */
+  ring: 'M8 .75a7.25 7.25 0 1 1 0 14.5a7.25 7.25 0 1 1 0-14.5',
 };
 /** The isle's mode glyphs: a character in a box in Chinese UIs, a line icon elsewhere. */
 const GLYPHS: Record<string, NoArgKey> = {
@@ -137,6 +210,7 @@ const COMMAND_ICONS: Record<string, string> = {
   'retry.failed': PATH.retry,
   'engine.switch': PATH.engine,
   'options.open': PATH.settings,
+  'quick.copy': PATH.copy,
 };
 /** The commands that show their bound key, and the manifest command each one reads. */
 const SHORTCUT_OF: Record<string, keyof PaletteShortcuts> = {
@@ -147,7 +221,10 @@ const SHORTCUT_OF: Record<string, keyof PaletteShortcuts> = {
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
+/** Plain text typed: what Enter translates ('' for a blank input or a `/` command search). */
+const typedText = (value: string) => (COMMAND_PREFIX.test(value.trimStart()) ? '' : value.trim());
+
+export function createPalette({ deps, port, env }: PaletteOptions): PaletteRuntime {
   const { win } = env;
   const doc = win.document;
   const raf = env.raf ?? ((callback: () => void) => win.requestAnimationFrame(callback));
@@ -156,6 +233,9 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
   const trusted = env.isTrusted ?? ((event: Event) => event.isTrusted);
   const media = (query: string): MediaQuery | undefined =>
     env.matchMedia ? env.matchMedia(query) : win.matchMedia?.(query);
+  const uiLanguage = env.uiLanguage ?? browserUiLanguage;
+  const writeClipboard =
+    env.writeClipboard ?? ((text: string) => win.navigator.clipboard.writeText(text));
 
   interface Els {
     shadowRoot: ShadowRoot;
@@ -168,7 +248,11 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     chip: HTMLElement;
     input: HTMLInputElement;
     halted: HTMLElement;
+    result: HTMLElement;
+    direction: HTMLElement;
+    text: HTMLElement;
     list: HTMLElement;
+    foot: HTMLElement;
     live: HTMLElement;
   }
   let host: HTMLElement | undefined;
@@ -207,6 +291,21 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
   let closingKey: string | undefined;
   /** Removes the pending keyup guard (swallowKeyUp), if any. */
   let unguard = () => {};
+  /** The configured target language, read on opening. */
+  let target: LanguageCode | undefined;
+  let quick: Quick | undefined;
+  /** Bumped whenever the quick translation is replaced or dropped: late answers are ignored. */
+  let quickSerial = 0;
+  let copied = false;
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The arrows moved the highlight since the last input: Enter runs it, not the translation. */
+  let keyed = false;
+  const requests = createCardRequests({ port, currentSource: () => quick?.source });
+  /** The streamed translation's text node, and its caret (moved, never rebuilt). */
+  let streamed: Text | undefined;
+  const caret = doc.createElement('span');
+  caret.className = 'cr';
+  caret.setAttribute('aria-hidden', 'true');
 
   const reduced = () => !!media('(prefers-reduced-motion: reduce)')?.matches;
 
@@ -280,7 +379,11 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     const shadowRoot = element.attachShadow({ mode: env.shadowMode ?? 'closed' });
     adoptStyles(shadowRoot);
     const label = message('palette.label');
-    const lead = node('span', { class: 'ld', 'aria-hidden': 'true' });
+    const lead = node(
+      'span',
+      { class: 'ld', 'aria-hidden': 'true' },
+      icon('arc', '0 0 16 16', [PATH.ring, '.22'], [PATH.ring]),
+    );
     const chip = node('span', { class: 'cp', hidden: '' });
     const input = node('input', {
       class: 'in',
@@ -294,8 +397,21 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     });
     const haltedText = node('span', { class: 'hs', hidden: '' });
     const head = node('div', { class: 'hd' }, lead, chip, input, haltedText);
+    const direction = node('div', { class: 'dr' });
+    // Focusable (not in any tab order) so the text can be selected without the focus leaving
+    // the palette; keys there go back to the input (onTextKey).
+    const text = node('div', { class: 'qt', tabindex: '-1' });
+    const result = node('div', { class: 'qr', 'aria-live': 'polite', hidden: '' }, direction, text);
     const list = node('ul', { class: 'ls', id: 'l', role: 'listbox', 'aria-label': label });
-    const content = node('div', { class: 'cn', role: 'dialog', 'aria-label': label }, head, list);
+    const foot = node('div', { class: 'ft', hidden: '' }, message('palette.slashHint'));
+    const content = node(
+      'div',
+      { class: 'cn', role: 'dialog', 'aria-label': label },
+      head,
+      result,
+      list,
+      foot,
+    );
     const shape = node('div', { class: 'sl' }, content);
     const shadow = node('div', { class: 'sh' });
     const live = node('span', { class: 'sr', role: 'status', 'aria-live': 'polite' });
@@ -309,6 +425,8 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     head.addEventListener('click', onHeadClick);
     list.addEventListener('click', onRowClick);
     list.addEventListener('pointermove', onRowHover);
+    text.addEventListener('scroll', onTextScroll);
+    text.addEventListener('keydown', onTextKey);
     if (reduced()) root.setAttribute('data-rm', '');
     joined = modalDialog();
     (joined ?? doc.documentElement).append(element);
@@ -325,7 +443,11 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       chip,
       input,
       halted: haltedText,
+      result,
+      direction,
+      text,
       list,
+      foot,
       live,
     };
   }
@@ -378,6 +500,9 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
 
   const api: CommandApi = {
     page: deps.page,
+    copy() {
+      void copy();
+    },
     openSettings() {
       close();
       deps.send('options.open').catch(() => {});
@@ -392,6 +517,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
         : message('popup.translatePage');
       els.chip.hidden = false;
       els.input.value = '';
+      clearQuick();
       els.input.placeholder = message('isle.listTitle');
       els.lead.replaceWith(backButton());
       if (engines === 'failed') loadEngines();
@@ -418,16 +544,36 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       : undefined;
   }
 
+  /** The translate row, first for plain text typed (not for a `/` search, not once halted). */
+  function translateRow(query: string): Row[] {
+    const source = typedText(query);
+    if (!source || !ctx || ctx.state.halted) return [];
+    return [
+      {
+        key: 'tr',
+        label: message('palette.translateText', source),
+        quoted: source,
+        icon: () => icon('', '0 0 16 16', [PATH.translate]),
+        run: () => translateNow(source),
+      },
+    ];
+  }
+
+  /** A translation to copy: done, translated, not a notice. */
+  const translation = () => (quick?.status === 'done' ? quick.text : '');
+
   function commandRows(query: string): Row[] {
-    const current = ctx;
-    if (!current) return [];
+    if (!ctx) return [];
+    const current: PaletteContext = translation() ? { ...ctx, quick: { copied } } : ctx;
     const zh = uiLocale().startsWith('zh');
     return listCommands(current, query).map((command): Row => {
       const glyph = GLYPHS[command.id];
       const shortcutName = SHORTCUT_OF[command.id];
       return {
+        key: command.id,
         label: command.title(current),
         icon: () => {
+          if (command.id === 'quick.copy' && copied) return icon('cd', '0 0 16 16', [PATH.check]);
           if (!glyph) return icon('', '0 0 16 16', [COMMAND_ICONS[command.id] ?? '']);
           if (zh) return node('span', { class: 'pf' }, message(glyph));
           return icon('', '0 0 14 14', ...(GLYPH_ICONS[glyph] ?? []));
@@ -445,6 +591,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
             : undefined,
         run: () => {
           command.run(current, api);
+          if (command.stays) return;
           // A command that opened the engine list keeps the palette open.
           if (view === 'commands') close();
           else render();
@@ -463,6 +610,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       .filter((option) => option.name.toLowerCase().includes(q))
       .map(
         (option): Row => ({
+          key: option.id,
           label: option.name,
           icon: () => engineMark(doc, option),
           trail: option.ready ? undefined : option.note,
@@ -481,14 +629,20 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
 
   /** `label` with the first match of `query` in the accent color. */
   function highlighted(label: string, query: string): (Node | string)[] {
-    const q = normalizeQuery(query);
-    const at = q ? label.toLowerCase().indexOf(q) : -1;
-    if (at < 0) return [label];
+    const range = matchRange(label, normalizeQuery(query));
+    if (!range) return [label];
+    const [start, end] = range;
     return [
-      label.slice(0, at),
-      node('span', { class: 'hl' }, label.slice(at, at + q.length)),
-      label.slice(at + q.length),
+      label.slice(0, start),
+      node('span', { class: 'hl' }, label.slice(start, end)),
+      label.slice(end),
     ];
+  }
+
+  /** 「翻译“…”」 with the text in its own span: it is cut, the closing quote stays. */
+  function quotedTitle(quoted: string): HTMLElement {
+    const [before = '', after = ''] = message('palette.translateText', '\n').split('\n');
+    return node('span', { class: 'tt qq' }, before, node('span', { class: 'q' }, quoted), after);
   }
 
   function rowElement(row: Row, index: number, query: string): HTMLElement {
@@ -496,7 +650,9 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       'li',
       { class: 'o', id: `o${index}`, role: 'option', 'data-i': String(index) },
       node('span', { class: 'ic', 'aria-hidden': 'true' }, row.icon()),
-      node('span', { class: 'tt' }, ...highlighted(row.label, query)),
+      row.quoted === undefined
+        ? node('span', { class: 'tt' }, ...highlighted(row.label, query))
+        : quotedTitle(row.quoted),
     );
     if (row.disabled) item.setAttribute('aria-disabled', 'true');
     if (row.current) item.setAttribute('aria-current', 'true');
@@ -510,18 +666,19 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     return item;
   }
 
-  /** Rebuilds the list; the highlight goes to the first row unless `keep` and still valid. */
+  /**
+   * Rebuilds the list; the highlight goes to the first row unless `keep` and the highlighted
+   * row (the same command or engine, wherever it moved) is still there and enabled.
+   */
   function render(keep = false) {
     if (!els) return;
     const { input, list, live } = els;
     const query = input.value;
-    const before = active;
-    rows = view === 'engines' ? engineRows(query) : commandRows(query);
+    const before = rows[active]?.key;
+    rows = view === 'engines' ? engineRows(query) : [...translateRow(query), ...commandRows(query)];
     const disabled = rows.map((row) => !!row.disabled);
-    active =
-      keep && before >= 0 && before < rows.length && !disabled[before]
-        ? before
-        : moveActive(disabled, -1, 1);
+    const kept = keep ? rows.findIndex((row) => row.key === before) : -1;
+    active = kept >= 0 && !disabled[kept] ? kept : moveActive(disabled, -1, 1);
     const empty =
       (view === 'engines' && engines === 'failed') || (!!ctx && view === 'commands' && !rows.length)
         ? message(view === 'engines' ? 'isle.listFailed' : 'palette.empty')
@@ -531,14 +688,225 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       ...(empty ? [node('li', { class: 'em', role: 'presentation' }, empty)] : []),
     );
     list.hidden = list.childElementCount === 0;
+    // The footnote: only over the full list of commands.
+    els.foot.hidden = !(ctx && view === 'commands' && !query && !ctx.state.halted);
     if (live.textContent !== empty) live.textContent = empty;
     highlight();
     resize();
   }
 
+  /**
+   * Text typed and the arrows not used yet: Enter translates, so the pointer only hovers (a
+   * fainter background, `.ls[data-hover]`) and leaves the highlight where Enter goes.
+   */
+  const hoverOnly = () => !keyed && rows[0]?.quoted !== undefined;
+
+  // ---- Quick translation -------------------------------------------------------------------
+
+  /** Drops the quick translation without drawing (closing): the request is cancelled. */
+  function stopQuick() {
+    quickSerial += 1;
+    requests.cancel();
+    quick = undefined;
+    copied = false;
+    clearTimeout(copiedTimer);
+  }
+
+  function clearQuick() {
+    const had = !!quick;
+    stopQuick();
+    if (had) renderQuick();
+  }
+
+  /** Enter on the translate row: detect, pick the direction (decision 7), then stream. */
+  function translateNow(source: string) {
+    // Already shown or on its way; a failed one is tried again.
+    if (quick?.source === source && !quick.error) return;
+    stopQuick();
+    const serial = quickSerial;
+    if (source.length > MAX_SOURCE_LENGTH) {
+      // Never sent (request.ts): no detection either.
+      onQuick(source, { kind: 'too-long' });
+      return;
+    }
+    quick = { source, status: 'detecting', text: '' };
+    renderQuick();
+    // A detector that throws at once is a failed detection too, not a stuck spinner.
+    new Promise<DetectedLanguages>((resolve, reject) => {
+      if (env.detectLanguage) resolve(env.detectLanguage(source));
+      else reject(new Error('unavailable'));
+    })
+      .then(reliableLanguage, () => undefined)
+      .then((from) => {
+        if (serial !== quickSerial || !quick) return;
+        quick.from = from;
+        // Failed or unsure (short text, mostly): the script decides whether it is already in
+        // the target language. A reliable other language (French…) is left as it is.
+        const code = from
+          ? normalizeLanguage(from)
+          : target && isTargetScript(source, target)
+            ? target
+            : undefined;
+        const goes = target ? quickDirection(code, target, uiLanguage()) : { reversed: false };
+        if (!goes) {
+          quick = { source, status: 'notice', text: message('palette.alreadyTarget') };
+          renderQuick();
+          render(true);
+          return;
+        }
+        quick.to = 'to' in goes ? goes.to : undefined;
+        requests.translate(
+          { source, force: true, target: goes.reversed ? quick.to : undefined },
+          (event) => {
+            if (serial === quickSerial) onQuick(source, event);
+          },
+        );
+      });
+  }
+
+  function onQuick(source: string, event: RequestEvent) {
+    const shown = quick ?? { source, status: 'loading', text: '' };
+    quick = shown;
+    if (event.kind === 'phonetic') return;
+    shown.error = false;
+    if (event.kind === 'loading' || event.kind === 'partial') {
+      shown.status = event.kind;
+      shown.text = event.kind === 'partial' ? event.text : '';
+      renderQuick();
+      return;
+    }
+    if (event.kind === 'done') {
+      const translated = event.disposition === 'translated' && !!event.text;
+      shown.status = translated ? 'done' : 'notice';
+      shown.text = translated ? event.text : message('card.unchanged');
+    } else {
+      shown.status = 'notice';
+      shown.error = event.kind === 'error';
+      shown.text =
+        event.kind === 'error'
+          ? errorText(event.error)
+          : message(
+              'palette.tooLong',
+              MAX_SOURCE_LENGTH.toLocaleString(uiLocale(), { useGrouping: 'min2' }),
+            );
+    }
+    renderQuick();
+    // The copy row comes (or not) with the outcome; the highlight stays where it was.
+    render(true);
+  }
+
+  function languageLabel(tag: string | undefined): string {
+    const code = tag ? normalizeLanguage(tag) : undefined;
+    return code ? languageName(code) : message('common.autoDetect');
+  }
+
+  /** The result area above the list, and the lead's spinning arc while it is on its way. */
+  function renderQuick() {
+    if (!els) return;
+    const { root, result, direction, text } = els;
+    const busy = !!quick && quick.status !== 'done' && quick.status !== 'notice';
+    root.toggleAttribute('data-run', busy);
+    result.setAttribute('aria-busy', String(busy));
+    // Hidden until the direction is known: a detection is too quick to show.
+    result.hidden = !quick || quick.status === 'detecting' || view !== 'commands';
+    if (!quick || result.hidden) {
+      text.replaceChildren();
+      text.removeAttribute('data-more');
+    } else {
+      const { to, status } = quick;
+      direction.hidden = !to;
+      if (to) {
+        direction.replaceChildren(
+          languageLabel(quick.from),
+          icon('', '0 0 12 12', [PATH.arrow]),
+          node('span', { class: 'sr' }, '→'),
+          languageName(to),
+        );
+      }
+      if (status === 'notice') {
+        text.removeAttribute('lang');
+        const notice = node('p', { class: 'nc' }, quick.text);
+        if (quick.error) notice.setAttribute('data-err', '');
+        text.replaceChildren(notice);
+        streamed = undefined;
+      } else {
+        // The translation is in its own language, whatever the palette's is.
+        text.setAttribute('lang', to ?? '');
+        const streaming = status !== 'done';
+        // Whether the reader is at the end, judged before the new words grow the text.
+        const atEnd = text.scrollHeight - text.scrollTop - text.clientHeight < 24;
+        // One text node: increments are appended (a selection in it survives); a reset or a
+        // final text that is not a continuation starts it over.
+        if (streamed?.parentNode === text && quick.text.startsWith(streamed.data)) {
+          streamed.appendData(quick.text.slice(streamed.data.length));
+        } else {
+          streamed = doc.createTextNode(quick.text);
+          text.replaceChildren(streamed);
+        }
+        if (streaming) text.append(caret);
+        else caret.remove();
+        // Follow the end while it streams, unless the reader scrolled up.
+        if (streaming && atEnd) text.scrollTop = text.scrollHeight;
+      }
+      fadeMore();
+    }
+    resize();
+  }
+
+  /** The 22px fade at the bottom while more text is below. */
+  function fadeMore() {
+    if (!els) return;
+    const { text } = els;
+    text.toggleAttribute('data-more', text.scrollHeight - text.scrollTop - text.clientHeight > 4);
+  }
+
+  async function copy() {
+    const value = translation();
+    if (!value) return;
+    const serial = quickSerial;
+    let ok = false;
+    try {
+      await writeClipboard(value);
+      ok = true;
+    } catch {
+      // Not into a palette opened since, nor for a translation replaced meanwhile.
+      if (serial !== quickSerial || !open) return;
+      ok = fallbackCopy(value);
+    }
+    if (!ok || serial !== quickSerial || !open) return;
+    copied = true;
+    render(true);
+    if (els) els.live.textContent = message('card.copied');
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => {
+      copied = false;
+      render(true);
+    }, COPIED_MS);
+  }
+
+  /** `execCommand('copy')` from a textarea in the shadow root; the focus returns to the input. */
+  function fallbackCopy(value: string): boolean {
+    if (!els) return false;
+    const area = node('textarea', { class: 'sr', 'aria-hidden': 'true', tabindex: '-1' });
+    area.value = value;
+    els.root.append(area);
+    let ok = false;
+    try {
+      area.focus({ preventScroll: true });
+      area.select();
+      ok = doc.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    els.input.focus({ preventScroll: true });
+    return ok;
+  }
+
   function highlight() {
     if (!els) return;
     const { input, list } = els;
+    list.toggleAttribute('data-hover', hoverOnly());
     for (const item of list.children) {
       if (item.getAttribute('role') === 'option') {
         item.setAttribute('aria-selected', String(item.id === `o${active}`));
@@ -549,6 +917,13 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       input.setAttribute('aria-activedescendant', `o${active}`);
       (list.children[active] as HTMLElement | undefined)?.scrollIntoView?.({ block: 'nearest' });
     }
+  }
+
+  /** Enter: plain text typed is translated unless the arrows picked another row. */
+  function runEnter() {
+    const first = rows[0];
+    if (!keyed && first?.quoted !== undefined) first.run();
+    else runActive();
   }
 
   function runActive() {
@@ -564,6 +939,8 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     els.chip.hidden = true;
     const back = els.head.querySelector('[data-back]');
     if (back) back.replaceWith(els.lead);
+    keyed = false;
+    clearQuick();
     render();
   }
 
@@ -611,13 +988,14 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
 
   function act(action: NonNullable<ReturnType<typeof keyAction>>) {
     if (action === 'up' || action === 'down') {
+      keyed = true;
       active = moveActive(
         rows.map((row) => !!row.disabled),
         active,
         action === 'up' ? -1 : 1,
       );
       highlight();
-    } else if (action === 'run') runActive();
+    } else if (action === 'run') runEnter();
     else if (action === 'parent') showCommands();
     else if (action === 'back') {
       // One Escape, one layer: the engine list goes back to the commands first.
@@ -659,12 +1037,47 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
   }
 
   const onInput = () => {
+    keyed = false;
+    // Another text: the old result goes, its request with it.
+    if (quick && els && typedText(els.input.value) !== quick.source) clearQuick();
     render();
   };
 
-  // Presses inside keep the focus in the input; the input itself takes the caret as usual.
+  // Presses inside keep the focus in the input; the input itself takes the caret as usual,
+  // and the translation takes the selection (it holds the focus, still inside the palette).
   const keepFocus = (event: Event) => {
-    if (event.target !== els?.input) event.preventDefault();
+    const target = event.target as Node | null;
+    if (target !== els?.input && !(target && els?.text.contains(target))) event.preventDefault();
+  };
+
+  const onTextScroll = () => {
+    fadeMore();
+  };
+
+  /**
+   * A key while the translation has the focus (after selecting in it). Typing (a character,
+   * with Option or AltGr too, a dead key, an input method starting), Enter, Escape, Tab and
+   * ↑↓ go back to the input, which
+   * handles them as its own; keys that extend the selection or scroll (Shift+arrows, Page
+   * Up/Down, space, Home/End) and shortcuts (copy) stay. ⌘A / Ctrl+A selects the translation
+   * only, not the page.
+   */
+  const onTextKey = (event: KeyboardEvent) => {
+    const { key, shiftKey, altKey } = event;
+    // AltGr (Windows: Ctrl+Alt) types characters; ⌘ / Ctrl make shortcuts.
+    const command = !event.getModifierState?.('AltGraph') && (event.ctrlKey || event.metaKey);
+    if (command && !altKey && !shiftKey && key.toLowerCase() === 'a') {
+      event.preventDefault();
+      if (els) win.getSelection()?.selectAllChildren(els.text);
+      return;
+    }
+    // Option (macOS) and AltGr type characters too; a dead key starts one.
+    const typing = (key.length === 1 && key !== ' ') || key === 'Process' || key === 'Dead';
+    const moving =
+      !altKey && (/^(Enter|Escape|Tab)$/.test(key) || (!shiftKey && /^Arrow(Up|Down)$/.test(key)));
+    if (command || !(typing || moving)) return;
+    els?.input.focus({ preventScroll: true });
+    onKey(event);
   };
 
   const onHeadClick = (event: Event) => {
@@ -679,14 +1092,20 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
   const onRowClick = (event: Event) => {
     const index = rowIndex(event);
     if (!Number.isInteger(index) || rows[index]?.disabled) return;
+    // Another row than the translation: Enter follows the click, as it follows the arrows.
+    if (index > 0) keyed = true;
     active = index;
+    highlight();
     runActive();
   };
 
-  // The pointer moves the one highlight; disabled rows do not react.
+  // The pointer moves the one highlight; disabled rows do not react. With text typed and the
+  // arrows not used yet, Enter translates: the highlight (what a screen reader hears) stays on
+  // the translate row, and the pointer only hovers (the stylesheet's :hover).
   const onRowHover = (event: Event) => {
     const index = rowIndex(event);
     if (!Number.isInteger(index) || index === active || rows[index]?.disabled) return;
+    if (hoverOnly()) return;
     active = index;
     highlight();
   };
@@ -963,14 +1382,12 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     const opened = epoch;
     Promise.all([
       deps.page.getState().catch(() => ({ ...IDLE_PAGE_STATE })),
-      deps.getConfig().then(
-        (config) => config.page.isleDock,
-        () => dock,
-      ),
-    ]).then(([state, next]) => {
+      deps.getConfig().catch(() => undefined),
+    ]).then(([state, config]) => {
       if (opened !== epoch || !open) return;
       ctx = { state };
-      dock = next;
+      dock = config?.page.isleDock ?? dock;
+      target = config?.language.target;
       // Nothing has grown yet: start from the fold for this dock and isle.
       anchor = readIsle();
       const [w, h] = folded();
@@ -995,6 +1412,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     }
     if (handBack && !halted) restoreFocus(doc, saved);
     if (closingKey) swallowKeyUp(closingKey);
+    stopQuick();
     saved = { element: null };
     if (!els) return;
     if (reduced()) {
@@ -1026,6 +1444,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       close();
       disposed = true;
       unguard();
+      requests.dispose();
       unmount();
     },
   };

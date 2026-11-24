@@ -54,4 +54,36 @@ describe('palette styles', () => {
     expect(rule('.tr,.nt')).toContain('font-size:12px');
     expect(rule('.kb')).toContain('font-size:12px');
   });
+
+  it('quick translate: a result of at most 168px that scrolls and fades, a 28px footnote', () => {
+    const result = rule('.qr');
+    expect(result).toContain('max-height:168px');
+    expect(result).toContain('padding:12px 16px');
+    expect(result).toContain('gap:6px');
+    expect(result).toContain('border-top:1px solid var(--et-color-isle-2)');
+    expect(rule('.qt')).toContain('overflow-y:auto');
+    expect(rule('.qt')).toContain('user-select:text');
+    expect(rule('.qt[data-more]')).toContain('calc(100% - 22px)');
+    expect(rule('.qt::selection,.qt ::selection')).toContain(
+      'color-mix(in oklab,var(--et-color-accent) 38%,transparent)',
+    );
+    const foot = rule('.ft');
+    expect(foot).toContain('height:28px');
+    expect(foot).toContain('font-size:11px');
+    // Its text starts where the row titles do.
+    expect(foot).toContain('padding:0 16px 0 40px');
+    // The translate row cuts the text between the quotes, never the closing quote.
+    expect(rule('.q')).toContain('text-overflow:ellipsis');
+    expect(rule('.q')).toContain('min-width:0');
+    expect(rule('.ic .cd')).toContain('var(--et-color-isle-ok)');
+  });
+
+  it('shows a fainter hover only while the pointer does not move the highlight', () => {
+    expect(rule('.o[aria-selected="true"]')).toContain('background:var(--et-color-isle-2)');
+    expect(rule('.ls[data-hover] .o:hover:not([aria-disabled="true"])')).toContain(
+      'background:color-mix(in oklab,var(--et-color-isle-2) 50%,transparent)',
+    );
+    // No hover rule for every state: it would show a second highlight.
+    expect(PALETTE_CSS).not.toMatch(/(^|[,}])\.o:hover/m);
+  });
 });

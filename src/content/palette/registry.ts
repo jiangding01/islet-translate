@@ -10,6 +10,8 @@ import type { PageActions } from '../runtime-contract';
 /** What a command's availability and order depend on. */
 export interface PaletteContext {
   state: PageState;
+  /** The latest quick translation (PR3), once it has a translation to copy. */
+  quick?: { copied: boolean };
 }
 
 /** What a command can do when it runs. */
@@ -19,6 +21,8 @@ export interface CommandApi {
   engines(): void;
   /** Closes the palette, then asks the background to open the settings page. */
   openSettings(): void;
+  /** Copies the quick translation; the palette stays open and says it was copied. */
+  copy(): void;
 }
 
 export interface Command {
@@ -29,7 +33,14 @@ export interface Command {
   when(ctx: PaletteContext): boolean;
   /** Higher comes first among equally good matches; 0 when absent. */
   rank?(ctx: PaletteContext): number;
-  /** The palette closes afterwards unless the command opened the engine list. */
+  /**
+   * Listed first whenever it is available, whatever the query: the query is the text that
+   * was translated, not a search for this command.
+   */
+  sticky?: true;
+  /** The palette stays open afterwards. */
+  stays?: true;
+  /** The palette closes afterwards unless the command opened the engine list or `stays`. */
   run(ctx: PaletteContext, api: CommandApi): void;
 }
 
@@ -43,6 +54,15 @@ const canTranslate = ({ state }: PaletteContext) =>
   state.phase === 'idle' || state.scope === 'units';
 
 export const COMMANDS: readonly Command[] = [
+  {
+    id: 'quick.copy',
+    title: ({ quick }) => message(quick?.copied ? 'card.copied' : 'card.copy'),
+    keywords: ['copy'],
+    when: ({ quick }) => !!quick,
+    sticky: true,
+    stays: true,
+    run: (_ctx, { copy }) => copy(),
+  },
   {
     id: 'page.translate',
     title: () => message('popup.translatePage'),
@@ -101,9 +121,36 @@ export const COMMANDS: readonly Command[] = [
   },
 ];
 
-/** Lower case, trimmed; a leading `/` only says "commands", so it is dropped. */
+/**
+ * A leading `/` says "commands only". Chinese input methods type `／` or `、` for the same
+ * key, so those count too. Matched after trimming the start.
+ */
+export const COMMAND_PREFIX = /^[/／、]/;
+
+/** Lower case, trimmed; a leading command prefix only says "commands", so it is dropped. */
 export function normalizeQuery(query: string): string {
-  return query.trim().replace(/^\//, '').trim().toLowerCase();
+  return query.trim().replace(COMMAND_PREFIX, '').trim().toLowerCase();
+}
+
+/**
+ * Where the lower-cased `query` (normalizeQuery) is in `label`, as `[start, end)` indexes into
+ * `label` itself. Each character is lower-cased on its own and mapped back: "İ" lower-cases to
+ * two code units, so indexes into `label.toLowerCase()` would not fit `label`.
+ */
+export function matchRange(label: string, query: string): [number, number] | undefined {
+  if (!query) return undefined;
+  let lower = '';
+  /** For each code unit of `lower`: the character of `label` it came from, as [start, end). */
+  const from: [number, number][] = [];
+  for (const char of label) {
+    const start = from.length ? (from[from.length - 1] as [number, number])[1] : 0;
+    const piece = char.toLowerCase();
+    for (let i = 0; i < piece.length; i += 1) from.push([start, start + char.length]);
+    lower += piece;
+  }
+  const at = lower.indexOf(query);
+  if (at < 0) return undefined;
+  return [(from[at] as [number, number])[0], (from[at + query.length - 1] as [number, number])[1]];
 }
 
 /**
@@ -122,7 +169,8 @@ export function listCommands(
   commands.forEach((command, index) => {
     if (!command.when(ctx)) return;
     let tier = 0;
-    if (q) {
+    if (command.sticky) tier = -1;
+    else if (q) {
       const title = command.title(ctx).toLowerCase();
       if (title.startsWith(q)) tier = 0;
       else if (title.includes(q) || command.keywords.some((keyword) => keyword.includes(q))) {

@@ -2,7 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { appError } from '@/lib/errors';
 import type { PageState } from '@/lib/messaging/protocol';
 import { IDLE_PAGE_STATE, type PageActions } from '../runtime-contract';
-import { COMMANDS, listCommands, normalizeQuery, type PaletteContext } from './registry';
+import {
+  COMMAND_PREFIX,
+  COMMANDS,
+  listCommands,
+  matchRange,
+  normalizeQuery,
+  type PaletteContext,
+} from './registry';
 
 const ctxOf = (state: Partial<PageState>): PaletteContext => ({
   state: { ...IDLE_PAGE_STATE, ...state },
@@ -10,7 +17,7 @@ const ctxOf = (state: Partial<PageState>): PaletteContext => ({
 const ids = (ctx: PaletteContext, query = '') => listCommands(ctx, query).map((c) => c.id);
 
 describe('availability and order (empty input)', () => {
-  // Quick translate (PR3) adds the seventh context: its result is not part of PR1's context.
+  // The seventh context, after a quick translation, is below (it needs a result in `ctx`).
   it.each([
     ['idle', {}, ['page.translate', 'engine.switch', 'options.open']],
     [
@@ -46,6 +53,28 @@ describe('availability and order (empty input)', () => {
     expect(ids(ctxOf(state))).toEqual(expected);
   });
 
+  it('after a quick translation: “复制译文” first, whatever the query', () => {
+    const ctx: PaletteContext = { state: { ...IDLE_PAGE_STATE }, quick: { copied: false } };
+    expect(ids(ctx)).toEqual(['quick.copy', 'page.translate', 'engine.switch', 'options.open']);
+    // The input is the text that was translated: it matches no title, the copy row stays.
+    expect(ids(ctx, 'hello world')).toEqual(['quick.copy']);
+    expect(ids({ ...ctx, state: { ...IDLE_PAGE_STATE, phase: 'done', failed: 1 } })[0]).toBe(
+      'quick.copy',
+    );
+    // No result, no copy row; a halted session offers nothing.
+    expect(ids(ctxOf({}), 'copy')).toEqual([]);
+    expect(ids({ ...ctx, state: { ...IDLE_PAGE_STATE, phase: 'running', halted: true } })).toEqual(
+      [],
+    );
+  });
+
+  it('titles the copy command “已复制” for a moment after copying', () => {
+    const copy = COMMANDS.find((c) => c.id === 'quick.copy');
+    expect(copy?.title({ state: IDLE_PAGE_STATE, quick: { copied: false } })).toBe('复制译文');
+    expect(copy?.title({ state: IDLE_PAGE_STATE, quick: { copied: true } })).toBe('已复制');
+    expect(copy?.stays).toBe(true);
+  });
+
   it('titles the engine command by state: switch while translating, translate with … when idle', () => {
     const engine = COMMANDS.find((c) => c.id === 'engine.switch');
     expect(engine?.title(ctxOf({ phase: 'running' }))).toBe('切换翻译服务…');
@@ -68,6 +97,11 @@ describe('matching', () => {
 
   it('normalizes: trimmed, lower case, a leading slash only filters', () => {
     expect(normalizeQuery('  /Retry ')).toBe('retry');
+    // Chinese input methods type a full-width slash or “、” for the slash key.
+    expect(normalizeQuery('／设置')).toBe('设置');
+    expect(normalizeQuery('、设置')).toBe('设置');
+    expect(COMMAND_PREFIX.test('、')).toBe(true);
+    expect(COMMAND_PREFIX.test('a/')).toBe(false);
     expect(normalizeQuery('/ 只看')).toBe('只看');
     expect(normalizeQuery('a/b')).toBe('a/b');
   });
@@ -78,6 +112,15 @@ describe('matching', () => {
     expect(ids(running, 'ENGINE')).toEqual(['engine.switch']);
     expect(ids(ctxOf({}), 'translate')).toEqual(['page.translate']);
     expect(ids(running, 'zzz')).toEqual([]);
+  });
+
+  it('finds the match in the original label even when lower-casing changes its length', () => {
+    // "İ" lower-cases to two code units ("i̇"): indexes into the lower-cased label would be off.
+    expect(matchRange('İleri Çeviri', 'leri')).toEqual([1, 5]);
+    expect(matchRange('İleri', normalizeQuery('İl'))).toEqual([0, 2]);
+    expect(matchRange('Open AI', 'ai')).toEqual([5, 7]);
+    expect(matchRange('Google', 'zz')).toBeUndefined();
+    expect(matchRange('Google', '')).toBeUndefined();
   });
 
   it('puts title prefix matches before other matches, then rank, then table order', () => {
@@ -99,7 +142,7 @@ describe('running', () => {
       setMode: vi.fn(async () => IDLE_PAGE_STATE),
       retryFailed: vi.fn(async () => IDLE_PAGE_STATE),
     };
-    return { page, engines: vi.fn(), openSettings: vi.fn() };
+    return { page, engines: vi.fn(), openSettings: vi.fn(), copy: vi.fn() };
   }
   const run = (id: string, ctx = ctxOf({ phase: 'running' })) => {
     const a = api();
@@ -119,6 +162,9 @@ describe('running', () => {
     const settings = run('options.open');
     expect(settings.openSettings).toHaveBeenCalledOnce();
     expect(settings.engines).not.toHaveBeenCalled();
+    expect(
+      run('quick.copy', { state: IDLE_PAGE_STATE, quick: { copied: false } }).copy,
+    ).toHaveBeenCalledOnce();
   });
 
   it('swallows a rejected action (the isle and the panel report the session)', async () => {

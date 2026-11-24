@@ -7,6 +7,7 @@ import {
   createCardRequests,
   MAX_SOURCE_LENGTH,
   type RequestEvent,
+  reliableLanguage,
   wantsPhonetic,
 } from './request';
 
@@ -41,7 +42,7 @@ function setup() {
   const events: RequestEvent[] = [];
   const start = (
     text: string,
-    extra: { force?: boolean; engine?: 'google'; phonetic?: boolean } = {},
+    extra: { force?: boolean; engine?: 'google'; phonetic?: boolean; target?: 'en' } = {},
   ) => {
     source = text;
     return requests.translate({ source: text, ...extra }, (event) => events.push(event));
@@ -67,6 +68,29 @@ describe('card requests (plan 1.2)', () => {
     t.start('the whole sentence.', { force: true, engine: 'google' });
     expect(t.sent[1]?.payload).toMatchObject({ force: true, engine: 'google' });
     expect(t.sent[1]?.payload.items[0]?.text).toBe('the whole sentence.');
+    expect(t.sent[1]?.payload.target).toBeUndefined();
+  });
+
+  it('asks for another target only when told to (the palette’s reversed direction)', () => {
+    const t = setup();
+    t.start('今天天气很好', { force: true, target: 'en' });
+    expect(t.sent[0]?.payload).toMatchObject({ force: true, target: 'en' });
+  });
+
+  it('takes the reliably detected top language, or nothing', () => {
+    expect(
+      reliableLanguage({
+        isReliable: true,
+        languages: [
+          { language: 'ja', percentage: 20 },
+          { language: 'zh', percentage: 80 },
+        ],
+      }),
+    ).toBe('zh');
+    expect(
+      reliableLanguage({ isReliable: false, languages: [{ language: 'zh', percentage: 99 }] }),
+    ).toBeUndefined();
+    expect(reliableLanguage(undefined)).toBeUndefined();
   });
 
   it('numbers requests and cancels the previous one before sending', () => {

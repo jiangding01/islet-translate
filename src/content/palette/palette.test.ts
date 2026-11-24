@@ -1,8 +1,18 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConfigV1, IsleDock } from '@/lib/config/types';
-import type { EngineOptions, PageState } from '@/lib/messaging/protocol';
+import { appError } from '@/lib/errors';
+import type { DetectedLanguages, LanguageCode } from '@/lib/languages';
+import type { Outcome } from '@/lib/messaging/port';
+import type {
+  EngineOptions,
+  PageState,
+  TranslateChunk,
+  TranslateDone,
+  TranslateRequest,
+} from '@/lib/messaging/protocol';
 import { IDLE_PAGE_STATE, type PageActions, type PaletteRuntime } from '../runtime-contract';
+import type { CardPort } from '../selection/request';
 import { createPalette } from './palette';
 
 const ENGINES: EngineOptions = {
@@ -20,6 +30,42 @@ interface SetupOptions {
   reduced?: boolean;
   engines?: () => Promise<EngineOptions>;
   shortcuts?: () => Promise<Record<string, string>>;
+  /** The configured target language (zh-CN by default). */
+  target?: LanguageCode;
+  /** `i18n.detectLanguage`; English, reliably, by default. */
+  detect?: (text: string) => Promise<DetectedLanguages>;
+  /** The browser's interface language. */
+  ui?: string;
+  clipboard?: (text: string) => Promise<void>;
+}
+
+const detected = (language: string, isReliable = true): DetectedLanguages => ({
+  isReliable,
+  languages: [{ language, percentage: 100 }],
+});
+
+/** The quick translation's Port: every request is kept, to answer by hand. */
+function fakePort() {
+  const sent: {
+    payload: TranslateRequest;
+    chunk: (chunk: TranslateChunk) => void;
+    finish: (outcome: Outcome<TranslateDone>) => void;
+    cancel: ReturnType<typeof vi.fn>;
+  }[] = [];
+  const port: CardPort = {
+    request(payload, onChunk) {
+      let finish: (outcome: Outcome<TranslateDone>) => void = () => {};
+      const outcome = new Promise<Outcome<TranslateDone>>((resolve) => {
+        finish = resolve;
+      });
+      const cancel = vi.fn(() => finish({ status: 'cancelled' }));
+      sent.push({ payload, chunk: (chunk) => onChunk?.(chunk), finish, cancel });
+      return { id: String(sent.length), outcome, cancel };
+    },
+    cancelAll: vi.fn(),
+    dispose: vi.fn(),
+  };
+  return { port, sent };
 }
 
 let palette: PaletteRuntime | undefined;
@@ -56,13 +102,24 @@ async function setup(options: SetupOptions = {}) {
     if (type === 'shortcuts.get') return shortcutReply();
     return Promise.resolve(null);
   });
+  const { port, sent } = fakePort();
+  const clipboard = vi.fn(options.clipboard ?? (async () => {}));
+  const detect = vi.fn(options.detect ?? (async () => detected('en')));
   palette = createPalette({
     deps: {
-      getConfig: async () => ({ page: { isleDock: options.dock ?? 'right' } }) as ConfigV1,
+      getConfig: async () =>
+        ({
+          page: { isleDock: options.dock ?? 'right' },
+          language: { target: options.target ?? 'zh-CN' },
+        }) as ConfigV1,
       send: send as never,
       page,
     },
+    port,
     env: {
+      detectLanguage: detect,
+      uiLanguage: () => options.ui ?? 'zh-CN',
+      writeClipboard: clipboard,
       win: window,
       shadowMode: 'open',
       isTrusted: () => true,
@@ -104,6 +161,9 @@ async function setup(options: SetupOptions = {}) {
   return {
     page,
     send,
+    sent,
+    clipboard,
+    detect,
     host,
     root,
     input,
@@ -141,7 +201,7 @@ describe('opening', () => {
     expect(p.host()?.hasAttribute('data-open')).toBe(true);
     expect(p.host()?.getAttribute('lang')).toBe('zh-CN');
     expect(p.root().activeElement).toBe(p.input());
-    expect(p.input().placeholder).toBe('输入指令');
+    expect(p.input().placeholder).toBe('输入指令，或输入要翻译的文字');
     expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
     // The first row is highlighted and announced to the combobox.
     expect(p.selected()).toBe('翻译此页');
@@ -309,12 +369,12 @@ describe('keys', () => {
   it('filters as you type: a leading slash only filters, no match says so', async () => {
     const p = await setup({ state: { phase: 'running' } });
     await p.open();
-    p.type('只看');
+    p.type('/只看');
     expect(p.titles()).toEqual(['只看译文']);
     expect(p.root().querySelector('.hl')?.textContent).toBe('只看');
     p.type('/engine');
     expect(p.titles()).toEqual(['切换翻译服务…']);
-    p.type('zzz');
+    p.type('/zzz');
     expect(p.titles()).toEqual([]);
     expect(p.root().querySelector('.em')?.textContent).toBe('没有匹配的指令');
     expect(p.root().querySelector('[role="status"]')?.textContent).toBe('没有匹配的指令');
@@ -341,7 +401,7 @@ describe('engine list', () => {
   async function openEngines(state: Partial<PageState> = { phase: 'running', engine: 'google' }) {
     const p = await setup({ state });
     await p.open();
-    p.type('engine');
+    p.type('/engine');
     p.key('Enter');
     await flush();
     return p;
@@ -392,7 +452,7 @@ describe('engine list', () => {
       engines: () => Promise.reject(new Error('gone')),
     });
     await p.open();
-    p.type('engine');
+    p.type('/engine');
     p.key('Enter');
     await flush();
     expect(p.titles()).toEqual([]);
@@ -736,7 +796,7 @@ describe('shortcuts and settings', () => {
   it('closes on “打开设置” and asks the background to open the page', async () => {
     const p = await setup();
     await p.open();
-    p.type('设置');
+    p.type('/设置');
     expect(p.titles()).toEqual(['打开设置']);
     p.key('Enter');
     await flush();
@@ -754,7 +814,7 @@ describe('shortcuts and settings', () => {
           ? Promise.resolve(ENGINES)
           : Promise.resolve({})) as never);
     await p.open();
-    p.type('设置');
+    p.type('/设置');
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
     p.key('Enter');
@@ -966,5 +1026,711 @@ describe('beside the isle (PR6)', () => {
     const fake = isleAt(`${W - 56},300,40,186`, document.body);
     fake.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
     expect(p.host()?.hasAttribute('data-open')).toBe(false);
+  });
+});
+
+describe('quick translate (PR3)', () => {
+  const result = (p: Awaited<ReturnType<typeof setup>>) =>
+    p.root().querySelector('.qr') as HTMLElement;
+  const shown = (p: Awaited<ReturnType<typeof setup>>) =>
+    !!result(p) && !result(p).hidden && result(p).isConnected;
+  const resultText = (p: Awaited<ReturnType<typeof setup>>) =>
+    p.root().querySelector('.qt')?.textContent ?? '';
+  const direction = (p: Awaited<ReturnType<typeof setup>>) =>
+    p.root().querySelector('.dr')?.textContent ?? '';
+  const hint = (p: Awaited<ReturnType<typeof setup>>) => {
+    const footer = p.root().querySelector('.ft') as HTMLElement | null;
+    return footer && !footer.hidden ? footer.textContent : null;
+  };
+  const running = (p: Awaited<ReturnType<typeof setup>>) =>
+    !!p.root().querySelector('.r')?.hasAttribute('data-run');
+
+  /** Types `text`, presses Enter and lets the detection answer. */
+  async function translate(p: Awaited<ReturnType<typeof setup>>, text: string) {
+    p.type(text);
+    p.key('Enter');
+    await flush();
+    await flush();
+  }
+
+  describe('input semantics', () => {
+    it('empty: every command and the slash hint; typed text hides the hint', async () => {
+      const p = await setup();
+      await p.open();
+      expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
+      expect(hint(p)).toBe('以 / 开头只搜索指令');
+      p.type('hello');
+      expect(hint(p)).toBeNull();
+      p.type('/');
+      expect(hint(p)).toBeNull();
+      p.type('');
+      expect(hint(p)).toBe('以 / 开头只搜索指令');
+      // Nothing to translate yet: no result area.
+      expect(shown(p)).toBe(false);
+    });
+
+    it('a leading slash only filters: no translate row, Enter runs the command, nothing sent', async () => {
+      const p = await setup();
+      await p.open();
+      p.type('/设置');
+      expect(p.titles()).toEqual(['打开设置']);
+      p.key('Enter');
+      await flush();
+      expect(p.send).toHaveBeenCalledWith('options.open');
+      expect(p.detect).not.toHaveBeenCalled();
+      expect(p.sent).toHaveLength(0);
+    });
+
+    it('a full-width slash or “、” (a Chinese input method’s slash) only filters too', async () => {
+      const p = await setup();
+      await p.open();
+      for (const prefix of ['／', '、', ' /']) {
+        p.type(`${prefix}设置`);
+        expect(p.titles()).toEqual(['打开设置']);
+      }
+      p.key('Enter');
+      await flush();
+      expect(p.send).toHaveBeenCalledWith('options.open');
+      expect(p.sent).toHaveLength(0);
+    });
+
+    it('other text: “翻译“…”” first, then the matching commands; Enter translates', async () => {
+      const p = await setup();
+      await p.open();
+      p.type('settings');
+      expect(p.titles()).toEqual(['翻译“settings”', '打开设置']);
+      expect(p.selected()).toBe('翻译“settings”');
+      expect(p.root().querySelector('.o .q')?.textContent).toBe('settings');
+      p.key('Enter');
+      await flush();
+      await flush();
+      expect(p.send).not.toHaveBeenCalledWith('options.open');
+      expect(p.sent).toHaveLength(1);
+      expect(p.sent[0]?.payload).toEqual({
+        items: [{ id: 's', text: 'settings' }],
+        source: 'auto',
+        stream: true,
+        force: true,
+      });
+      // The palette stays open with the focus in its input.
+      expect(p.host()?.hasAttribute('data-open')).toBe(true);
+      expect(p.root().activeElement).toBe(p.input());
+    });
+
+    it('↓ then Enter runs the picked command instead', async () => {
+      const p = await setup();
+      await p.open();
+      p.type('settings');
+      p.key('ArrowDown');
+      expect(p.selected()).toBe('打开设置');
+      p.key('Enter');
+      await flush();
+      expect(p.send).toHaveBeenCalledWith('options.open');
+      expect(p.sent).toHaveLength(0);
+    });
+
+    it('with text typed, the pointer only hovers: the highlight and Enter stay on the translation', async () => {
+      const p = await setup();
+      await p.open();
+      p.type('settings');
+      const hover = (id: string) =>
+        p
+          .root()
+          .querySelector(id)
+          ?.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, composed: true }));
+      hover('#o1');
+      // The screen reader hears what Enter would run.
+      expect(p.selected()).toBe('翻译“settings”');
+      expect(p.input().getAttribute('aria-activedescendant')).toBe('o0');
+      // Once the arrows have moved it, the pointer moves it too (as with an empty input).
+      p.key('ArrowDown');
+      p.key('ArrowUp');
+      hover('#o1');
+      expect(p.selected()).toBe('打开设置');
+      p.key('ArrowUp');
+      p.key('Enter');
+      await flush();
+      await flush();
+      expect(p.sent).toHaveLength(1);
+      expect(p.send).not.toHaveBeenCalledWith('options.open');
+    });
+
+    it('marks the list for a hover-only pointer exactly while Enter belongs to the translation', async () => {
+      const p = await setup();
+      await p.open();
+      const list = () => p.root().querySelector('.ls') as HTMLElement;
+      expect(list().hasAttribute('data-hover')).toBe(false);
+      p.type('settings');
+      expect(list().hasAttribute('data-hover')).toBe(true);
+      p.key('ArrowDown');
+      expect(list().hasAttribute('data-hover')).toBe(false);
+      p.type('settings!');
+      expect(list().hasAttribute('data-hover')).toBe(true);
+      p.type('/settings');
+      expect(list().hasAttribute('data-hover')).toBe(false);
+      p.type('');
+      expect(list().hasAttribute('data-hover')).toBe(false);
+    });
+
+    it('a click on another row moves Enter there too (what the screen reader hears)', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      (p.root().querySelector('#o1') as HTMLElement).click();
+      await flush();
+      expect(p.clipboard).toHaveBeenCalledTimes(1);
+      expect(p.input().getAttribute('aria-activedescendant')).toBe('o1');
+      expect(p.root().querySelector('.ls')?.hasAttribute('data-hover')).toBe(false);
+      p.key('Enter');
+      await flush();
+      expect(p.clipboard).toHaveBeenCalledTimes(2);
+      expect(p.sent).toHaveLength(1);
+    });
+
+    it('leaves Enter to an input method while it composes', async () => {
+      const p = await setup();
+      await p.open();
+      p.type('nihao');
+      const enter = p.key('Enter', { isComposing: true });
+      p.key('Enter', { keyCode: 229 });
+      await flush();
+      expect(enter.defaultPrevented).toBe(false);
+      expect(p.detect).not.toHaveBeenCalled();
+      expect(p.sent).toHaveLength(0);
+    });
+
+    it('cuts a long text inside the quotes, keeping the closing quote', async () => {
+      const p = await setup();
+      await p.open();
+      p.type('x'.repeat(300));
+      const row = p.root().querySelector('.o .tt') as HTMLElement;
+      expect(row.firstChild?.textContent).toBe('翻译“');
+      expect(row.querySelector('.q')?.textContent).toBe('x'.repeat(300));
+      expect(row.lastChild?.textContent).toBe('”');
+    });
+  });
+
+  describe('direction (decision 7)', () => {
+    it('into the target language when the text is in another one', async () => {
+      const p = await setup({ detect: async () => detected('en') });
+      await p.open();
+      await translate(p, 'Good morning to you all');
+      expect(p.sent[0]?.payload.target).toBeUndefined();
+      expect(p.sent[0]?.payload.force).toBe(true);
+      expect(direction(p)).toBe('English→简体中文');
+    });
+
+    it('text already in the target language goes into English', async () => {
+      const p = await setup({ detect: async () => detected('zh') });
+      await p.open();
+      await translate(p, '今天天气很好');
+      expect(p.sent[0]?.payload.target).toBe('en');
+      expect(direction(p)).toBe('简体中文→English');
+    });
+
+    it('an English target: English text goes into the browser’s interface language', async () => {
+      const p = await setup({ target: 'en', ui: 'zh-TW', detect: async () => detected('en') });
+      await p.open();
+      await translate(p, 'Good morning to you all');
+      expect(p.sent[0]?.payload.target).toBe('zh-TW');
+      expect(direction(p)).toBe('English→繁體中文');
+    });
+
+    it('an English target and an English interface: says so, sends nothing', async () => {
+      const p = await setup({ target: 'en', ui: 'en-US', detect: async () => detected('en') });
+      await p.open();
+      await translate(p, 'Good morning to you all');
+      expect(p.sent).toHaveLength(0);
+      expect(resultText(p)).toBe('已经是目标语言');
+      expect(running(p)).toBe(false);
+      expect(p.titles()).not.toContain('复制译文');
+    });
+
+    it('a failed or unreliable detection falls back on the script: Han text in a Chinese target goes into English', async () => {
+      for (const detect of [
+        () => Promise.reject(new Error('unavailable')),
+        async () => detected('zh', false),
+      ]) {
+        const p = await setup({ detect });
+        await p.open();
+        await translate(p, '今天天气很好');
+        expect(p.sent[0]?.payload.target).toBe('en');
+        expect(direction(p)).toBe('自动检测→English');
+        palette?.dispose();
+      }
+    });
+
+    it('a failed detection of another script translates into the target language', async () => {
+      const p = await setup({ detect: () => Promise.reject(new Error('unavailable')) });
+      await p.open();
+      await translate(p, 'Good morning');
+      expect(p.sent[0]?.payload.target).toBeUndefined();
+      expect(direction(p)).toBe('自动检测→简体中文');
+    });
+
+    it('a short “你好” (unreliable) with a Chinese target goes into English', async () => {
+      const p = await setup({ target: 'zh-TW', detect: async () => detected('zh', false) });
+      await p.open();
+      await translate(p, '你好');
+      expect(p.sent[0]?.payload.target).toBe('en');
+    });
+
+    it('kana without hangul counts as Japanese', async () => {
+      const p = await setup({ target: 'ja', detect: async () => detected('ja', false) });
+      await p.open();
+      await translate(p, 'ありがとう');
+      expect(p.sent[0]?.payload.target).toBe('en');
+    });
+
+    it('mostly hangul counts as Korean', async () => {
+      const p = await setup({ target: 'ko', detect: async () => detected('ko', false) });
+      await p.open();
+      await translate(p, '안녕하세요 ok');
+      expect(p.sent[0]?.payload.target).toBe('en');
+    });
+
+    it('Latin letters count as the target only when it is English', async () => {
+      const english = await setup({
+        target: 'en',
+        ui: 'zh-CN',
+        detect: async () => detected('en', false),
+      });
+      await english.open();
+      await translate(english, 'hi there');
+      expect(english.sent[0]?.payload.target).toBe('zh-CN');
+      palette?.dispose();
+      // Japanese target: a kana-free Latin text is not the target's script.
+      const japanese = await setup({ target: 'ja', detect: async () => detected('en', false) });
+      await japanese.open();
+      await translate(japanese, 'hi there');
+      expect(japanese.sent[0]?.payload.target).toBeUndefined();
+    });
+
+    it('a reliable detection of an unsupported language (French) skips the script fallback', async () => {
+      const p = await setup({ target: 'en', ui: 'zh-CN', detect: async () => detected('fr') });
+      await p.open();
+      await translate(p, 'Bonjour à tous mes amis');
+      expect(p.sent[0]?.payload.target).toBeUndefined();
+      expect(direction(p)).toBe('自动检测→English');
+    });
+
+    it('a detectLanguage that throws at once still translates, and shows the outcome', async () => {
+      const p = await setup({
+        detect: () => {
+          throw new Error('gone');
+        },
+      });
+      await p.open();
+      await translate(p, 'Good morning');
+      expect(p.sent).toHaveLength(1);
+      p.sent[0]?.chunk({
+        id: 's',
+        error: { ...appError('provider', 'provider/unauthorized', 'x'), userMessage: '密钥无效' },
+      });
+      expect(resultText(p)).toBe('密钥无效');
+      expect(running(p)).toBe(false);
+    });
+  });
+
+  describe('the result', () => {
+    it('streams above the list with a caret, then settles; the lead spins meanwhile', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      expect(shown(p)).toBe(true);
+      expect(result(p).getAttribute('aria-live')).toBe('polite');
+      expect(result(p).nextElementSibling?.classList.contains('ls')).toBe(true);
+      expect(running(p)).toBe(true);
+      p.sent[0]?.chunk({ id: 's', delta: '早上' });
+      p.sent[0]?.chunk({ id: 's', delta: '好' });
+      expect(resultText(p)).toBe('早上好');
+      expect(p.root().querySelector('.qt .cr')).not.toBeNull();
+      expect(p.root().querySelector('.qt')?.getAttribute('lang')).toBe('zh-CN');
+      p.sent[0]?.chunk({ id: 's', text: '早上好！', disposition: 'translated', cached: false });
+      expect(resultText(p)).toBe('早上好！');
+      expect(p.root().querySelector('.qt .cr')).toBeNull();
+      expect(running(p)).toBe(false);
+    });
+
+    it('streams into one text node, follows the end even after a jump of more than 24px', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      const text = p.root().querySelector('.qt') as HTMLElement;
+      // Ten pixels per character, a 100px box.
+      Object.defineProperty(text, 'scrollHeight', {
+        get: () => Math.max(100, (text.textContent?.length ?? 0) * 10),
+        configurable: true,
+      });
+      Object.defineProperty(text, 'clientHeight', { value: 100, configurable: true });
+      p.sent[0]?.chunk({ id: 's', delta: '早' });
+      const first = text.firstChild;
+      expect(first?.nodeType).toBe(3);
+      p.sent[0]?.chunk({ id: 's', delta: '上'.repeat(20) });
+      expect(text.firstChild).toBe(first);
+      expect(text.scrollTop).toBe(210);
+      // A reset (a new attempt) starts the text over.
+      p.sent[0]?.chunk({ id: 's', reset: true });
+      expect(resultText(p)).toBe('');
+      p.sent[0]?.chunk({ id: 's', delta: '晚' });
+      expect(resultText(p)).toBe('晚');
+    });
+
+    it('does not pull a reader who scrolled up back to the end', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      const text = p.root().querySelector('.qt') as HTMLElement;
+      Object.defineProperty(text, 'scrollHeight', {
+        get: () => Math.max(100, (text.textContent?.length ?? 0) * 10),
+        configurable: true,
+      });
+      Object.defineProperty(text, 'clientHeight', { value: 100, configurable: true });
+      p.sent[0]?.chunk({ id: 's', delta: '早'.repeat(30) });
+      text.scrollTop = 0;
+      p.sent[0]?.chunk({ id: 's', delta: '上'.repeat(5) });
+      expect(text.scrollTop).toBe(0);
+    });
+
+    it('keeps the highlight on the same row when the result arrives (not the same index)', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'settings');
+      p.sent[0]?.chunk({ id: 's', delta: '设' });
+      p.key('ArrowDown');
+      expect(p.selected()).toBe('打开设置');
+      p.sent[0]?.chunk({ id: 's', text: '设置', disposition: 'translated', cached: false });
+      expect(p.titles()).toEqual(['翻译“settings”', '复制译文', '打开设置']);
+      expect(p.selected()).toBe('打开设置');
+    });
+
+    it('Enter again on the same text sends nothing more; after an error it tries again', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.key('Enter');
+      await flush();
+      await flush();
+      expect(p.sent).toHaveLength(1);
+      p.sent[0]?.chunk({
+        id: 's',
+        error: { ...appError('network', 'network/timeout', 'x'), userMessage: '超时' },
+      });
+      p.key('Enter');
+      await flush();
+      await flush();
+      expect(p.sent).toHaveLength(2);
+      expect(running(p)).toBe(true);
+    });
+
+    it('marks overflow below for the fade', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      const text = p.root().querySelector('.qt') as HTMLElement;
+      Object.defineProperty(text, 'scrollHeight', { value: 400, configurable: true });
+      Object.defineProperty(text, 'clientHeight', { value: 120, configurable: true });
+      p.sent[0]?.chunk({ id: 's', text: '很长的译文', disposition: 'translated', cached: false });
+      expect(text.hasAttribute('data-more')).toBe(true);
+      text.scrollTop = 280;
+      text.dispatchEvent(new Event('scroll'));
+      expect(text.hasAttribute('data-more')).toBe(false);
+    });
+
+    it('a changed input clears the result and cancels the request; its late frames are dropped', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({ id: 's', delta: '早上' });
+      p.type('Good morning!');
+      expect(p.sent[0]?.cancel).toHaveBeenCalled();
+      expect(shown(p)).toBe(false);
+      expect(running(p)).toBe(false);
+      p.sent[0]?.chunk({ id: 's', delta: '好' });
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      expect(shown(p)).toBe(false);
+      expect(p.titles()).not.toContain('复制译文');
+    });
+
+    it('a detection answering after the input changed sends nothing', async () => {
+      let answer: (value: DetectedLanguages) => void = () => {};
+      const p = await setup({
+        detect: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      });
+      await p.open();
+      p.type('Good morning');
+      p.key('Enter');
+      p.type('Good evening');
+      answer(detected('en'));
+      await flush();
+      expect(p.sent).toHaveLength(0);
+      expect(shown(p)).toBe(false);
+    });
+
+    it('too long: the palette’s own notice, nothing detected or sent', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'a'.repeat(2001));
+      expect(p.detect).not.toHaveBeenCalled();
+      expect(p.sent).toHaveLength(0);
+      expect(resultText(p)).toBe('文字太长（超过 2000 字），请删减后再翻译。');
+    });
+
+    it('an error shows the background’s message', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({
+        id: 's',
+        error: { ...appError('provider', 'provider/unauthorized', 'x'), userMessage: '密钥无效' },
+      });
+      expect(resultText(p)).toBe('密钥无效');
+      expect(running(p)).toBe(false);
+      expect(p.titles()).not.toContain('复制译文');
+    });
+
+    it('the translation can be selected without the focus leaving; keys there go back', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      const text = p.root().querySelector('.qt') as HTMLElement;
+      const down = new MouseEvent('mousedown', { bubbles: true, composed: true, cancelable: true });
+      text.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(false);
+      text.focus();
+      // Copying stays with the selection; Escape goes back to the input and closes.
+      const copyKey = new KeyboardEvent('keydown', { key: 'c', metaKey: true, bubbles: true });
+      text.dispatchEvent(copyKey);
+      expect(p.root().activeElement).toBe(text);
+      text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(p.host()?.hasAttribute('data-open')).toBe(false);
+    });
+
+    it('keys for selecting and scrolling stay in the translation; typing goes to the input', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      const text = p.root().querySelector('.qt') as HTMLElement;
+      const press = (init: KeyboardEventInit) => {
+        text.focus();
+        const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+        text.dispatchEvent(event);
+        return event;
+      };
+      for (const init of [
+        { key: 'ArrowDown', shiftKey: true },
+        { key: 'ArrowRight', shiftKey: true },
+        { key: 'PageDown' },
+        { key: 'PageUp' },
+        { key: ' ' },
+        { key: 'Home' },
+        { key: 'End' },
+      ]) {
+        const event = press(init);
+        expect(p.root().activeElement, JSON.stringify(init)).toBe(text);
+        expect(event.defaultPrevented).toBe(false);
+      }
+      for (const init of [{ key: 'x' }, { key: 'Tab' }, { key: 'ArrowDown' }, { key: 'Enter' }]) {
+        press(init);
+        expect(p.root().activeElement, JSON.stringify(init)).toBe(p.input());
+      }
+      expect(p.host()?.hasAttribute('data-open')).toBe(true);
+    });
+
+    it('Option, AltGr and dead keys type into the input; ⌘C and Ctrl+C stay', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      const text = p.root().querySelector('.qt') as HTMLElement;
+      const press = (init: KeyboardEventInit, altGraph = false) => {
+        text.focus();
+        const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+        if (altGraph) {
+          Object.defineProperty(event, 'getModifierState', {
+            value: (name: string) => name === 'AltGraph',
+          });
+        }
+        text.dispatchEvent(event);
+        return event;
+      };
+      for (const [init, altGraph] of [
+        [{ key: 'Dead', altKey: true }, false],
+        [{ key: 'π', altKey: true }, false],
+        [{ key: '€', ctrlKey: true, altKey: true }, true],
+      ] as [KeyboardEventInit, boolean][]) {
+        press(init, altGraph);
+        expect(p.root().activeElement, JSON.stringify(init)).toBe(p.input());
+      }
+      for (const init of [
+        { key: 'c', metaKey: true },
+        { key: 'c', ctrlKey: true },
+      ]) {
+        const event = press(init);
+        expect(p.root().activeElement, JSON.stringify(init)).toBe(text);
+        expect(event.defaultPrevented).toBe(false);
+      }
+    });
+
+    it('⌘A / Ctrl+A in the translation selects only the translation', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      const text = p.root().querySelector('.qt') as HTMLElement;
+      for (const init of [{ metaKey: true }, { ctrlKey: true }]) {
+        document.getSelection()?.removeAllRanges();
+        text.focus();
+        const event = new KeyboardEvent('keydown', {
+          key: 'a',
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        });
+        text.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        expect(document.getSelection()?.toString()).toBe('早上好');
+        expect(p.root().activeElement).toBe(text);
+      }
+    });
+
+    it('closing cancels the request', async () => {
+      const p = await setup();
+      await p.open();
+      await translate(p, 'Good morning');
+      p.key('Escape');
+      expect(p.sent[0]?.cancel).toHaveBeenCalled();
+    });
+  });
+
+  describe('copying', () => {
+    /** happy-dom has no execCommand: defined per test, removed afterwards. */
+    function execCommand(result: boolean) {
+      const exec = vi.fn(() => result);
+      Object.defineProperty(document, 'execCommand', { value: exec, configurable: true });
+      return exec;
+    }
+    afterEach(() => {
+      Reflect.deleteProperty(document, 'execCommand');
+    });
+
+    async function translated(options: SetupOptions = {}) {
+      const p = await setup(options);
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      return p;
+    }
+
+    it('“复制译文” only once there is a translation, as the first command', async () => {
+      const p = await setup();
+      await p.open();
+      p.type('Good morning');
+      expect(p.titles()).not.toContain('复制译文');
+      p.key('Enter');
+      await flush();
+      await flush();
+      p.sent[0]?.chunk({ id: 's', delta: '早上' });
+      expect(p.titles()).not.toContain('复制译文');
+      p.sent[0]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      expect(p.titles()).toEqual(['翻译“Good morning”', '复制译文']);
+      // Enter still belongs to the translate row.
+      expect(p.selected()).toBe('翻译“Good morning”');
+    });
+
+    it('↓ Enter copies; the row says “已复制” with a check for about 1.5 s; it stays open', async () => {
+      const p = await translated();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        p.key('ArrowDown');
+        p.key('Enter');
+        for (let i = 0; i < 5; i += 1) await Promise.resolve();
+        expect(p.clipboard).toHaveBeenCalledWith('早上好');
+        expect(p.host()?.hasAttribute('data-open')).toBe(true);
+        expect(p.titles()[1]).toBe('已复制');
+        expect(p.root().querySelector('#o1 svg.cd')).not.toBeNull();
+        expect(p.selected()).toBe('已复制');
+        vi.advanceTimersByTime(1500);
+        expect(p.titles()[1]).toBe('复制译文');
+        expect(p.root().querySelector('#o1 svg.cd')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('falls back to execCommand when the clipboard API fails, keeping the focus', async () => {
+      const p = await translated({ clipboard: () => Promise.reject(new Error('denied')) });
+      const exec = execCommand(true);
+      p.key('ArrowDown');
+      p.key('Enter');
+      await flush();
+      expect(exec).toHaveBeenCalledWith('copy');
+      expect(p.titles()[1]).toBe('已复制');
+      expect(p.root().activeElement).toBe(p.input());
+      expect(p.root().querySelector('textarea')).toBeNull();
+    });
+
+    it('says nothing when both ways fail', async () => {
+      const p = await translated({ clipboard: () => Promise.reject(new Error('denied')) });
+      execCommand(false);
+      p.key('ArrowDown');
+      p.key('Enter');
+      await flush();
+      expect(p.titles()[1]).toBe('复制译文');
+    });
+
+    it('a clipboard failure after the palette was closed and opened again copies nothing', async () => {
+      let fail: (error: Error) => void = () => {};
+      const p = await translated({
+        clipboard: () =>
+          new Promise((_resolve, reject) => {
+            fail = reject;
+          }),
+      });
+      const exec = execCommand(true);
+      p.key('ArrowDown');
+      p.key('Enter');
+      p.key('Escape');
+      await p.open();
+      fail(new Error('denied'));
+      await flush();
+      expect(exec).not.toHaveBeenCalled();
+      expect(p.titles()).not.toContain('已复制');
+    });
+
+    it('“已复制” does not outlive a close and a new opening', async () => {
+      const p = await translated();
+      p.key('ArrowDown');
+      p.key('Enter');
+      await flush();
+      expect(p.titles()[1]).toBe('已复制');
+      p.key('Escape');
+      await p.open();
+      await translate(p, 'Good morning');
+      p.sent[1]?.chunk({ id: 's', text: '早上好', disposition: 'translated', cached: false });
+      expect(p.titles()[1]).toBe('复制译文');
+    });
+  });
+
+  it('highlights the match in the original label (İ lower-cases to two code units)', async () => {
+    const p = await setup({
+      state: { phase: 'running', engine: 'google' },
+      engines: async () => ({
+        configured: 'google',
+        options: [{ id: 'google', name: 'İleri Çeviri', short: 'G', ready: true }],
+      }),
+    });
+    await p.open();
+    p.type('/engine');
+    p.key('Enter');
+    await flush();
+    p.type('leri');
+    expect(p.root().querySelector('.hl')?.textContent).toBe('leri');
   });
 });

@@ -1,5 +1,6 @@
 import type { Engine } from '@/lib/config/types';
 import { type AppError, appError } from '@/lib/errors';
+import type { DetectedLanguages, LanguageCode } from '@/lib/languages';
 import type { PortClient } from '@/lib/messaging/port';
 import type {
   TranslateChunk,
@@ -38,8 +39,20 @@ export interface TranslateArgs {
   engine?: Engine;
   /** Menu or shortcut: the user asked, skip the same-language check. */
   force?: boolean;
+  /** Another target than the configured one (the palette's reversed direction). */
+  target?: LanguageCode;
   /** Ask for the word's phonetic too (see `wantsPhonetic`). */
   phonetic?: boolean;
+}
+
+/** The detected language's tag when the detection is reliable (the top language). */
+export function reliableLanguage(result: DetectedLanguages | undefined): string | undefined {
+  if (!result?.isReliable) return undefined;
+  let top: { language: string; percentage: number } | undefined;
+  for (const candidate of result.languages ?? []) {
+    if (!top || candidate.percentage > top.percentage) top = candidate;
+  }
+  return top?.language;
 }
 
 const baseOf = (tag: string | undefined) => tag?.toLowerCase().split(/[-_]/)[0] ?? '';
@@ -137,6 +150,7 @@ export function createCardRequests(deps: CardRequestDeps): CardRequests {
       };
       if (args.engine) payload.engine = args.engine;
       if (args.force) payload.force = true;
+      if (args.target) payload.target = args.target;
       if (args.phonetic) payload.phonetic = true;
       let text = '';
       let finished = false;
