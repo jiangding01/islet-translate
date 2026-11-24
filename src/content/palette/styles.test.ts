@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { PALETTE_CSS } from './styles';
+import { PALETTE_CSS, PICK_CSS } from './styles';
 
 /** The declarations of the rule whose selector list is exactly `selector`. */
-function rule(selector: string): string {
-  const start = PALETTE_CSS.split('\n').find((line) => line.startsWith(`${selector}{`));
+function rule(selector: string, css = PALETTE_CSS): string {
+  const start = css.split('\n').find((line) => line.startsWith(`${selector}{`));
   if (!start) throw new Error(`no rule for ${selector}`);
   return start.slice(selector.length + 1, start.lastIndexOf('}'));
 }
@@ -85,5 +85,65 @@ describe('palette styles', () => {
     );
     // No hover rule for every state: it would show a second highlight.
     expect(PALETTE_CSS).not.toMatch(/(^|[,}])\.o:hover/m);
+  });
+});
+
+describe('region picker styles (boards 5 and 5b)', () => {
+  const pick = (selector: string) => rule(selector, PICK_CSS);
+
+  it('draws an amber box that never takes the pointer, coral when the area is too large', () => {
+    const box = pick('.bx');
+    expect(box).toContain('border:2px solid var(--et-color-accent)');
+    expect(box).toContain('border-radius:6px');
+    expect(box).toContain('background:color-mix(in oklab,var(--et-color-accent) 12%,transparent)');
+    expect(box).toContain(
+      'box-shadow:0 0 0 1px color-mix(in oklab,var(--et-color-isle) 45%,transparent)',
+    );
+    expect(box).toContain('pointer-events:none');
+    const over = pick('.bx[data-over]');
+    expect(over).toContain('border-color:var(--et-color-warn)');
+    expect(over).toContain('background:color-mix(in oklab,var(--et-color-warn) 9%,transparent)');
+    // Glides between blocks within 120ms, never with reduced motion.
+    expect(pick('.bx[data-t]')).toContain('.12s');
+    expect(PICK_CSS).toContain(
+      '@media (prefers-reduced-motion:reduce){.bx{transition:none!important}}',
+    );
+    expect(PICK_CSS).toContain('@media print{.r{display:none}}');
+  });
+
+  it('centres a 36px hint bar 24px above the bottom, with 20px key caps', () => {
+    const bar = pick('.hn');
+    for (const declaration of [
+      'bottom:24px',
+      'height:36px',
+      'padding:0 16px',
+      'border-radius:999px',
+      'background:var(--et-color-isle)',
+      'box-shadow:var(--et-shadow-isle)',
+      'font-size:12px',
+      'line-height:18px',
+      'color:var(--et-color-isle-dim)',
+      'white-space:nowrap',
+      'gap:6px',
+    ]) {
+      expect(bar).toContain(declaration);
+    }
+    const cap = pick('.k');
+    for (const declaration of [
+      'min-width:20px',
+      'height:20px',
+      'padding:0 5px',
+      'border-radius:4px',
+      'background:var(--et-color-isle-2)',
+      'color:var(--et-color-isle-text)',
+      'font-size:11px',
+      'line-height:16px',
+    ]) {
+      expect(cap).toContain(declaration);
+    }
+    expect(pick('.sp')).toContain('margin:0 4px');
+    expect(pick('.dt')).toContain('background:var(--et-color-isle-warn)');
+    expect(pick('.wt')).toContain('color:var(--et-color-isle-text)');
+    expect(PICK_CSS).not.toContain('url(');
   });
 });

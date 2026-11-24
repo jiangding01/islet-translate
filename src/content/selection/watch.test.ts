@@ -685,15 +685,18 @@ describe('estimateLength and readSelection', () => {
 });
 
 describe('isOwnNode', () => {
-  it.each(['et-isle', 'et-selection', 'et-palette'])('counts nodes inside <%s>', (tag) => {
-    const host = document.createElement(tag);
-    const inner = document.createElement('span');
-    host.append(inner);
-    document.body.append(host);
-    expect(isOwnNode(inner)).toBe(true);
-    expect(isOwnNode(host)).toBe(true);
-    host.remove();
-  });
+  it.each(['et-isle', 'et-selection', 'et-palette', 'et-pick'])(
+    'counts nodes inside <%s>',
+    (tag) => {
+      const host = document.createElement(tag);
+      const inner = document.createElement('span');
+      host.append(inner);
+      document.body.append(host);
+      expect(isOwnNode(inner)).toBe(true);
+      expect(isOwnNode(host)).toBe(true);
+      host.remove();
+    },
+  );
 
   it('does not count the page’s own nodes', () => {
     expect(isOwnNode(document.body)).toBe(false);

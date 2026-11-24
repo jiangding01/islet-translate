@@ -102,6 +102,19 @@ export interface PageActions {
   retryFailed(): Promise<PageState>;
 }
 
+/**
+ * The page actions lent to the palette: the table above plus `region` (PR4), which takes an
+ * element and so can never be a message.
+ */
+export interface PaletteActions extends PageActions {
+  /**
+   * The region picker confirmed `root`: its paragraphs are translated (a session of held
+   * paragraphs, started when idle). Loads the page runtime like `start`. Resolves to whether
+   * anything was added to the translation; false once the session has halted.
+   */
+  region(kind: 'translate', root: Element): Promise<boolean>;
+}
+
 /** What a message's `Result` carries when it worked. */
 export type Reply<K extends keyof ProtocolMap> =
   ReturnType<ProtocolMap[K]> extends Result<infer T> ? T : never;
@@ -123,8 +136,8 @@ export interface PaletteRuntimeDeps {
   getConfig(): Promise<ConfigV1>;
   /** Every background message the palette needs goes through this one function. */
   send: Send;
-  /** The bootstrap's page action table. */
-  page: PageActions;
+  /** The bootstrap's page action table, with the palette's own `region`. */
+  page: PaletteActions;
 }
 
 export interface PaletteRuntime {

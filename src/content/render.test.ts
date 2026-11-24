@@ -8,6 +8,7 @@ import {
   OWN_ATTR,
   OWN_TAG,
   PALETTE_TAG,
+  PICK_TAG,
   SELECTION_TAG,
   type StyleReader,
 } from './dom-rules';
@@ -1149,11 +1150,12 @@ describe('renderer: DOM contract', () => {
   });
 
   it('keeps the documented tag and attribute names for the plugin UI hosts', () => {
-    expect([OWN_TAG, ISLE_TAG, SELECTION_TAG, PALETTE_TAG, OWN_ATTR]).toEqual([
+    expect([OWN_TAG, ISLE_TAG, SELECTION_TAG, PALETTE_TAG, PICK_TAG, OWN_ATTR]).toEqual([
       'ET-TR',
       'ET-ISLE',
       'ET-SELECTION',
       'ET-PALETTE',
+      'ET-PICK',
       'data-et',
     ]);
   });

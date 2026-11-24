@@ -37,7 +37,10 @@ export interface SelectionWatchDeps {
   onClear(): void;
 }
 
-/** Inside the page isle, the selection card or the palette (shared with the hold watch). */
+/**
+ * Inside the page isle, the selection card, the palette or its region picker (shared with the
+ * hold watch).
+ */
 export function isOwnNode(node: Node | null): boolean {
   for (let current = node; current; current = current.parentNode) {
     if (HOST_TAGS.includes(current.nodeName)) return true;

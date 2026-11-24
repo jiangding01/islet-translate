@@ -23,6 +23,11 @@ export interface CommandApi {
   openSettings(): void;
   /** Copies the quick translation; the palette stays open and says it was copied. */
   copy(): void;
+  /**
+   * Closes the palette without handing the focus back and starts the region picker (PR4),
+   * which keeps that focus until the pick ends.
+   */
+  pickRegion(): void;
 }
 
 export interface Command {
@@ -109,6 +114,14 @@ export const COMMANDS: readonly Command[] = [
     keywords: ['engine', 'service', 'switch'],
     when: () => true,
     run: (_ctx, { engines }) => engines(),
+  },
+  {
+    id: 'region.translate',
+    title: () => message('palette.regionTranslate'),
+    keywords: ['region', 'area', 'section', 'pick'],
+    // As "翻译此页": a page session translates the region already.
+    when: canTranslate,
+    run: (_ctx, { pickRegion }) => pickRegion(),
   },
   {
     id: 'options.open',

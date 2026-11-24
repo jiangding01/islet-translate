@@ -11,7 +11,7 @@ import type {
   TranslateDone,
   TranslateRequest,
 } from '@/lib/messaging/protocol';
-import { IDLE_PAGE_STATE, type PageActions, type PaletteRuntime } from '../runtime-contract';
+import { IDLE_PAGE_STATE, type PaletteActions, type PaletteRuntime } from '../runtime-contract';
 import type { CardPort } from '../selection/request';
 import { createPalette } from './palette';
 
@@ -37,6 +37,8 @@ interface SetupOptions {
   /** The browser's interface language. */
   ui?: string;
   clipboard?: (text: string) => Promise<void>;
+  /** What `elementsFromPoint` answers (the theme probe and the region picker). */
+  hits?: (x: number, y: number) => Element[];
 }
 
 const detected = (language: string, isReliable = true): DetectedLanguages => ({
@@ -87,13 +89,14 @@ function settle() {
 async function setup(options: SetupOptions = {}) {
   let state: PageState = { ...IDLE_PAGE_STATE, ...options.state };
   const answer = async () => state;
-  const page: PageActions = {
+  const page: PaletteActions = {
     getState: vi.fn(answer),
     start: vi.fn(answer),
     stop: vi.fn(answer),
     toggle: vi.fn(answer),
     setMode: vi.fn(answer),
     retryFailed: vi.fn(answer),
+    region: vi.fn(async () => true),
   };
   const engineReply = options.engines ?? (async () => ENGINES);
   const shortcutReply = options.shortcuts ?? (async () => ({}));
@@ -130,7 +133,7 @@ async function setup(options: SetupOptions = {}) {
       },
       cancelRaf: () => {},
       matchMedia: (query) => ({ matches: !!options.reduced && query.includes('reduced') }),
-      elementsFromPoint: () => [],
+      elementsFromPoint: options.hits ?? (() => []),
     },
   });
   const host = () => document.querySelector('et-palette') as HTMLElement | null;
@@ -191,7 +194,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   palette?.dispose();
   palette = undefined;
-  for (const element of document.querySelectorAll('et-palette')) element.remove();
+  for (const element of document.querySelectorAll('et-palette, et-pick')) element.remove();
 });
 
 describe('opening', () => {
@@ -202,7 +205,7 @@ describe('opening', () => {
     expect(p.host()?.getAttribute('lang')).toBe('zh-CN');
     expect(p.root().activeElement).toBe(p.input());
     expect(p.input().placeholder).toBe('输入指令，或输入要翻译的文字');
-    expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
+    expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '选择要翻译的区域', '打开设置']);
     // The first row is highlighted and announced to the combobox.
     expect(p.selected()).toBe('翻译此页');
     expect(p.input().getAttribute('aria-activedescendant')).toBe('o0');
@@ -747,8 +750,8 @@ describe('shortcuts and settings', () => {
       }),
     });
     await idle.open();
-    expect(idle.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
-    expect(kbs(idle)).toEqual(['Alt+A', '', '']);
+    expect(idle.titles()).toEqual(['翻译此页', '用…翻译此页', '选择要翻译的区域', '打开设置']);
+    expect(kbs(idle)).toEqual(['Alt+A', '', '', '']);
     palette?.dispose();
 
     const running = await setup({
@@ -763,15 +766,15 @@ describe('shortcuts and settings', () => {
   it('hides the slot when the key is an empty string', async () => {
     const p = await setup({ shortcuts: async () => ({ 'translate-page': '' }) });
     await p.open();
-    expect(kbs(p)).toEqual(['', '', '']);
+    expect(kbs(p)).toEqual(['', '', '', '']);
   });
 
   it('opens and lists the commands when the shortcuts cannot be read', async () => {
     const p = await setup({ shortcuts: () => Promise.reject(new Error('gone')) });
     await p.open();
     expect(p.host()?.hasAttribute('data-open')).toBe(true);
-    expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
-    expect(kbs(p)).toEqual(['', '', '']);
+    expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '选择要翻译的区域', '打开设置']);
+    expect(kbs(p)).toEqual(['', '', '', '']);
   });
 
   it('drops an answer that arrives after the palette was closed and opened again', async () => {
@@ -787,10 +790,10 @@ describe('shortcuts and settings', () => {
     palette?.close();
     settle();
     await p.open();
-    expect(kbs(p)).toEqual(['Alt+B', '', '']);
+    expect(kbs(p)).toEqual(['Alt+B', '', '', '']);
     late?.({ 'translate-page': 'Alt+STALE' });
     await flush();
-    expect(kbs(p)).toEqual(['Alt+B', '', '']);
+    expect(kbs(p)).toEqual(['Alt+B', '', '', '']);
   });
 
   it('closes on “打开设置” and asks the background to open the page', async () => {
@@ -1057,7 +1060,7 @@ describe('quick translate (PR3)', () => {
     it('empty: every command and the slash hint; typed text hides the hint', async () => {
       const p = await setup();
       await p.open();
-      expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '打开设置']);
+      expect(p.titles()).toEqual(['翻译此页', '用…翻译此页', '选择要翻译的区域', '打开设置']);
       expect(hint(p)).toBe('以 / 开头只搜索指令');
       p.type('hello');
       expect(hint(p)).toBeNull();
@@ -1732,5 +1735,90 @@ describe('quick translate (PR3)', () => {
     await flush();
     p.type('leri');
     expect(p.root().querySelector('.hl')?.textContent).toBe('leri');
+  });
+});
+
+describe('the region picker (PR4)', () => {
+  const PAGE = '<input id="field"><main id="m"><p id="a">First paragraph text.</p></main>';
+  const pickHost = () => document.querySelector('et-pick') as HTMLElement | null;
+  const hint = () => pickHost()?.shadowRoot?.querySelector('.hn') as HTMLElement | undefined;
+  /** A trusted key where the focus is (the picker hears it on the window). */
+  const press = (key: string) => {
+    const event = new KeyboardEvent('keydown', {
+      key,
+      code: key,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    (document.activeElement ?? document.body).dispatchEvent(event);
+    return event;
+  };
+
+  /** Opens the palette from the page's field and runs “选择要翻译的区域”. */
+  async function picking(options: SetupOptions = {}) {
+    document.body.innerHTML = PAGE;
+    (document.getElementById('field') as HTMLElement).focus();
+    const p = await setup({
+      hits: () => [document.getElementById('a') as Element],
+      ...options,
+    });
+    await p.open();
+    p.type('/区域');
+    expect(p.titles()).toEqual(['选择要翻译的区域']);
+    // Its own icon: the four corners of a selection.
+    expect(p.root().querySelector('.o .ic path')?.getAttribute('d')).toMatch(/^M2\.5 5\.5v-3h3/);
+    p.key('Enter');
+    return p;
+  }
+
+  it('closes the palette without handing the focus back: the picker holds it', async () => {
+    const p = await picking();
+    expect(p.host()?.hasAttribute('data-open')).toBe(false);
+    expect(pickHost()).not.toBeNull();
+    expect(hint()?.hidden).toBe(false);
+    expect(document.activeElement).toBe(pickHost());
+    // Escape ends the pick: now the focus goes back to the page's field.
+    press('Escape');
+    expect(hint()?.hidden).toBe(true);
+    expect(document.activeElement?.id).toBe('field');
+  });
+
+  it('Enter translates the block through page.region', async () => {
+    const p = await picking();
+    press('ArrowUp');
+    press('Enter');
+    expect(p.page.region).toHaveBeenCalledWith('translate', document.getElementById('m'));
+    expect(document.activeElement?.id).toBe('field');
+  });
+
+  it('the shortcut while picking ends the pick, then opens the palette', async () => {
+    const p = await picking();
+    palette?.toggle();
+    await flush();
+    await flush();
+    expect(hint()?.hidden).toBe(true);
+    expect(p.host()?.hasAttribute('data-open')).toBe(true);
+    expect(p.root().activeElement).toBe(p.input());
+    // The palette took the page's focus again: closing it hands the field back.
+    p.key('Escape');
+    expect(document.activeElement?.id).toBe('field');
+    expect(p.page.region).not.toHaveBeenCalled();
+  });
+
+  it('close (the selection card opening) ends the pick', async () => {
+    const p = await picking();
+    palette?.close();
+    expect(hint()?.hidden).toBe(true);
+    expect(document.activeElement?.id).toBe('field');
+    expect(p.page.region).not.toHaveBeenCalled();
+  });
+
+  it('dispose ends the pick and removes its host', async () => {
+    const p = await picking();
+    palette?.dispose();
+    expect(pickHost()).toBeNull();
+    expect(document.activeElement?.id).toBe('field');
+    expect(p.page.region).not.toHaveBeenCalled();
   });
 });

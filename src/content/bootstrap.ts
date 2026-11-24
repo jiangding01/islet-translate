@@ -6,6 +6,7 @@ import {
   type PageActions,
   type PageRuntimeDeps,
   type PageRuntimeFactory,
+  type PaletteActions,
   type PaletteRuntimeDeps,
   type PaletteRuntimeFactory,
   type SelectionRuntimeDeps,
@@ -177,8 +178,18 @@ export function createBootstrap(deps: BootstrapDeps): Bootstrap {
     retryFailed: () => withSession((session) => session.retryFailed()),
   };
 
+  // The palette's table: an element cannot travel in a message, so `region` is not in
+  // `actions` (the `page.*` messages below) and stays the palette's own.
+  const paletteActions: PaletteActions = {
+    ...actions,
+    async region(kind, root) {
+      const session = await load();
+      return !session.state().halted && session.region(kind, root);
+    },
+  };
+
   const palette = lazy('palette', async () =>
-    (await deps.palette.loadFactory())({ ...deps.palette.runtime, page: actions }),
+    (await deps.palette.loadFactory())({ ...deps.palette.runtime, page: paletteActions }),
   );
 
   deps.onMessage('page.getInfo', handle(deps.pageInfo));

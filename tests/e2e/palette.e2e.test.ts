@@ -395,3 +395,203 @@ describe('the isle’s ⌘ (PR6)', () => {
     h.assertNoErrors();
   });
 });
+
+describe('region picker (PR4)', () => {
+  interface Box {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+  const PICK = 'et-pick';
+
+  /** Whether the picker is running: its hint bar shows. */
+  const isPicking = () =>
+    h.shadow<boolean>(PICK, `(root) => !root.querySelector('.hn').hidden`).catch(() => false);
+  const rectOf = (selector: string) =>
+    h.evaluate<Box>(`(() => {
+      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    })()`);
+  const boxRect = () =>
+    h.shadow<Box | null>(
+      PICK,
+      `(root) => {
+        const b = root.querySelector('.bx');
+        if (b.hidden) return null;
+        const r = b.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+      }`,
+    );
+  /** Waits until the box sits 4px outside `selector` (it glides there within 120ms). */
+  async function boxAround(selector: string) {
+    await waitFor(
+      async () => {
+        const [box, el] = [await boxRect(), await rectOf(selector)];
+        const near = (a: number, b: number) => Math.abs(a - b) <= 1.5;
+        return (
+          !!box &&
+          near(box.x, el.x - 4) &&
+          near(box.y, el.y - 4) &&
+          near(box.w, el.w + 8) &&
+          near(box.h, el.h + 8)
+        );
+      },
+      { message: `the box around ${selector}` },
+    );
+  }
+  /** A real pointer move to the middle of `selector`. */
+  async function hover(selector: string) {
+    const r = await rectOf(selector);
+    await h.input('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: Math.round(r.x + Math.min(r.w / 2, 40)),
+      y: Math.round(r.y + r.h / 2),
+    });
+  }
+  /** From the palette: “/区域”, Enter, until the picker shows. */
+  async function startPicking() {
+    await openPalette();
+    await h.input('Input.insertText', { text: '/区域' });
+    await waitFor(
+      async () =>
+        (await h.shadow<string>(HOST, `(root) => root.querySelector('#o0 .tt')?.textContent`)) ===
+        '选择要翻译的区域',
+      { message: 'the region command to be the first match' },
+    );
+    await press(ENTER, '\r');
+    await waitFor(isPicking, { message: 'the picker to start' });
+    await waitFor(async () => !(await isOpen()), { message: 'the palette to close' });
+  }
+  const ARROW_UP = { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 };
+
+  it('from the keyboard: ↑ grows the box, Enter translates only that area', async () => {
+    await h.openPage('e2e-article.html');
+    await startPicking();
+    expect(await h.evaluate<string>(`document.activeElement?.localName`)).toBe(PICK);
+    await hover('#intro');
+    await boxAround('#intro');
+    await press(ARROW_UP);
+    await boxAround('#article');
+    await press(ENTER, '\r');
+    await waitFor(async () => !(await isPicking()), { message: 'the picker to end' });
+    await waitFor(async () => (await state()).phase === 'done', {
+      message: 'the area to be translated',
+    });
+    expect(await state()).toMatchObject({ scope: 'units' });
+    const counts = await h.evaluate<{ inside: number; all: number }>(`({
+      inside: document.querySelectorAll('#article et-tr:not([data-et-state])').length,
+      all: document.querySelectorAll('et-tr').length,
+    })`);
+    expect(counts.inside).toBeGreaterThanOrEqual(8);
+    expect(counts.all).toBe(counts.inside);
+    expect(h.google.texts.some((text) => /serendipity|Further down the coast/.test(text))).toBe(
+      false,
+    );
+    h.assertNoErrors();
+  });
+
+  it('a click while picking follows no link: it picks the block under it', async () => {
+    await h.openPage('e2e-article.html');
+    const href = await h.evaluate<string>('location.href');
+    await startPicking();
+    await hover('#link');
+    await boxAround('#linked');
+    await h.trustedClick('#link');
+    await waitFor(async () => !(await isPicking()), { message: 'the click to confirm' });
+    await waitFor(
+      () => h.evaluate<boolean>(`!!document.querySelector('#linked > et-tr:not([data-et-state])')`),
+      { message: 'the linked paragraph to be translated' },
+    );
+    expect(await h.evaluate<string>('location.href')).toBe(href);
+    expect(await h.evaluate<number>(`document.querySelectorAll('et-tr').length`)).toBe(1);
+    h.assertNoErrors();
+  });
+
+  it('a click on another block, with no move before it, confirms the block clicked', async () => {
+    await h.openPage('e2e-article.html');
+    // The pointer rests on #word before the pick: no move reaches the picker, so its box
+    // starts from the keyboard's point (the viewport's centre), somewhere else.
+    const word = await rectOf('#word');
+    const at = { x: Math.round(word.x + 40), y: Math.round(word.y + word.h / 2) };
+    await h.input('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at });
+    await startPicking();
+    await new Promise((done) => setTimeout(done, 300));
+    const box = await boxRect();
+    expect(!!box && Math.abs(box.y - (word.y - 4)) <= 1.5).toBe(false);
+    // Pressed and released where it rests: a click, with no move in between.
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await h.input('Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1 });
+    }
+    await waitFor(async () => !(await isPicking()), { message: 'the click to confirm' });
+    await waitFor(
+      () => h.evaluate<boolean>(`!!document.querySelector('#word > et-tr:not([data-et-state])')`),
+      { message: 'the clicked paragraph to be translated' },
+    );
+    expect(await h.evaluate<number>(`document.querySelectorAll('et-tr').length`)).toBe(1);
+    h.assertNoErrors();
+  });
+
+  it('with the focus in the page’s field: no key scrolls the page or reaches it', async () => {
+    await h.openPage('e2e-article.html');
+    await focusField();
+    await h.evaluate(`document.querySelector('#field').setSelectionRange(5, 5)`);
+    await startPicking();
+    // The page is long enough to scroll: Space, Page Down and ↓ would all move it.
+    expect(
+      await h.evaluate<number>('document.documentElement.scrollHeight - innerHeight'),
+    ).toBeGreaterThan(800);
+    const scrolled = () => h.evaluate<number>('scrollY');
+    const before = await scrolled();
+    await press({ key: ' ', code: 'Space', windowsVirtualKeyCode: 32 }, ' ');
+    await press({ key: 'PageDown', code: 'PageDown', windowsVirtualKeyCode: 34 });
+    await press({ key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+    await press(ARROW_UP);
+    await press({ key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+    await new Promise((done) => setTimeout(done, 300));
+    expect(await scrolled()).toBe(before);
+    await press(ESCAPE);
+    await waitFor(async () => !(await isPicking()), { message: 'Escape to end the pick' });
+    expect(await h.evaluate<string>(`document.activeElement?.id`)).toBe('field');
+    expect(await h.evaluate<number>(`document.querySelector('#field').selectionStart`)).toBe(5);
+    expect(await h.evaluate<string[]>('window.__keys')).toEqual([]);
+    expect((await state()).phase).toBe('idle');
+    h.assertNoErrors();
+  });
+
+  it('an area over the limit: the box turns coral and Enter does nothing', async () => {
+    await h.openPage('e2e-article.html');
+    // Five paragraphs of about 4 500 characters: each one fits, together they are too many.
+    await h.evaluate(`(() => {
+      const big = document.createElement('div');
+      big.id = 'big';
+      for (let i = 0; i < 5; i += 1) {
+        const p = document.createElement('p');
+        p.id = 'big-' + i;
+        p.textContent = 'The tide comes in slowly over the sand. '.repeat(112);
+        big.append(p);
+      }
+      document.body.prepend(big);
+    })()`);
+    await startPicking();
+    await hover('#big-0');
+    await boxAround('#big-0');
+    const over = () =>
+      h.shadow<boolean>(PICK, `(root) => root.querySelector('.bx').hasAttribute('data-over')`);
+    expect(await over()).toBe(false);
+    await press(ARROW_UP);
+    await boxAround('#big');
+    expect(await over()).toBe(true);
+    expect(await h.shadow<string>(PICK, `(root) => root.querySelector('.hn').textContent`)).toBe(
+      '区域太大，可直接翻译此页·↓缩小·Esc取消',
+    );
+    await press(ENTER, '\r');
+    await new Promise((done) => setTimeout(done, 500));
+    expect(await isPicking()).toBe(true);
+    expect(h.google.count).toBe(0);
+    expect((await state()).phase).toBe('idle');
+    await press(ESCAPE);
+    await waitFor(async () => !(await isPicking()), { message: 'Escape to end the pick' });
+    h.assertNoErrors();
+  });
+});

@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  HOLD_BLOCK_CHARS,
   HOST_TAGS,
   isProtected,
   isSingleLineLocked,
   protectedAncestor,
   SKIP_TAGS,
   type StyleReader,
+  sourceLength,
 } from './dom-rules';
 
 /** happy-dom's own handle on the window; the page's hostname follows its URL. */
@@ -199,7 +201,22 @@ describe('isSingleLineLocked', () => {
 
 describe('our interface hosts', () => {
   it('are all skipped: every HOST_TAGS entry is in SKIP_TAGS', () => {
-    expect(HOST_TAGS).toEqual(['ET-ISLE', 'ET-SELECTION', 'ET-PALETTE']);
+    expect(HOST_TAGS).toEqual(['ET-ISLE', 'ET-SELECTION', 'ET-PALETTE', 'ET-PICK']);
     for (const tag of HOST_TAGS) expect(SKIP_TAGS.has(tag)).toBe(true);
+  });
+});
+
+describe('sourceLength (the hold and region limit)', () => {
+  it('counts the text without our translations, loading dots and notes included', () => {
+    const el = find(
+      '<div id="d">Hello <b>world</b><et-tr>你好世界</et-tr><p>Again<et-tr data-et-state="error">未译出</et-tr></p></div>',
+      '#d',
+    );
+    expect(sourceLength(el)).toBe('Hello world'.length + 'Again'.length);
+    expect(sourceLength(find('<p id="p"></p>', '#p'))).toBe(0);
+  });
+
+  it('is the one limit shared by holding and picking: 20 000', () => {
+    expect(HOLD_BLOCK_CHARS).toBe(20_000);
   });
 });
