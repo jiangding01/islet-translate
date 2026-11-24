@@ -546,7 +546,7 @@ PR1 的范围：
   - 翻译行引号内文字被截断时，省略号与结尾引号之间可能留出不到一个字宽的空隙（`text-overflow` 按整字裁切）。
   - 真实剪贴板（系统剪贴板）的内容与回退路径未在 e2e 中验证：e2e 记录的是 `writeText` 收到的文字，待真机验收。
 
-## PR4 实施记录（#待补，分支 `feat/m3c-region-translate`）
+## PR4 实施记录（#78，分支 `feat/m3c-region-translate`）
 - **范围**：拆分表第 4 行与「区域选择器」一节的 `translate` 部分：区域选择器、拦截、2 万字上限、`region('translate')`、`ET-PICK` 及其 DOM 约定。视觉按 Design 原型 PaletteM3c 画板第 5、5b 号定稿值。`region('exclude')` 留给 PR5。
 - **代码**：
   - `palette/pick.ts`（新增）：选择器本体，由指令台创建并持有。
