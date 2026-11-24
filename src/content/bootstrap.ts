@@ -26,7 +26,8 @@ export interface BootstrapDeps {
   onMessage: typeof onMessage;
   pageInfo(): PageInfo;
   loadFactory(): Promise<PageRuntimeFactory>;
-  runtime: PageRuntimeDeps;
+  /** The bootstrap adds `openPalette`. */
+  runtime: Omit<PageRuntimeDeps, 'openPalette'>;
   selection: {
     loadFactory(): Promise<SelectionRuntimeFactory>;
     runtime: SelectionRuntimeDeps;
@@ -125,8 +126,16 @@ export function createBootstrap(deps: BootstrapDeps): Bootstrap {
     return slot;
   }
 
-  // The session itself: none / loading / ready is `page.loaded`.
-  const page = lazy('page', async () => (await deps.loadFactory())(deps.runtime));
+  // The session itself: none / loading / ready is `page.loaded`. The isle's ⌘ runs the
+  // shortcut's handling (`palette` below is only read once it is pressed).
+  const page = lazy('page', async () =>
+    (await deps.loadFactory())({
+      ...deps.runtime,
+      openPalette: () => {
+        togglePalette().catch(() => {});
+      },
+    }),
+  );
   const load = page.load;
 
   const card = lazy('selection', async () =>
@@ -180,21 +189,28 @@ export function createBootstrap(deps: BootstrapDeps): Bootstrap {
     );
   }
 
-  // One floating layer at a time (docs/plans/m3c.md decision 5): opening the palette closes
-  // the card and the dot, opening the card closes the palette.
+  /**
+   * The shortcut's `palette.toggle` and the isle's ⌘. One floating layer at a time
+   * (docs/plans/m3c.md decision 5): opening the palette closes the card and the dot, opening
+   * the card closes the palette. Once the context is lost nothing loads.
+   */
+  async function togglePalette() {
+    if (isContextLost()) {
+      throw appError('network', 'network/page-unreachable', 'Extension context invalidated');
+    }
+    card.loaded
+      ?.then((runtime) => {
+        runtime.close();
+        runtime.hideDot();
+      })
+      .catch(() => {});
+    (await palette.load()).toggle();
+  }
+
   deps.onMessage(
     'palette.toggle',
     handle(async () => {
-      if (isContextLost()) {
-        throw appError('network', 'network/page-unreachable', 'Extension context invalidated');
-      }
-      card.loaded
-        ?.then((runtime) => {
-          runtime.close();
-          runtime.hideDot();
-        })
-        .catch(() => {});
-      (await palette.load()).toggle();
+      await togglePalette();
       return null;
     }),
   );

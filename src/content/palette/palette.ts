@@ -6,7 +6,7 @@ import type {
   PaletteShortcuts,
 } from '@/lib/messaging/protocol';
 import isleTokens from '@/styles/tokens-isle.css?inline';
-import { PALETTE_TAG } from '../dom-rules';
+import { ISLE_TAG, PALETTE_TAG } from '../dom-rules';
 import { message, type NoArgKey, uiLocale } from '../i18n';
 import { type ProbeEnv, probeTheme } from '../isle/probe';
 import { createSpring, LIST, retarget, SHRINK, snap, step } from '../isle/spring';
@@ -20,11 +20,13 @@ import { type CommandApi, listCommands, normalizeQuery, type PaletteContext } fr
 import { PALETTE_CSS } from './styles';
 
 // The command palette (docs/plans/m3c.md, PR1; Design prototype board PaletteM3c): its own
-// host `ET-PALETTE`, pulled out of the isle's edge. Keyboard first: the input keeps focus,
-// the arrows move the highlight, Enter runs it. Keys typed here never reach the page's own
-// shortcuts (decision 4), and closing hands focus and the selection back to the page. Every
-// frame writes the shape's clip-path, the shadow layer's box and the content's opacity and
-// transform; layout is read only after the content changed.
+// host `ET-PALETTE`, pulled out of the isle's edge; beside the isle when it shows (PR6: its
+// host's `data-et-rect`, read on opening and on every resize, the shape growing out of it).
+// Keyboard first: the input keeps focus, the arrows move the highlight, Enter runs it. Keys
+// typed here never reach the page's own shortcuts (decision 4), and closing hands focus and
+// the selection back to the page. Every frame writes the shape's clip-path, the shadow
+// layer's box and the content's opacity and transform; layout is read only after the content
+// changed.
 
 type MediaQuery = Pick<MediaQueryList, 'matches'> &
   Partial<Pick<MediaQueryList, 'addEventListener' | 'removeEventListener'>>;
@@ -191,6 +193,10 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
   let viewport = { w: 1, h: 1 };
   /** Where the shape is heading (open) or folds into (closed): the content sits here. */
   let rect: PanelRect = { x: 0, y: 0, w: 0, h: STRIP };
+  /** The isle's rectangle, when it shows: the panel sits beside it and grows out of it. */
+  let anchor: PanelRect | undefined;
+  /** While open: the isle coming, going and moving (its `data-et-rect`) re-places the panel. */
+  let isleWatch: MutationObserver | undefined;
   const springs = { W: createSpring(0), H: createSpring(STRIP) };
   let frame = 0;
   let lastT = 0;
@@ -687,7 +693,10 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
 
   // Window listeners, only while open.
   const onPointerDownOutside = (event: Event) => {
-    if (!host || !trusted(event) || event.composedPath().includes(host)) return;
+    if (!host || !trusted(event)) return;
+    const path = event.composedPath();
+    // The isle counts as inside: its ⌘ toggles the palette, its other buttons leave it open.
+    if (path.includes(host) || path.some(isIsle)) return;
     // The user went elsewhere: focus goes where they pressed, not back.
     close(false);
   };
@@ -739,9 +748,69 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     win[method]('keydown', onWindowKey as EventListener, true);
     win[method]('resize', onResize);
     doc[method]('fullscreenchange', onFullscreen);
+    watchIsle(on);
+  }
+
+  /**
+   * The isle grows (the retry button), moves or leaves while the palette is open: placed
+   * again, beside it, or at the edge once it is gone (as an opening without it would be).
+   */
+  function watchIsle(on: boolean) {
+    isleWatch?.disconnect();
+    isleWatch = undefined;
+    const Observer = (win as Window & { MutationObserver?: typeof MutationObserver })
+      .MutationObserver;
+    if (!on || !Observer) return;
+    const watch = new Observer(() => {
+      observe();
+      resize();
+    });
+    // <html>'s children for an isle coming or going, the current isle's rectangle.
+    const observe = () => {
+      watch.disconnect();
+      watch.observe(doc.documentElement, { childList: true });
+      const isle = isleHost();
+      if (isle) watch.observe(isle, { attributeFilter: ['data-et-rect'] });
+    };
+    isleWatch = watch;
+    observe();
   }
 
   // ---- Shape -------------------------------------------------------------------------------
+
+  /** The page isle's host: a direct child of <html> only (a page can put an `et-isle` anywhere). */
+  const isIsle = (target: EventTarget) =>
+    (target as Node).nodeName === ISLE_TAG && (target as Node).parentNode === doc.documentElement;
+
+  const isleHost = () => doc.documentElement.querySelector(`:scope > ${ISLE_TAG.toLowerCase()}`);
+
+  /**
+   * The isle host's `data-et-rect="x,y,w,h"`, when it has an area: four finite numbers, kept
+   * within the viewport (a page can write anything there; huge values would overflow the
+   * springs into NaN).
+   */
+  function readIsle(): PanelRect | undefined {
+    const parts = (isleHost()?.getAttribute('data-et-rect') ?? '').split(',').map(Number);
+    if (parts.length !== 4 || !parts.every(Number.isFinite)) return undefined;
+    const [x = 0, y = 0, w = 0, h = 0] = parts;
+    const fit = (n: number, max: number) => Math.max(0, Math.min(max, n));
+    const rect = {
+      x: fit(x, viewport.w),
+      y: fit(y, viewport.h),
+      w: fit(w, viewport.w),
+      h: fit(h, viewport.h),
+    };
+    return rect.w > 0 && rect.h > 0 ? rect : undefined;
+  }
+
+  /**
+   * The folded shape, W × H, the panel grows out of and folds back into: the edge strip, or
+   * beside the isle a line along it (side docks: as tall as the isle; bottom: as wide).
+   */
+  function folded(): [number, number] {
+    if (!anchor) return [0, STRIP];
+    return dock === 'bottom' ? [anchor.w, 0] : [0, anchor.h];
+  }
 
   function readViewport() {
     const root = doc.documentElement;
@@ -759,7 +828,8 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     if (!els || !open) return;
     if (viewportChanged) readViewport();
     const measured = halted ? STRIP : els.content.offsetHeight || STRIP;
-    rect = placePanel(dock, viewport, measured);
+    anchor = readIsle();
+    rect = placePanel(dock, viewport, measured, anchor);
     const { style } = els.content;
     style.left = `${rect.x}px`;
     style.top = `${rect.y}px`;
@@ -803,10 +873,12 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
     shadow.transform = `translate(${round2(x)}px,${round2(y)}px)`;
     shadow.width = `${round2(W)}px`;
     shadow.height = `${round2(H)}px`;
-    shadow.opacity = W > 0 ? '1' : '0';
+    shadow.opacity = W > 0 && H > 0 ? '1' : '0';
     // Opening: the content fades in over the last 40% of the shape's growth. Closing: out
-    // over the first 35%, moving NUDGE px toward the edge.
-    const grown = rect.w > 0 ? clamp01(W / rect.w) : 0;
+    // over the first 35%, moving NUDGE px toward the edge. Above a bottom isle it grows
+    // upward, so its height is the measure.
+    const [size, full] = anchor && dock === 'bottom' ? [H, rect.h] : [W, rect.w];
+    const grown = full > 0 ? clamp01(size / full) : 0;
     const gone = open ? 0 : clamp01((1 - grown) / 0.35);
     const content = els.content.style;
     content.opacity = String(round2(open ? clamp01((grown - 0.6) / 0.4) : 1 - gone));
@@ -899,6 +971,11 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       if (opened !== epoch || !open) return;
       ctx = { state };
       dock = next;
+      // Nothing has grown yet: start from the fold for this dock and isle.
+      anchor = readIsle();
+      const [w, h] = folded();
+      snap(springs.W, w);
+      snap(springs.H, h);
       if (state.halted) showHalted();
       else render();
       probe();
@@ -925,7 +1002,7 @@ export function createPalette({ deps, env }: PaletteOptions): PaletteRuntime {
       fadeTimer = setTimeout(unmount, FADE_MS);
       return;
     }
-    aim(0, STRIP);
+    aim(...folded());
   }
 
   return {

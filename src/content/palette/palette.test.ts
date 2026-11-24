@@ -770,3 +770,201 @@ describe('shortcuts and settings', () => {
     expect(p.titles()).toEqual([]);
   });
 });
+
+describe('beside the isle (PR6)', () => {
+  /** The page isle's host under <html>, publishing its rectangle as the isle does. */
+  const isleAt = (rect: string, parent: Element = document.documentElement) => {
+    const isle = document.createElement('et-isle');
+    isle.setAttribute('data-et-rect', rect);
+    parent.append(isle);
+    return isle;
+  };
+  /** The shape's clip-path inset as top/right/bottom/left. */
+  const inset = (p: Awaited<ReturnType<typeof setup>>) => {
+    const clip = (p.root().querySelector('.sl') as HTMLElement).style.clipPath;
+    const [top = 0, right = 0, bottom = 0, left = 0] = (
+      /inset\(([-\d.]+)px ([-\d.]+)px ([-\d.]+)px ([-\d.]+)px/.exec(clip) ?? []
+    )
+      .slice(1)
+      .map(Number);
+    return { top, right, bottom, left };
+  };
+  const box = (p: Awaited<ReturnType<typeof setup>>) => {
+    const style = (p.root().querySelector('.cn') as HTMLElement).style;
+    return { x: Number.parseFloat(style.left), y: Number.parseFloat(style.top) };
+  };
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+
+  afterEach(() => {
+    for (const element of document.querySelectorAll('et-isle')) element.remove();
+  });
+
+  it('right dock: grows leftward out of the isle’s height, 8px to its left, top-aligned', async () => {
+    isleAt(`${W - 56},300,40,186`);
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    expect(box(p)).toEqual({ x: W - 56 - 8 - 420, y: 300 });
+    frames.shift()?.();
+    // The hinge: the edge beside the isle, as tall as the isle to start with.
+    const first = inset(p);
+    expect(first).toMatchObject({ top: 300, right: 64 });
+    expect(H - first.top - first.bottom).toBeGreaterThan(150);
+    expect(W - first.left - first.right).toBeLessThan(100);
+    settle();
+    expect(inset(p)).toEqual({ top: 300, right: 64, bottom: H - 300 - 46, left: W - 64 - 420 });
+  });
+
+  it('left dock: 8px to the right of the isle, top-aligned', async () => {
+    isleAt('16,300,40,186');
+    const p = await setup({ dock: 'left' });
+    await p.open();
+    expect(box(p)).toEqual({ x: 64, y: 300 });
+    frames.shift()?.();
+    expect(inset(p)).toMatchObject({ top: 300, left: 64 });
+    settle();
+    expect(inset(p)).toMatchObject({ top: 300, left: 64, right: W - 64 - 420 });
+  });
+
+  it('bottom dock: rises out of the isle’s width, 8px above it, the right ends aligned', async () => {
+    isleAt(`${W - 16 - 186},${H - 56},186,40`);
+    const p = await setup({ dock: 'bottom' });
+    await p.open();
+    expect(box(p)).toEqual({ x: W - 16 - 420, y: H - 56 - 8 - 46 });
+    frames.shift()?.();
+    // Anchored at the bottom right: as wide as the isle to start with, barely any height.
+    const first = inset(p);
+    expect(first).toMatchObject({ right: 16, bottom: 64 });
+    expect(W - first.left - first.right).toBeGreaterThan(150);
+    expect(W - first.left - first.right).toBeLessThan(300);
+    expect(H - first.top - first.bottom).toBeLessThan(40);
+    // The content waits for the height to grow, not the (already wide) width.
+    expect(Number((p.root().querySelector('.cn') as HTMLElement).style.opacity)).toBeLessThan(1);
+    settle();
+    expect(inset(p)).toEqual({ top: H - 56 - 8 - 46, right: 16, bottom: 64, left: W - 16 - 420 });
+    expect((p.root().querySelector('.cn') as HTMLElement).style.opacity).toBe('1');
+    // Closing folds back into the isle's width above it.
+    palette?.toggle();
+    for (let i = 0; i < 6; i += 1) frames.shift()?.();
+    expect(inset(p)).toMatchObject({ right: 16, bottom: 64 });
+    settle();
+    expect(p.host()).toBeNull();
+  });
+
+  it('without the isle, pulls out of the edge as before', async () => {
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    expect(box(p)).toEqual({ x: W - 16 - 420, y: Math.round(H * 0.3) });
+    frames.shift()?.();
+    // The 46px strip at the edge to start with.
+    expect(H - inset(p).top - inset(p).bottom).toBeLessThan(60);
+    settle();
+    expect(inset(p)).toMatchObject({ top: Math.round(H * 0.3), right: 16 });
+  });
+
+  it('ignores an isle without an area, or one a page put in its body', async () => {
+    isleAt(`${W - 56},300,0,0`);
+    isleAt(`${W - 56},300,40,186`, document.body);
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    expect(box(p)).toEqual({ x: W - 16 - 420, y: Math.round(H * 0.3) });
+  });
+
+  it('follows the isle on a resize', async () => {
+    const isle = isleAt(`${W - 56},300,40,186`);
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    settle();
+    isle.setAttribute('data-et-rect', `${W - 56},360,40,186`);
+    window.dispatchEvent(new Event('resize'));
+    settle();
+    expect(box(p)).toEqual({ x: W - 56 - 8 - 420, y: 360 });
+    expect(inset(p).top).toBe(360);
+  });
+
+  it('keeps a rectangle the page wrote within the viewport: the springs never overflow', async () => {
+    for (const value of [`0,0,1e308,1e308`, `0,300,40,1e308`, `-1e308,300,1e308,186`]) {
+      const isle = isleAt(value);
+      const p = await setup({ dock: 'right' });
+      await p.open();
+      settle();
+      expect(frames).toHaveLength(0);
+      const clip = (p.root().querySelector('.sl') as HTMLElement).style.clipPath;
+      expect(clip).toMatch(/^inset\([\d.]+px [\d.]+px [\d.]+px [\d.]+px round 14px\)$/);
+      const { x, y } = box(p);
+      expect(x).toBeGreaterThanOrEqual(16);
+      expect(y).toBeGreaterThanOrEqual(16);
+      expect(y).toBeLessThanOrEqual(H - 16 - 46);
+      palette?.dispose();
+      isle.remove();
+    }
+  });
+
+  it('reads no isle from anything but four finite numbers', async () => {
+    for (const value of ['NaN,300,40,186', `${W - 56},300,40`, `${W - 56},Infinity,40,186`]) {
+      const isle = isleAt(value);
+      const p = await setup({ dock: 'right' });
+      await p.open();
+      expect(box(p)).toEqual({ x: W - 16 - 420, y: Math.round(H * 0.3) });
+      palette?.dispose();
+      isle.remove();
+    }
+  });
+
+  it('follows the isle while open: it grows or moves, leaves, or comes', async () => {
+    const isle = isleAt(`${W - 56},300,40,186`);
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    settle();
+    // The retry button lengthens the isle, re-centred: a new top.
+    isle.setAttribute('data-et-rect', `${W - 56},281,40,224`);
+    await flush();
+    settle();
+    expect(box(p)).toEqual({ x: W - 56 - 8 - 420, y: 281 });
+    expect(inset(p).top).toBe(281);
+    // The isle leaves (the session stopped): back to the edge, as without it.
+    isle.remove();
+    await flush();
+    settle();
+    expect(box(p)).toEqual({ x: W - 16 - 420, y: Math.round(H * 0.3) });
+    // An isle that comes while it is open.
+    isleAt(`${W - 56},320,40,186`);
+    await flush();
+    settle();
+    expect(box(p)).toEqual({ x: W - 56 - 8 - 420, y: 320 });
+    expect(p.host()?.hasAttribute('data-open')).toBe(true);
+  });
+
+  it('stops watching the isle once closed, and on dispose', async () => {
+    const isle = isleAt(`${W - 56},300,40,186`);
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
+    const p = await setup({ dock: 'right' });
+    await p.open();
+    disconnect.mockClear();
+    palette?.toggle();
+    expect(disconnect).toHaveBeenCalled();
+    // Changes while it folds away re-place nothing.
+    const before = box(p);
+    isle.setAttribute('data-et-rect', `${W - 56},400,40,186`);
+    await flush();
+    expect(box(p)).toEqual(before);
+    settle();
+    await p.open();
+    disconnect.mockClear();
+    palette?.dispose();
+    expect(disconnect).toHaveBeenCalled();
+  });
+
+  it('a press on the isle is not a press elsewhere: it stays open', async () => {
+    const isle = isleAt(`${W - 56},300,40,186`);
+    const p = await setup();
+    await p.open();
+    isle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+    expect(p.host()?.hasAttribute('data-open')).toBe(true);
+    expect(p.root().activeElement).toBe(p.input());
+    // A look-alike a page put in its body is the page.
+    const fake = isleAt(`${W - 56},300,40,186`, document.body);
+    fake.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+    expect(p.host()?.hasAttribute('data-open')).toBe(false);
+  });
+});

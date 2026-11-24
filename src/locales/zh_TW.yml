@@ -331,6 +331,8 @@ isle:
   engineError: 本頁引擎：$1（$2）
   # $1：引擎名稱。
   engineSwitch: 本頁引擎：$1（點一下切換）
+  # 靈島的 ⌘ 按鈕，$1：開啟指令台的快捷鍵（未綁定時改用 palette.label）。
+  palette: 指令台（$1）
 
 # 反白翻譯卡片（src/content/selection/card.ts）。
 card:

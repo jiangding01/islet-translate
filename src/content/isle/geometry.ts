@@ -42,10 +42,10 @@ export const DOT_SHELL = 8;
 export const ISLE_DEPTH = 40;
 const ISLE_RADIUS = 20;
 const LIST_RADIUS = 16;
-/** Mode segment (3 × 28 + gaps + padding), separator and the engine button. */
-const ISLE_LENGTH = 148;
+/** Mode segment (3 × 28 + gaps + padding), separator, the engine and the palette buttons. */
+const ISLE_LENGTH = 186;
 /** Plus the retry button and its gap. */
-const ISLE_LENGTH_RETRY = 186;
+const ISLE_LENGTH_RETRY = 224;
 const LIST_WIDTH = 200;
 /** The bottom dock's list: right-aligned to the isle, the extra width reaching left. */
 const LIST_WIDTH_BOTTOM = 240;

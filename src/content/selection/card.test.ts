@@ -1119,7 +1119,7 @@ describe('card', () => {
     t.card.dispose();
 
     const isle = document.createElement('et-isle');
-    isle.setAttribute('data-et-rect', `${width - 56},300,40,148`);
+    isle.setAttribute('data-et-rect', `${width - 56},300,40,186`);
     document.documentElement.append(isle);
     const u = setup();
     u.card.open({ source: 'map', selection: snapshot });
@@ -1204,8 +1204,8 @@ describe('card', () => {
       const free = shape(t).x;
       expect(free + 360).toBe(width() - 40 + 7);
       const replace = vi.spyOn(Element.prototype, 'getAttribute');
-      isle.setAttribute('data-et-rect', `${width() - 56},250,40,148`);
-      isle.setAttribute('data-et-rect', `${width() - 56},300,40,148`);
+      isle.setAttribute('data-et-rect', `${width() - 56},250,40,186`);
+      isle.setAttribute('data-et-rect', `${width() - 56},300,40,186`);
       await t.advance(0);
       // Not read in the observer callback: only in the next frame.
       expect(replace.mock.calls.filter(([name]) => name === 'data-et-rect')).toHaveLength(0);
@@ -1226,7 +1226,7 @@ describe('card', () => {
       t.run();
       expect(t.host()).toBeNull();
       // Changes after closing schedule nothing.
-      isle.setAttribute('data-et-rect', `${width() - 56},300,40,148`);
+      isle.setAttribute('data-et-rect', `${width() - 56},300,40,186`);
       await t.advance(0);
       t.run();
       disconnect.mockClear();
@@ -1240,7 +1240,7 @@ describe('card', () => {
     it('only the isle under <html> counts, not one a page put in its body', async () => {
       const { p } = page();
       const fake = document.createElement('et-isle');
-      fake.setAttribute('data-et-rect', `${width() - 56},300,40,148`);
+      fake.setAttribute('data-et-rect', `${width() - 56},300,40,186`);
       document.body.append(fake);
       const t = setup();
       t.card.open({

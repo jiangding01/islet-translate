@@ -66,11 +66,12 @@ function fakeSession() {
   };
 }
 
-const runtime: PageRuntimeDeps = {
+const runtime: Omit<PageRuntimeDeps, 'openPalette'> = {
   getConfig: vi.fn(),
   watchConfig: vi.fn(),
   reportStatus: vi.fn(),
   listEngines: vi.fn(),
+  paletteShortcut: vi.fn(),
 };
 
 const selectionDeps: SelectionRuntimeDeps = {
@@ -181,7 +182,7 @@ describe('bootstrap without a session', () => {
     const result = await send('page.start', { engine: 'google' });
     expect(result).toMatchObject({ ok: true, data: { phase: 'idle' } });
     expect(load).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledWith(runtime);
+    expect(create).toHaveBeenCalledWith({ ...runtime, openPalette: expect.any(Function) });
     expect(session.start).toHaveBeenCalledWith({ engine: 'google' });
   });
 
@@ -709,6 +710,64 @@ describe('palette runtime', () => {
     const never = setup(undefined, { alive: () => false });
     expect(await never.send('palette.toggle')).toMatchObject({ ok: false });
     expect(never.loadPalette).not.toHaveBeenCalled();
+  });
+
+  /** The deps the page runtime was created with (after `page.start` loaded it). */
+  const pageDepsOf = (t: ReturnType<typeof setup>) => {
+    const deps = t.create.mock.calls[0]?.[0];
+    if (!deps) throw new Error('page runtime not created');
+    return deps;
+  };
+
+  it('the isle’s ⌘ (openPalette, lent to the page runtime) runs the shortcut’s handling', async () => {
+    const t = setup();
+    await t.send('page.start');
+    const deps = pageDepsOf(t);
+    // The content script's deps pass through untouched.
+    expect(deps.paletteShortcut).toBe(runtime.paletteShortcut);
+    expect(t.loadPalette).not.toHaveBeenCalled();
+    t.bootstrap.showDot(snapshot);
+    await flush();
+    deps.openPalette();
+    await flush();
+    // Same as palette.toggle: the card and the dot close, the palette loads once and toggles.
+    expect(t.selectionRuntime.close).toHaveBeenCalledOnce();
+    expect(t.selectionRuntime.hideDot).toHaveBeenCalledOnce();
+    expect(t.loadPalette).toHaveBeenCalledOnce();
+    expect(t.paletteRuntime.toggle).toHaveBeenCalledOnce();
+    // Pressed again it toggles the same palette, and so does the shortcut.
+    deps.openPalette();
+    await flush();
+    await t.send('palette.toggle');
+    expect(t.loadPalette).toHaveBeenCalledOnce();
+    expect(t.paletteRuntime.toggle).toHaveBeenCalledTimes(3);
+    expect(Object.keys(paletteDepsOf(t).page).sort()).toEqual(
+      ['getState', 'retryFailed', 'setMode', 'start', 'stop', 'toggle'].sort(),
+    );
+  });
+
+  it('openPalette once the context is gone: loads nothing and never throws', async () => {
+    let alive = true;
+    const t = setup(undefined, { alive: () => alive });
+    await t.send('page.start');
+    alive = false;
+    expect(() => pageDepsOf(t).openPalette()).not.toThrow();
+    await flush();
+    expect(t.loadPalette).not.toHaveBeenCalled();
+    expect(t.paletteRuntime.toggle).not.toHaveBeenCalled();
+  });
+
+  it('openPalette swallows a failed palette load', async () => {
+    const t = setup(undefined, {
+      loadPalette: async () => {
+        throw new Error('Failed to fetch');
+      },
+    });
+    await t.send('page.start');
+    pageDepsOf(t).openPalette();
+    await flush();
+    await flush();
+    expect(t.loadPalette).toHaveBeenCalledOnce();
   });
 
   it('reports page-unreachable when the palette cannot load, and tries again next time', async () => {

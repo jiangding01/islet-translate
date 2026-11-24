@@ -28,7 +28,7 @@ describe('shapesFor', () => {
       expect(shapes.gone).toEqual({ L: 0, D: 0, R: 0 });
       // The shell under the 10px dot is one ring smaller (no dark edge around the dot).
       expect(shapes.dot).toEqual({ L: 8, D: 8, R: 4 });
-      expect(shapes.isle).toEqual({ L: 148, D: 40, R: 20 });
+      expect(shapes.isle).toEqual({ L: 186, D: 40, R: 20 });
       // Four rows: the prototype's 204px list, 200px wide beside the 40px isle.
       expect(shapes.list).toEqual({ L: 204, D: 240, R: 16 });
     }
@@ -37,12 +37,12 @@ describe('shapesFor', () => {
   it('lays the bottom dock out horizontally, the 240px list growing upward', () => {
     const shapes = shapesFor('bottom', VP, { retry: false, options: 4 });
     expect(shapes.dot).toEqual({ L: 8, D: 8, R: 4 });
-    expect(shapes.isle).toEqual({ L: 148, D: 40, R: 20 });
+    expect(shapes.isle).toEqual({ L: 186, D: 40, R: 20 });
     expect(shapes.list).toEqual({ L: 240, D: 244, R: 16 });
   });
 
   it('lengthens the isle for the retry button', () => {
-    expect(shapesFor('right', VP, { retry: true, options: 4 }).isle.L).toBe(186);
+    expect(shapesFor('right', VP, { retry: true, options: 4 }).isle.L).toBe(224);
     expect(shapesFor('bottom', VP, { retry: true, options: 4 }).list.L).toBe(240);
   });
 
@@ -50,9 +50,12 @@ describe('shapesFor', () => {
     expect(listHeight(4, VP)).toBe(204);
     expect(listHeight(40, VP)).toBe(480);
     const small = { w: 240, h: 260 };
-    const side = shapesFor('right', small, { retry: false, options: 40 });
-    expect(side.list.L).toBe(Math.floor(260 * 0.6));
+    // Side docks: 60% of a 400px viewport is still longer than the 186px isle.
+    const side = shapesFor('right', { w: 240, h: 400 }, { retry: false, options: 40 });
+    expect(side.list.L).toBe(Math.floor(400 * 0.6));
     expect(side.list.D).toBe(240 - 2 * MARGIN);
+    // Shorter than the isle, the list keeps the isle's length.
+    expect(shapesFor('right', small, { retry: false, options: 40 }).list.L).toBe(186);
     // Bottom dock, right-anchored: the list is right-aligned and stays inside the
     // viewport on every side (narrower than 240 when the viewport is).
     const bottom = shapesFor('bottom', small, { retry: false, options: 40 });
@@ -70,7 +73,7 @@ describe('shapesFor', () => {
   });
 
   it('reserves the longest view along the edge', () => {
-    expect(reservedLength(shapesFor('right', VP, { retry: true, options: 1 }))).toBe(186);
+    expect(reservedLength(shapesFor('right', VP, { retry: true, options: 1 }))).toBe(224);
     expect(reservedLength(shapesFor('right', VP, { retry: false, options: 8 }))).toBe(340);
   });
 });
@@ -143,13 +146,13 @@ describe('edge coordinates', () => {
   it('anchors the toolbar to the isle and the list on the page side of it', () => {
     const shapes = shapesFor('right', VP, { retry: false, options: 4 });
     const right = contentRects('right', VP, shapes, 480);
-    expect(right.bar).toEqual({ x: 1224, y: 406, w: 40, h: 148 });
+    expect(right.bar).toEqual({ x: 1224, y: 387, w: 40, h: 186 });
     expect(right.list).toEqual({ x: 1024, y: 378, w: 200, h: 204 });
     const left = contentRects('left', VP, shapes, 480);
     expect(left.list).toEqual({ x: 56, y: 378, w: 200, h: 204 });
     const bottomShapes = shapesFor('bottom', VP, { retry: false, options: 4 });
     const bottom = contentRects('bottom', VP, bottomShapes, 1264);
-    expect(bottom.bar).toEqual({ x: 1116, y: 744, w: 148, h: 40 });
+    expect(bottom.bar).toEqual({ x: 1078, y: 744, w: 186, h: 40 });
     // Right-aligned with the toolbar, the extra width reaching left.
     expect(bottom.list).toEqual({ x: 1024, y: 540, w: 240, h: 204 });
     const lifted = contentRects('bottom', VP, bottomShapes, 1264, 26);

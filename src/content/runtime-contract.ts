@@ -17,6 +17,13 @@ export interface PageRuntimeDeps {
   reportStatus(status: PageStatus): void;
   /** Engines the isle can offer; rejects when the background cannot answer. */
   listEngines(): Promise<EngineOptions>;
+  /**
+   * The isle's ⌘: opens the palette, or closes it when open, as the shortcut does (the
+   * bootstrap's one implementation). Never throws.
+   */
+  openPalette(): void;
+  /** The palette's key in effect (`shortcuts.get`); '' when unbound or unreadable. Never rejects. */
+  paletteShortcut(): Promise<string>;
 }
 
 export type PageRuntimeFactory = (deps: PageRuntimeDeps) => PageSession;

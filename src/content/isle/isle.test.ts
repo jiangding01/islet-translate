@@ -118,6 +118,8 @@ interface SetupOptions {
   holdConfig?: boolean;
   /** Subscribing throws (the extension was reloaded: its context is invalidated). */
   watchThrows?: boolean;
+  /** The palette's key in effect (default: unbound). */
+  paletteShortcut?: () => Promise<string>;
 }
 
 async function setup(options: SetupOptions = {}) {
@@ -192,6 +194,8 @@ async function setup(options: SetupOptions = {}) {
       };
     }),
     listEngines: vi.fn(options.listEngines ?? (async () => ENGINES)),
+    openPalette: vi.fn(),
+    paletteShortcut: vi.fn(options.paletteShortcut ?? (async () => '')),
   };
   const isle = createIsle({ session, deps, env });
   await vi.advanceTimersByTimeAsync(0);
@@ -496,7 +500,13 @@ describe('mounting', () => {
     const subscribe = vi.spyOn(session, 'subscribe');
     const isle = createIsle({
       session,
-      deps: { getConfig: vi.fn(), watchConfig: vi.fn(), listEngines: vi.fn() },
+      deps: {
+        getConfig: vi.fn(),
+        watchConfig: vi.fn(),
+        listEngines: vi.fn(),
+        openPalette: vi.fn(),
+        paletteShortcut: vi.fn(),
+      },
       env: { win: { top: {} } as unknown as Window },
     });
     expect(subscribe).not.toHaveBeenCalled();
@@ -729,6 +739,11 @@ describe('selection card layering', () => {
     await t.start();
     await t.hoverDot();
     const dialog = document.createElement('dialog');
+    // happy-dom has no top layer: open, and saying it is modal, as showModal() would make it.
+    dialog.setAttribute('open', '');
+    const matches = dialog.matches.bind(dialog);
+    dialog.matches = ((selector: string) =>
+      selector === ':modal' || matches(selector)) as typeof dialog.matches;
     const palette = document.createElement('et-palette');
     palette.setAttribute('data-open', '');
     dialog.append(palette);
@@ -803,6 +818,260 @@ describe('actions', () => {
     t.$('.eg').click();
     t.$<HTMLButtonElement>('.o[data-id="deepseek"]').click();
     expect(t.session.start).toHaveBeenCalledWith({ engine: 'deepseek' });
+  });
+});
+
+describe('palette entry (PR6)', () => {
+  const cmd = (t: Awaited<ReturnType<typeof setup>>) => t.$('[data-act="palette"]');
+  /** An open palette host, as the palette runtime marks it. */
+  const openPalette = () => {
+    const palette = document.createElement('et-palette');
+    palette.setAttribute('data-open', '');
+    document.documentElement.append(palette);
+    cleanups.push(() => palette.remove());
+    return palette;
+  };
+
+  it('puts a ⌘ button after the engine button, out of the tab order, drawn like the others', async () => {
+    const t = await setup();
+    await t.start();
+    const buttons = [...t.$('.bar').querySelectorAll(':scope > button')];
+    expect(buttons.map((button) => button.getAttribute('data-act'))).toEqual([
+      'retry',
+      'engine',
+      'palette',
+    ]);
+    expect(cmd(t).className).toBe('ib');
+    expect(cmd(t).getAttribute('tabindex')).toBe('-1');
+    const icon = cmd(t).querySelector('svg');
+    expect(icon?.getAttribute('viewBox')).toBe('0 0 14 14');
+    expect(icon?.getAttribute('stroke-width')).toBe('1.5');
+    expect(icon?.getAttribute('aria-hidden')).toBe('true');
+    // No extra separator: still the one between the modes and the buttons.
+    expect(t.$('.bar').querySelectorAll('.sep')).toHaveLength(1);
+  });
+
+  it('opens the palette through the bootstrap, leaving the isle as it is', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    cmd(t).click();
+    expect(t.deps.openPalette).toHaveBeenCalledTimes(1);
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    expect(t.session.start).not.toHaveBeenCalled();
+  });
+
+  it('publishes where it sits before asking, even mid-animation (the palette reads it)', async () => {
+    const t = await setup();
+    t.emit({ phase: 'running' });
+    t.frame();
+    expect(t.host()?.hasAttribute('data-et-rect')).toBe(false);
+    // Opened by hovering the dot, then clicked while it is still growing (no settle yet).
+    const { x, y } = t.dotPoint();
+    t.pointer('pointermove', x, y);
+    vi.advanceTimersByTime(60);
+    t.pointer('pointermove', x, y + 1);
+    vi.advanceTimersByTime(200);
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    t.frame();
+    expect(t.clipRect().h).toBeLessThan(100);
+    cmd(t).click();
+    // The springs' targets: 186 long, centred 60% down the 768px edge, not the shape as drawn.
+    expect(t.host()?.getAttribute('data-et-rect')).toBe(`968,${Math.round(768 * 0.6 - 93)},40,186`);
+    const published = t.host()?.getAttribute('data-et-rect');
+    await t.settle();
+    // The same rectangle the isle publishes once at rest.
+    expect(t.host()?.getAttribute('data-et-rect')).toBe(published);
+  });
+
+  it('in the engine list, ⌘ folds the list and publishes the toolbar, not the list', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    t.$('.eg').click();
+    await t.settle();
+    expect(t.root().getAttribute('data-view')).toBe('list');
+    // The list: 240 wide beside the edge.
+    expect(t.host()?.getAttribute('data-et-rect')?.split(',')[2]).toBe('240');
+    cmd(t).click();
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    expect(t.host()?.getAttribute('data-et-rect')).toMatch(/^968,\d+,40,186$/);
+    expect(t.deps.openPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it('any other button closes an open palette first, then does its own job', async () => {
+    const t = await setup();
+    await t.start({ failed: 1 });
+    await t.hoverDot();
+    // Closed: the buttons leave the palette alone.
+    t.$('.md').click();
+    expect(t.deps.openPalette).not.toHaveBeenCalled();
+    const palette = openPalette();
+    t.$('.eg').click();
+    expect(t.deps.openPalette).toHaveBeenCalledTimes(1);
+    expect(t.root().getAttribute('data-view')).toBe('list');
+    t.$('.eg').click();
+    t.$<HTMLButtonElement>('.md[data-act="mode-1"]').click();
+    expect(t.deps.openPalette).toHaveBeenCalledTimes(3);
+    expect(t.session.setMode).toHaveBeenLastCalledWith('translation');
+    // Closed first, then the button's own job.
+    const calls = vi.mocked(t.deps.openPalette).mock.invocationCallOrder;
+    expect(calls[2]).toBeLessThan(
+      vi.mocked(t.session.setMode).mock.invocationCallOrder.at(-1) ?? 0,
+    );
+    t.$('.rt').click();
+    expect(t.deps.openPalette).toHaveBeenCalledTimes(4);
+    expect(t.session.retryFailed).toHaveBeenCalledTimes(1);
+    expect(calls[3]).toBeLessThan(
+      vi.mocked(t.session.retryFailed).mock.invocationCallOrder[0] ?? 0,
+    );
+    // ⌘ itself toggles once, not twice.
+    cmd(t).click();
+    expect(t.deps.openPalette).toHaveBeenCalledTimes(5);
+    palette.remove();
+  });
+
+  it('clicking the dot grows the isle and leaves an open palette alone, as hovering does', async () => {
+    const t = await setup();
+    await t.start();
+    const palette = openPalette();
+    t.$('.hit').click();
+    expect(t.deps.openPalette).not.toHaveBeenCalled();
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    palette.remove();
+  });
+
+  it('is labelled “指令台” until a key is read, then “指令台（key）”, read on every opening', async () => {
+    let key = '';
+    const t = await setup({ paletteShortcut: async () => key });
+    await t.start();
+    expect(cmd(t).getAttribute('aria-label')).toBe('指令台');
+    expect(t.deps.paletteShortcut).not.toHaveBeenCalled();
+    await t.hoverDot();
+    expect(t.deps.paletteShortcut).toHaveBeenCalledTimes(1);
+    expect(cmd(t).getAttribute('aria-label')).toBe('指令台');
+    // The side docks show it as the native title, like every other button.
+    expect(cmd(t).getAttribute('title')).toBe('指令台');
+    t.pointer('pointerdown', 10, 10, 1, document.body);
+    vi.advanceTimersByTime(400);
+    key = '⌃⇧K';
+    await t.hoverDot();
+    expect(t.deps.paletteShortcut).toHaveBeenCalledTimes(2);
+    expect(cmd(t).getAttribute('aria-label')).toBe('指令台（⌃⇧K）');
+    expect(cmd(t).getAttribute('title')).toBe('指令台（⌃⇧K）');
+  });
+
+  it('the bottom dock’s tip shows its label too', async () => {
+    const t = await setup({ dock: 'bottom', paletteShortcut: async () => '⌃⇧K' });
+    await t.start();
+    await t.hoverDot();
+    expect(cmd(t).hasAttribute('title')).toBe(false);
+    cmd(t).dispatchEvent(new window.PointerEvent('pointerenter'));
+    vi.advanceTimersByTime(450);
+    await t.settle();
+    expect(t.$('.tp').textContent).toBe('指令台（⌃⇧K）');
+  });
+
+  it('stays open while the palette is open: the pointer leaving or a press elsewhere', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    const palette = openPalette();
+    t.pointer('pointermove', 100, 100);
+    vi.advanceTimersByTime(400);
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    t.pointer('pointerout', 100, 100);
+    vi.advanceTimersByTime(400);
+    t.pointer('pointerdown', 100, 100, 1, document.body);
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    // The palette closed: the next move outside folds it as usual.
+    palette.removeAttribute('data-open');
+    t.pointer('pointermove', 100, 102);
+    expect(t.root().getAttribute('data-view')).toBe('dot');
+  });
+
+  it('a press elsewhere that closes the palette folds the isle too, once the press is over', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    const palette = openPalette();
+    // The palette's own capture listener, registered after the isle's, closes it on this press.
+    const closeIt = () => palette.removeAttribute('data-open');
+    window.addEventListener('pointerdown', closeIt, true);
+    try {
+      t.pointer('pointerdown', 10, 10, 1, document.body);
+      expect(t.root().getAttribute('data-view')).toBe('isle');
+      vi.advanceTimersByTime(0);
+      expect(t.root().getAttribute('data-view')).toBe('dot');
+    } finally {
+      window.removeEventListener('pointerdown', closeIt, true);
+    }
+    // A press inside the palette: it stays open, and so does the isle.
+    vi.advanceTimersByTime(400);
+    await t.hoverDot();
+    palette.setAttribute('data-open', '');
+    t.pointer('pointerdown', 10, 10, 1, palette);
+    vi.advanceTimersByTime(0);
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+  });
+
+  it('looks for the palette without querying the document on every pointer move', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    openPalette();
+    const query = vi.spyOn(document, 'querySelector');
+    try {
+      for (let i = 0; i < 5; i += 1) t.pointer('pointermove', 100, 100 + i);
+      vi.advanceTimersByTime(400);
+      expect(t.root().getAttribute('data-view')).toBe('isle');
+      expect(query).not.toHaveBeenCalled();
+    } finally {
+      query.mockRestore();
+    }
+  });
+
+  it('the look-again timer goes with the isle', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    openPalette();
+    t.pointer('pointerdown', 10, 10, 1, document.body);
+    t.isle.destroy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('only a real, showing palette holds it open: not a page’s own, not a hidden one', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    const fake = document.createElement('et-palette');
+    fake.setAttribute('data-open', '');
+    document.body.append(fake);
+    cleanups.push(() => fake.remove());
+    t.pointer('pointerdown', 10, 10, 1, document.body);
+    expect(t.root().getAttribute('data-view')).toBe('dot');
+
+    vi.advanceTimersByTime(400);
+    await t.hoverDot();
+    const hidden = openPalette();
+    hidden.checkVisibility = () => false;
+    t.pointer('pointermove', 100, 100);
+    vi.advanceTimersByTime(400);
+    expect(t.root().getAttribute('data-view')).toBe('dot');
+    expect(t.deps.openPalette).not.toHaveBeenCalled();
+  });
+
+  it('a press elsewhere closes it again once the palette is closed', async () => {
+    const t = await setup();
+    await t.start();
+    await t.hoverDot();
+    const palette = openPalette();
+    t.pointer('pointerdown', 10, 10, 1, document.body);
+    expect(t.root().getAttribute('data-view')).toBe('isle');
+    palette.remove();
+    t.pointer('pointerdown', 10, 10, 1, document.body);
+    expect(t.root().getAttribute('data-view')).toBe('dot');
   });
 });
 
@@ -1126,12 +1395,12 @@ describe('bottom dock', () => {
     expect(t.dotPoint()).toEqual({ x: W - 16 - 5, y: H - 16 - 5 });
     await t.hoverDot();
     expect(t.root().getAttribute('data-view')).toBe('isle');
-    expect(t.clipRect()).toMatchObject({ x: W - 16 - 148, w: 148, h: 40, right: 16, bottom: 16 });
-    expect(t.box('.bar')).toEqual({ x: W - 16 - 148, y: H - 16 - 40, w: 148, h: 40 });
+    expect(t.clipRect()).toMatchObject({ x: W - 16 - 186, w: 186, h: 40, right: 16, bottom: 16 });
+    expect(t.box('.bar')).toEqual({ x: W - 16 - 186, y: H - 16 - 40, w: 186, h: 40 });
     t.emit({ failed: 1 });
     await t.settle();
     // Longer with the retry button: still anchored at the right end.
-    expect(t.clipRect()).toMatchObject({ w: 186, right: 16 });
+    expect(t.clipRect()).toMatchObject({ w: 224, right: 16 });
     t.$('.eg').click();
     await t.settle();
     expect(t.root().getAttribute('data-view')).toBe('list');
@@ -1551,7 +1820,7 @@ describe('hover tip', () => {
     vi.advanceTimersByTime(450);
     await t.settle();
     const before = t.box('.tp').x;
-    expect(before).toBe(W - 16 - 148 + 3 + 14);
+    expect(before).toBe(W - 16 - 186 + 3 + 14);
     // The retry button shows: the toolbar grows 38px leftward and the button with it.
     t.emit({ failed: 1 });
     t.frame();
@@ -1692,6 +1961,17 @@ describe('English copy', () => {
     t.emit({ engineError: undefined });
     expect(t.$('.eg').getAttribute('aria-label')).toBe(
       'Engine for this page: Google 翻译 (click to switch)',
+    );
+  });
+
+  it('labels the ⌘ button “Command palette (key)”, or “Command palette” when unbound', async () => {
+    await switchToEnglish();
+    const t = await setup({ paletteShortcut: async () => 'Alt+Shift+K' });
+    await t.start();
+    expect(t.$('[data-act="palette"]').getAttribute('aria-label')).toBe('Command palette');
+    await t.hoverDot();
+    expect(t.$('[data-act="palette"]').getAttribute('aria-label')).toBe(
+      'Command palette (Alt+Shift+K)',
     );
   });
 
