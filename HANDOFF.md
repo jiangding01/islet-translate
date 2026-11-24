@@ -5,7 +5,7 @@
 
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
-- 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（`feat/m3c-quick-translate`）已合入 `main`（实施记录见方案「PR1 实施记录」「PR2 实施记录」「PR6 实施记录」「PR3 实施记录」）。
+- 停在哪：**v0.4.0 已发布**（发版 PR #68）；M0–M3b、i18n、冒烟 e2e 全部完成；**M3c 进行中**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（#77）已合入 `main`（实施记录见方案「PR1 实施记录」「PR2 实施记录」「PR6 实施记录」「PR3 实施记录」）。
 - Gemini 架构审查已核实并裁决（`docs/reviews/2026-11-24-gemini-review-verification.md`，执行清单在第 6 节、用户决定在第 7 节）：唯一的 P2 真 bug「LLM 思维链（`<think>`）未剥离」已修（#75）；渲染三项小修（等帧空窗守卫、重扫不再重新分段、首屏不等防抖）在 #76 完成。
 - 下一步：**M3c PR4 翻译一个区域**（方案 `docs/plans/m3c.md`「拆分」表第 4 行与「区域选择器」一节；2026-11-23 用户同意顺序为 PR1 → PR2 → PR6 → PR3 → PR4 → PR5）。体积：palette-runtime 已用 14.26 / 15 KB，用户已批准预算提到 18 KB，**PR4 合并时生效**（随 PR4 改 `check-size.mjs`）。PR1/PR2 真机验收与补丁（#72）已完成。PR6、PR3 待真机验收：焦点在地址栏时点 ⌘、三种停靠的观感；快速翻译的方向反转与短输入的书写系统兜底、复制到系统剪贴板、译文区选中文字与中文输入法下的按键。
 
@@ -15,7 +15,7 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main`（已合入 M3c PR1 #70、PR2 #71、补丁 #72、PR6 #74、思维链剥离 #75、渲染小修 #76、PR3 `feat/m3c-quick-translate`）；本文随 PR3 修改。
+- 分支 / HEAD：`main`（已合入 M3c PR1 #70、PR2 #71、补丁 #72、PR6 #74、思维链剥离 #75、渲染小修 #76、PR3 #77）；本文随 PR3 修改。
 - 未提交改动：无。
 - 验证状态：截至 PR3 `npm run check` 通过，单测 2021 个（87 个文件），e2e 74 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
 - 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.60 / 7.75（余 0.15，**改引导层或常驻监听前必须先评估**）、page-runtime 26.45 / 28（余约 1.55，M3c PR4、PR5 还要用）、selection-runtime 18.20 / 19、palette-runtime 14.26 / 15（用户 2026-11-24 已批准提到 18 KB，PR4 合并时生效；PR4 估算 +3.5）、background 57.85 / 60（小批的 LLM 逐段提交预计 +0.6–1.0）、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
