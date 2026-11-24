@@ -339,6 +339,8 @@ isle:
   engineError: "Engine for this page: $1 ($2)"
   # $1: the engine's name.
   engineSwitch: "Engine for this page: $1 (click to switch)"
+  # The isle's ⌘ button. $1: the key that opens the palette (palette.label when unbound).
+  palette: Command palette ($1)
 
 # The selection card (src/content/selection/card.ts).
 card:

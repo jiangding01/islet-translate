@@ -460,6 +460,51 @@ PR1 的范围：
   - 未就绪服务的品牌色图标 50% 不透明度偏暗，与灵岛一致，不改。
   - Windows / Linux 上 `Alt+Shift+K` 与浏览器 accesskey 是否冲突仍未验证。
 
+## PR6 实施记录（#74，分支 `feat/m3c-isle-entry`）
+- **范围**：拆分表第 6 行。实施前另定 7 条细则（定位不加接口、⌘ 按钮、接线、文案、互不误伤、焦点、体积），按细则实现。#72 合并后的补丁验收已记在上一节。
+- **代码**：
+  - 灵岛（`isle/isle.ts`）：工具栏在引擎按钮之后加 `.ib[data-act="palette"]`，14 格线条 ⌘ 图标，笔画同模式图标（1.5、圆头），不加分隔线。按钮加入 `renderState` 的 title 循环、悬停提示的监听数组与 `measureSpots`。`act('palette')` 先 `publishRect()` 再调 `deps.openPalette()`。`open()` 每次展开读一次 `deps.paletteShortcut()`，把 `aria-label` 写成 `isle.palette`（「指令台（⌃⇧K）」），空串时用 `palette.label`（「指令台」）；侧边停靠的 title 与底部停靠的提示都跟着 `aria-label` 走。指令台开着时（`et-palette[data-open]`，判断方式见审查修复 S2、S3，模态对话框里的宿主也认），悬停意图的离开收起与外部按下都不收起灵岛；Esc 让步改用同一个判断。指令台关闭后，下一次指针移动照常判断离开。
+  - 几何（`isle/geometry.ts`）：`ISLE_LENGTH` 148 → 186，`ISLE_LENGTH_RETRY` 186 → 224（多一个 32px 按钮和 6px 间距）。
+  - 指令台（`palette/palette.ts`、`palette/place.ts`）：不加接口。打开时、每次 `resize()` 时以及打开期间 `data-et-rect` 变化时（审查修复 S6），读 `<html>` 直接子元素 `ET-ISLE` 的 `data-et-rect`，写法同 `card.ts` 的 `readIsleRect`。`placePanel` 新增可选 `anchor`（纯函数）：right 停靠时在灵岛左侧 8px、顶边对齐；left 停靠时在右侧 8px、顶边对齐；bottom 停靠时在上方 8px、右端对齐；最后夹进视口，距边至少 16px。拉出起点：侧边停靠 W=0、H=灵岛高；底部停靠 W=灵岛宽、H=0，锚在右下角。收起时折回同一个起点。底部贴灵岛时，内容淡入按高度的生长比例计算。没有 `ET-ISLE` 或它没有面积时，保持原来的零层逻辑。`onPointerDownOutside` 把 `composedPath` 里的灵岛宿主（同样只认 `<html>` 的直接子元素）当作内部，不关闭。
+  - 接线：`PageRuntimeDeps` 新增 `openPalette(): void` 与 `paletteShortcut(): Promise<string>`，`IsleOptions.deps` 的 Pick 同步更新。bootstrap 把 `palette.toggle` 的处理主体抽成 `togglePalette()`，依次做失联判断、关卡片与小点、加载 palette、toggle；消息处理和借给 page runtime 的 `openPalette` 共用这个函数（page 的 lazy 用闭包延迟引用后声明的 palette，`openPalette` 吞掉拒绝）。`BootstrapDeps.runtime` 改为 `Omit<PageRuntimeDeps, 'openPalette'>`。`content.ts` 的 `paletteShortcut` 用现成 `send('shortcuts.get')` 取 `open-palette`，失败返回 `''`。`PaletteMessage` 白名单没有改动。
+- **文案**：新增 1 条 `isle.palette`（带 `$1`）：zh_CN「指令台（$1）」、en「Command palette ($1)」、zh_TW「指令台（$1）」。
+- **再点 ⌘**：走同一个 `toggle()` 关闭，和再按一次快捷键一样把焦点与选区还给打开前的位置。按 ⌘ 打开时焦点本来就没离开网页（灵岛按钮 `keepFocus`），所以还焦点不会跳到别处。
+- **焦点（细则 6）**：`toggle()` 里的 `doc.hasFocus()` 检查保留，⌘ 路径没有跳过它。依据有两条。一是原理：在网页内容区按下鼠标时，浏览器先把焦点交给页面，再派发 mousedown；⌘ 在 click 之后才经 bootstrap 异步调到 `toggle()`。二是 e2e 实测（临时脚本，未入库）：关掉焦点模拟后，新页面的 `document.hasFocus()` 为 false，CDP 发出一次真实输入后变为 true，⌘ 能正常打开指令台。无头窗口没有操作系统焦点，所以「焦点在地址栏时直接点 ⌘」只能留给真机验收。
+- **与方案的偏差**：
+  - 用快捷键打开时不自动展开灵岛。灵岛缩成小点时，`data-et-rect` 仍是展开后的工具栏位置，指令台贴着这个位置展开。
+  - 「打开期间状态不刷新」（PR1 已记录）：点灵岛的其他按钮（切换模式、重试、引擎列表）会先关闭指令台（审查 R1），所以只剩指令台开着时用快捷键（如 Alt+A 整页翻译）切换翻译时才会出现。
+  - 方案拆分表写的是 `PageRuntimeDeps.openPalette` 与 `isleRect`。按细则 1 没有加 `isleRect`，改为读宿主上已有的 `data-et-rect`。
+  - 「失联后 ⌘ 隐藏」不需要额外代码：会话 halted 时 `isActive` 为假，整个灵岛退场，⌘ 随之消失。
+  - 灵岛只在静止时写 `data-et-rect`。e2e 发现刚开始整页翻译、灵岛还没静止时点 ⌘，指令台读不到矩形，落回零层位置。因此点 ⌘ 时先按目标外形写一次（`publishRect` 用的是弹簧目标值，动画中途也准确），仍然只是一次属性写入。
+  - 铰链落在指令台朝灵岛的那条边上，距灵岛内侧边 8px 间隔，没有贴住灵岛的边。
+- **体积**（gzip，含审查修复）：content 7.55 → 7.60 KB（7728 → 7784 B，预算 7.75 KB，余约 0.15 KB）；page-runtime 26.03 → 26.33 KB（含第 3 轮小修）；palette-runtime 9.12 → 9.54 KB（9772 B）；selection-runtime 18.19 KB 不变。保留了 `paletteShortcut`。
+- **测试**：单测 +22（1901 → 1923，文件数 87 不变）：
+  - `place.test.ts` 4 条：三种停靠的贴灵岛位置与夹边。
+  - `palette.test.ts` 7 条：右、左、底三种停靠的落位与拉出起点；底部停靠按高度淡入，并折回灵岛宽度；无灵岛时保持原逻辑；忽略无面积的灵岛和 body 里的仿冒宿主；resize 时跟随灵岛；按在灵岛上不关闭，按在仿冒宿主上关闭。
+  - `isle.test.ts` 8 条：按钮位置与图标、点击调 `openPalette`、动画中途点击先写 `data-et-rect`、有无快捷键两种 `aria-label` 并在每次展开时重读、底部停靠的提示、指令台开着时离开或外部按下都不收起而关掉后恢复、关掉后外部按下照常收起、英文文案。
+  - `bootstrap.test.ts` 3 条：`openPalette` 与 `palette.toggle` 行为一致（关卡片与小点、只加载一次、共用同一个指令台）、失联时不加载也不抛错、加载失败被吞掉。
+  - 几何常量相关：`geometry.test.ts`、`isle.test.ts`（底部停靠尺寸、提示位置）、`card.test.ts`（灵岛避让的 `data-et-rect` 夹具改为 40×186）同步更新。
+  - 先红后绿：换回改动前的 `palette.ts`，新增用例中有 5 条失败；换回改动前的 `isle.ts`，有 7 条失败。
+  - e2e：`palette.e2e.test.ts` +1（69 → 70 通过，2 跳过不变）。整页翻译后点小点展开灵岛，真实点击 ⌘：指令台打开，焦点在输入框；指令台右边缘距灵岛左边缘 8px，顶边与灵岛对齐，容差 3px。在指令台里真实点击后，灵岛仍然展开。再点 ⌘，指令台关闭。
+- **审查修复**（check skill，两位 Opus 审查者，无阻断）：
+  - R1：`act()` 里只要不是 ⌘ 且指令台开着，就先调 `deps.openPalette()`（toggle 关闭并交还焦点），再执行原动作。指令台不再盖住引擎列表，列表状态也不会过期。
+  - S1：引擎列表展开时点 ⌘，先 `setView('isle')` 再 `publishRect()`，发布的是工具栏的矩形，列表同时收起。
+  - S2：`paletteOpen()` 改为遍历在 `createIsle` 里缓存的 `getElementsByTagName('et-palette')` 动态集合，不再每次指针移动都对全文档 querySelector。
+  - S3：`paletteOpen()` 只认合法且可见的宿主：父节点是 `<html>`，或是 `:modal` 的 `dialog`；并且 `isConnected`、`checkVisibility?.() !== false`。网页伪造的宿主、随对话框一起隐藏的宿主都不会把灵岛钉住。
+  - S4：指令台开着时在网页别处按下，`onPointerDownOutside` 用 `setTimeout(…, 0)` 在事件派发结束后复查一次，指令台因这次按下关闭了就收起灵岛；定时器在 `unlisten` 里清掉（unmount 与 destroy 都会走到）。
+  - S5：`readIsle()` 要求四个有限数，并把 x/y/w/h 夹到视口内，防止 `1e308` 一类的值让弹簧溢出成 NaN、rAF 空转。`card.ts` 不动（selection-runtime 的预算）。
+  - S6：指令台打开期间用 MutationObserver 观察 `<html>` 的子元素和当前 `ET-ISLE` 的 `data-et-rect`，有变化就重新定位；关闭与 dispose 时断开。灵岛退场（矩形消失）时按零层位置处理：与「打开时没有灵岛」一致，弹簧平滑移过去；保持原位会让指令台悬在一个已经不存在的东西旁边。灵岛再出现时又贴回去。
+  - S7：e2e 不再读 `data-et-rect`，改为量灵岛 Shadow 里 `.bar` 的 `getBoundingClientRect`，比较 8 px 间距与顶边对齐。
+  - S8：「动画中途点 ⌘」的单测改为悬停展开、未静止时点击（原先在 dot 视图下用程序点击，真实环境点不到），并断言 Y 取弹簧目标值（`768 × 0.6 − 93`）。
+  - 审查修复单测 +10（1923 → 1933）：`isle.test.ts` +6（列表里点 ⌘、其他按钮先关指令台、外部按下关指令台后灵岛随之收起、复查定时器随灵岛清掉、指针移动不查询文档、伪造与隐藏的宿主不钉住灵岛），`palette.test.ts` +4（夹值、非法矩形、打开期间跟随灵岛变长/离开/出现、关闭与 dispose 时断开观察）；改写 1 条（S8），模态对话框用例补上 `open` 与 `:modal` 替身。先红后绿：换回修复前的 `isle.ts` 有 4 条失败（S2 用例另用「每次 querySelector」的替身验证为失败），换回修复前的 `palette.ts` 有 3 条失败；其余为回归保护。e2e 仍 70 通过 2 跳过。
+  - 第 2 轮增量审查（Opus，通过，无阻断与重要项）后的小修：点小点展开灵岛时不再关闭指令台（与悬停展开一致，`act()` 排除 `dot`）；`paletteOpen()` 先查 `<html>` 的直接子元素，找不到才遍历动态集合找模态对话框里的宿主；其他按钮先关指令台的用例补上调用顺序断言。单测 +1（1933 → 1934），新用例先红后绿。
+- **已知限制**：
+  - 视口很窄时，指令台可能整个盖住灵岛，⌘ 点不到（Esc 和点别处仍能关闭）。
+  - 视口高度小于约 218 px（出现重试按钮时小于约 256 px）时，⌘ 会溢出灵岛外壳：灵岛长度被夹到视口内，按钮列没有跟着收。
+  - 扩展已失联、但会话尚未 halted 的窗口期内，点 ⌘ 没有反应，与快捷键路径一致（`togglePalette` 先做失联判断，不加载）。
+  - 指令台打开期间切换停靠位置时，灵岛换到新边，指令台仍按打开时读到的停靠方向贴放（指令台不订阅配置），关掉重开即恢复。
+  - 「焦点在地址栏时点 ⌘」与三种停靠的真实观感待真机验收。
+
 ## 附录 A：第 1 稿审查处理记录（Opus 对抗式审查，2026-11-23）
 | 编号 | 问题 | 处理 |
 |---|---|---|

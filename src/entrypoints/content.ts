@@ -67,6 +67,11 @@ export default defineContentScript({
         getConfig,
         watchConfig: watchData,
         listEngines,
+        paletteShortcut: () =>
+          send('shortcuts.get').then(
+            (keys) => keys['open-palette'],
+            () => '',
+          ),
         reportStatus: (status) => {
           sendMessage('page.status', status).catch(() => {
             // Background unreachable or extension reloaded: the dot is cosmetic.

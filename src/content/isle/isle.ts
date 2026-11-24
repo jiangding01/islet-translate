@@ -73,7 +73,10 @@ export interface IsleEnv {
 
 export interface IsleOptions {
   session: PageSession;
-  deps: Pick<PageRuntimeDeps, 'getConfig' | 'watchConfig' | 'listEngines'>;
+  deps: Pick<
+    PageRuntimeDeps,
+    'getConfig' | 'watchConfig' | 'listEngines' | 'openPalette' | 'paletteShortcut'
+  >;
   env: IsleEnv;
 }
 
@@ -101,6 +104,8 @@ const MODE_ICONS: Record<string, [string, string?][]> = {
   'isle.glyphTranslation': [['M2.5 7h9']],
   'isle.glyphOriginal': [['M5 4 2.5 6.5 5 9'], ['M2.5 6.5h6a3 3 0 0 1 0 6H7']],
 };
+/** The palette button's ⌘ (14px grid, the mode icons' stroke). */
+const PALETTE_ICON = 'M9 3v8a2 2 0 1 0 2-2H3a2 2 0 1 0 2 2V3a2 2 0 1 0-2 2h8a2 2 0 1 0-2-2';
 /** Mode button pitch: 28px button + 2px gap. */
 const MODE_PITCH = 30;
 /** The open isle tolerates the pointer this far outside its shape. */
@@ -199,6 +204,8 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   let origin: Rect | undefined;
   let intentTimer: ReturnType<typeof setTimeout> | undefined;
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** After a press elsewhere that the open palette held off: looked at again once it is over. */
+  let pressTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Bottom dock hover tip (the side docks use the native title).
   let tipButton: HTMLElement | undefined;
@@ -343,6 +350,22 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
       'aria-haspopup': 'listbox',
       'aria-expanded': 'false',
     });
+    // Its label gains the key in effect once read (see open).
+    const palette = button('ib', 'palette', { 'aria-label': message('palette.label') });
+    palette.append(
+      svg(
+        {
+          width: '14',
+          height: '14',
+          viewBox: '0 0 14 14',
+          stroke: 'currentColor',
+          'stroke-width': '1.5',
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        },
+        ['path', { d: PALETTE_ICON }],
+      ),
+    );
     const bar = node(
       'div',
       { class: 'bar', role: 'toolbar', 'aria-label': message('isle.toolbar') },
@@ -355,6 +378,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
       node('span', { class: 'sep', 'aria-hidden': 'true' }),
       retry,
       engine,
+      palette,
     );
     const rows = node('div', {
       class: 'op',
@@ -392,6 +416,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
       retry,
       count,
       engine,
+      palette,
       hit,
       live,
       tip,
@@ -941,7 +966,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
 
   function renderState() {
     if (!els) return;
-    const { root, modes, retry, count, engine } = els;
+    const { root, modes, retry, count, engine, palette } = els;
     root.toggleAttribute('data-run', last.phase === 'running');
     const failing = hasRetry(last);
     root.toggleAttribute('data-fail', failing);
@@ -967,7 +992,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
     setAttr(engine, 'aria-label', engineLabel);
     engine.toggleAttribute('data-err', !!last.engineError);
     // The side docks show the native title; the bottom dock draws its own tip.
-    for (const item of [...modes, retry, engine]) {
+    for (const item of [...modes, retry, engine, palette]) {
       const text = item.getAttribute('aria-label') ?? '';
       if (isVertical(dock)) setAttr(item, 'title', text);
       else if (item.hasAttribute('title')) item.removeAttribute('title');
@@ -1057,6 +1082,33 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   // ---- Interaction ------------------------------------------------------------------
 
   const isOpen = () => view === 'isle' || view === 'list';
+  /** Live: the fallback for a palette in a modal dialog, without a query per call. */
+  const palettes = doc.getElementsByTagName(PALETTE_TAG.toLowerCase());
+  const showing = (palette: Element) =>
+    palette.hasAttribute('data-open') &&
+    palette.isConnected &&
+    palette.checkVisibility?.() !== false;
+  /**
+   * The palette is open and showing: its host under <html>, or in the modal dialog it joined
+   * (so a page's own `et-palette`, or one hidden with its dialog, never holds the isle open).
+   * The usual host is checked among <html>'s few children first: no document walk.
+   */
+  function paletteOpen(): boolean {
+    for (const child of doc.documentElement.children) {
+      if (child.nodeName === PALETTE_TAG && showing(child)) return true;
+    }
+    for (const palette of palettes) {
+      const parent = palette.parentElement;
+      try {
+        if (parent?.nodeName === 'DIALOG' && parent.matches(':modal') && showing(palette)) {
+          return true;
+        }
+      } catch {
+        // `:modal` unsupported: the palette never joins a dialog there.
+      }
+    }
+    return false;
+  }
 
   function inside(x: number, y: number): boolean {
     const offset = targetOffset();
@@ -1074,8 +1126,10 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
     if (mount !== 'mounted') return;
     const decision = intent.decide(now(), isOpen());
     if (decision.action === 'open') open();
-    else if (decision.action === 'close') close();
-    else if (decision.wait !== undefined) intentTimer = setTimeout(evaluate, decision.wait + 1);
+    // The palette beside it keeps it open; the next move after it closes decides again.
+    else if (decision.action === 'close') {
+      if (!paletteOpen()) close();
+    } else if (decision.wait !== undefined) intentTimer = setTimeout(evaluate, decision.wait + 1);
   }
 
   function open() {
@@ -1088,6 +1142,16 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
     origin = before;
     void loadEngines();
     setView('isle');
+    // Read on every opening: a key changed in chrome://extensions/shortcuts shows next time.
+    deps.paletteShortcut().then((key) => {
+      if (!els) return;
+      setAttr(
+        els.palette,
+        'aria-label',
+        key ? message('isle.palette', key) : message('palette.label'),
+      );
+      renderState();
+    });
   }
 
   function close() {
@@ -1128,7 +1192,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   function measureSpots() {
     if (!els) return;
     const at = new Map<HTMLElement, { x: number; y: number; w: number }>();
-    for (const button of [...els.modes, els.retry, els.engine]) {
+    for (const button of [...els.modes, els.retry, els.engine, els.palette]) {
       // The button's resting place: offsets ignore the content's morph transforms.
       let x = 0;
       let y = 0;
@@ -1233,6 +1297,10 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   function act(action: string, target: HTMLElement) {
     if (mount !== 'mounted') return;
     const ignore = () => {};
+    // Any other button closes the palette first (focus back to the page): it would cover the
+    // engine list, and its list would show the state before this action. The dot only grows
+    // the isle, as hovering it does, so the palette stays.
+    if (action !== 'palette' && action !== 'dot' && paletteOpen()) deps.openPalette();
     if (action === 'dot') open();
     else if (action === 'mode-0' || action === 'mode-1') {
       const index = action === 'mode-0' ? 0 : 1;
@@ -1252,6 +1320,12 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
       const id = target.getAttribute('data-id') as Engine | null;
       setView('isle');
       if (id && id !== currentEngine()) session.start({ engine: id }).catch(ignore);
+    } else if (action === 'palette') {
+      // Beside the toolbar, not the engine list (which folds away).
+      if (view === 'list') setView('isle');
+      // The palette reads where the isle sits: published now, even if it is still moving.
+      publishRect();
+      deps.openPalette();
     }
   }
 
@@ -1276,17 +1350,27 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   };
   const onPointerDownOutside = (event: PointerEvent) => {
     if (!host || !isOpen() || !trusted(event)) return;
-    if (!event.composedPath().includes(host)) close();
+    if (event.composedPath().includes(host)) return;
+    if (!paletteOpen()) {
+      close();
+      return;
+    }
+    // Inside the palette, nothing to do. Elsewhere, the palette closes on this same press
+    // (its own listener, maybe after this one): look again once the event is over.
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      pressTimer = undefined;
+      if (isOpen() && !paletteOpen()) close();
+    }, 0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     // Only closes; the page still sees the key (no preventDefault).
     if (event.key !== 'Escape' || !isOpen() || !trusted(event)) return;
     // The selection card or the palette above closes first: one Escape closes only the top layer.
-    // The palette can sit inside a modal dialog, so it is looked for anywhere.
     for (const child of doc.documentElement.children) {
       if (child.nodeName === SELECTION_TAG && child.hasAttribute('data-open')) return;
     }
-    if (doc.querySelector(`${PALETTE_TAG.toLowerCase()}[data-open]`)) return;
+    if (paletteOpen()) return;
     if (view === 'list') setView('isle');
     else close();
   };
@@ -1348,7 +1432,7 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
       target.addEventListener('mousedown', keepFocus);
       target.addEventListener('click', onClick);
     }
-    for (const target of [...els.modes, els.retry, els.engine]) {
+    for (const target of [...els.modes, els.retry, els.engine, els.palette]) {
       target.addEventListener('pointerenter', onTipIn);
       target.addEventListener('pointerleave', onTipOut);
       target.addEventListener('pointerdown', onTipPress);
@@ -1358,6 +1442,8 @@ export function createIsle({ session, deps, env }: IsleOptions): Isle {
   function unlisten() {
     clearTimeout(intentTimer);
     clearTimeout(resizeTimer);
+    clearTimeout(pressTimer);
+    pressTimer = undefined;
     resetTip();
     win.removeEventListener('pointermove', onPointerMove);
     win.removeEventListener('pointerout', onPointerOut);

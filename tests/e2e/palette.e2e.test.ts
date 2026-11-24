@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type Harness, launch, trackTests, waitFor } from './harness';
 import { type Ok, type PageState, prepare } from './support';
 
-// M3c PR1 and PR2: the command palette. A real `chrome.commands` key cannot be pressed through CDP,
+// M3c PR1, PR2 and PR6: the command palette. A real `chrome.commands` key cannot be pressed through CDP,
 // so `palette.toggle` is sent the way the background sends it for the shortcut. Keys and
 // text are real CDP input. Chinese UI: the commands are matched by their zh_CN titles.
 
@@ -180,6 +180,96 @@ describe('command palette', () => {
     await waitFor(async () => !(await isOpen()), { message: 'the palette to close' });
     const options = await h.waitForExtPage('options.html');
     await options.close();
+    h.assertNoErrors();
+  });
+});
+
+describe('the isle’s ⌘ (PR6)', () => {
+  interface Box {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+
+  /** A trusted click on `selector` inside the isle's shadow root, once it has stopped moving. */
+  async function clickInIsle(selector: string) {
+    const where = () =>
+      h.shadow<{ x: number; y: number } | null>(
+        'et-isle',
+        `(root) => {
+          const r = root.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect();
+          return r && r.width > 0 ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
+        }`,
+      );
+    const point = await waitFor(
+      async () => {
+        const before = await where();
+        await new Promise((done) => setTimeout(done, 200));
+        const after = await where();
+        return before && after && before.x === after.x && before.y === after.y ? after : null;
+      },
+      { message: `${selector} in the isle to hold still` },
+    );
+    await h.trustedClick(point);
+  }
+
+  const isleView = () =>
+    h.shadow<string>('et-isle', `(root) => root.querySelector('.r')?.dataset.view`);
+  /** The isle's toolbar as drawn on screen (its shell is clipped to the same box). */
+  const isleRect = () =>
+    h.shadow<Box | null>(
+      'et-isle',
+      `(root) => {
+        const r = root.querySelector('.bar')?.getBoundingClientRect();
+        return r && r.width > 0 ? { x: r.x, y: r.y, w: r.width, h: r.height } : null;
+      }`,
+    );
+  /** The palette's content box once its shape has stopped moving. */
+  const paletteRect = () =>
+    waitFor(
+      async () => {
+        const read = () =>
+          h.shadow<(Box & { anim: boolean }) | null>(
+            HOST,
+            `(root) => {
+              const r = root.querySelector('.cn')?.getBoundingClientRect();
+              const anim = root.querySelector('.r')?.hasAttribute('data-anim') ?? true;
+              return r && r.width > 0 ? { x: r.x, y: r.y, w: r.width, h: r.height, anim } : null;
+            }`,
+          );
+        const box = await read();
+        return box && !box.anim ? box : null;
+      },
+      { message: 'the palette to come to rest' },
+    );
+
+  it('opens beside the isle from a real click; the isle stays open; ⌘ again closes it', async () => {
+    await h.openPage('e2e-article.html');
+    await h.tell('page.toggle');
+    await waitFor(async () => (await state()).phase === 'done', { message: 'the page to settle' });
+    await clickInIsle('.hit');
+    await waitFor(async () => (await isleView()) === 'isle', { message: 'the isle to open' });
+
+    await clickInIsle('[data-act="palette"]');
+    await waitFor(isOpen, { message: 'the palette to open from the ⌘' });
+    expect(await h.evaluate<string>(`document.activeElement?.localName`)).toBe(HOST);
+    expect(await h.shadow<string>(HOST, `(root) => root.activeElement?.className`)).toBe('in');
+    // Right dock (the default): 8px to the left of the isle, the tops aligned.
+    const isle = await waitFor(isleRect, { message: 'the isle’s toolbar' });
+    const panel = await paletteRect();
+    expect(Math.abs(panel.x + panel.w - (isle.x - 8))).toBeLessThanOrEqual(3);
+    expect(Math.abs(panel.y - isle.y)).toBeLessThanOrEqual(3);
+
+    // A click in the palette (the pointer far outside the isle) leaves the isle open.
+    await h.trustedClick({ x: panel.x + 40, y: panel.y + 23 });
+    await new Promise((done) => setTimeout(done, 700));
+    expect(await isleView()).toBe('isle');
+    expect(await isOpen()).toBe(true);
+
+    // The ⌘ again: the palette closes (a press on the isle is not a press elsewhere).
+    await clickInIsle('[data-act="palette"]');
+    await waitFor(async () => !(await isOpen()), { message: 'the palette to close from the ⌘' });
     h.assertNoErrors();
   });
 });
