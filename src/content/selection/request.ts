@@ -177,8 +177,10 @@ export function createCardRequests(deps: CardRequestDeps): CardRequests {
           onEvent({ kind: 'error', error: chunk.error });
         } else {
           finished = true;
-          // The final text replaces the increments (it is cleaned, they were not).
-          onEvent({ kind: 'done', text: chunk.text, disposition: chunk.disposition });
+          // The final text replaces the increments (it is cleaned, they were not). Stream
+          // requests never get a `revoked` chunk: only page batches are taken back.
+          const final = chunk as Extract<TranslateChunk, { disposition: unknown }>;
+          onEvent({ kind: 'done', text: final.text, disposition: final.disposition });
         }
       };
 

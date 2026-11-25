@@ -18,6 +18,21 @@ import { createPageSession, isEngineLevel, type SessionDeps } from './session';
 
 /** Every `segment` call, discovery's and the renderer's: a rescan must not segment kept units again. */
 const segmenting = vi.hoisted(() => ({ calls: 0 }));
+/** `failInsert`: the renderer's next writes reject (a broken write must leave no claim behind). */
+const rendering = vi.hoisted(() => ({ failInsert: false }));
+vi.mock('./render', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./render')>();
+  return {
+    ...actual,
+    createRenderer: (...args: Parameters<typeof actual.createRenderer>) => {
+      const renderer = actual.createRenderer(...args);
+      const insert = renderer.insert;
+      renderer.insert = (results) =>
+        rendering.failInsert ? Promise.reject(new Error('insert failed')) : insert(results);
+      return renderer;
+    },
+  };
+});
 vi.mock('./segment', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./segment')>();
   return {
@@ -3714,5 +3729,349 @@ describe('page session: region exclude (“选择不翻译的区域”)', () => 
     });
     await vi.waitFor(() => expect(t.session.state().halted).toBe(true));
     expect(await t.session.region('exclude', el('#side'))).toBe(false);
+  });
+});
+
+describe('page session: revoked translations', () => {
+  const SAME = 'Same text here.';
+  const el = (selector: string) => document.querySelector(selector) as Element;
+  const idAt = (call: Call | undefined, index = 0) => call?.payload.items[index]?.id ?? '';
+  const say = (call: Call | undefined, index: number, text: string) =>
+    call?.onChunk?.({ id: idAt(call, index), text, disposition: 'translated', cached: false });
+  const take = (call: Call | undefined, index: number, revoked: string) =>
+    call?.onChunk?.({ id: idAt(call, index), revoked });
+  const end = (call: Call | undefined) =>
+    call?.finish({ status: 'done', data: { total: call.payload.items.length, failed: 0 } });
+  const textsOf = (call: Call | undefined) => call?.payload.items.map((item) => item.text);
+  const dots = () => document.querySelectorAll('et-tr[data-et-state="loading"]').length;
+  const point = document as unknown as { caretRangeFromPoint?: (x: number, y: number) => unknown };
+
+  afterEach(() => {
+    delete point.caretRangeFromPoint;
+    vi.restoreAllMocks();
+  });
+
+  /** A page session with `#a` (and anything else in `markup`) in range, `#a` sent first. */
+  async function started(markup: string, extra: Partial<SessionDeps> = {}) {
+    const t = setup(markup, undefined, extra);
+    await t.session.start();
+    t.show([el('#a')]);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+    return t;
+  }
+
+  it('takes the translation back where it shows, forgets it, and asks again', async () => {
+    const t = await started(`<p id="a">${SAME}</p>`);
+    say(t.port.calls[0], 0, '错');
+    await vi.waitFor(() => expect(translations()).toEqual(['错']));
+    // The same text further down: shown from memory, no request.
+    document.body.insertAdjacentHTML('beforeend', `<p id="b">${SAME}</p>`);
+    await vi.waitFor(() => expect(t.observed).toContain(el('#b')));
+    t.show([el('#b')]);
+    await vi.waitFor(() => expect(translations()).toEqual(['错', '错']));
+    take(t.port.calls[0], 0, '错');
+    end(t.port.calls[0]);
+    expect(translations()).toEqual([]);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(textsOf(t.port.calls[1])).toEqual([SAME, SAME]);
+    t.port.calls[1]?.answer();
+    await vi.waitFor(() => expect(translations()).toEqual([`译:${SAME}`, `译:${SAME}`]));
+    expect(t.session.state()).toMatchObject({ phase: 'done', translated: 2, failed: 0 });
+  });
+
+  it('takes its own paragraph back even when memory already holds a better one', async () => {
+    const t = await started(`<p id="a">${SAME}</p><p id="b">${SAME}</p>`);
+    t.show([el('#b')]);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    say(t.port.calls[0], 0, '错');
+    await vi.waitFor(() => expect(translations()).toEqual(['错']));
+    say(t.port.calls[1], 0, '对');
+    await vi.waitFor(() => expect(translations()).toEqual(['错', '对']));
+    take(t.port.calls[0], 0, '错');
+    // From memory: no request.
+    await vi.waitFor(() => expect(translations()).toEqual(['对', '对']));
+    await wait();
+    expect(t.port.calls).toHaveLength(2);
+    // Memory kept: another paragraph with that text needs no request either.
+    document.body.insertAdjacentHTML('beforeend', `<p id="c">${SAME}</p>`);
+    await vi.waitFor(() => expect(t.observed).toContain(el('#c')));
+    t.show([el('#c')]);
+    await vi.waitFor(() => expect(translations()).toEqual(['对', '对', '对']));
+    expect(t.port.calls).toHaveLength(2);
+  });
+
+  it('forgets the translation when its paragraph was re-rendered meanwhile', async () => {
+    const t = await started(`<div id="w"><p id="a">${SAME}</p></div>`);
+    say(t.port.calls[0], 0, '错');
+    end(t.port.calls[0]);
+    await vi.waitFor(() => expect(translations()).toEqual(['错']));
+    // A framework re-render: a new element with the same text, the old unit forgotten.
+    el('#w').innerHTML = `<p id="a2">${SAME}</p>`;
+    await vi.waitFor(() => expect(t.observed).toContain(el('#a2')));
+    take(t.port.calls[0], 0, '错');
+    t.show([el('#a2')]);
+    // Not from memory: asked for.
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    expect(textsOf(t.port.calls[1])).toEqual([SAME]);
+    await wait();
+    expect(translations()).toEqual([]);
+  });
+
+  it('leaves alone a paragraph with the same text that failed or needs no translation', async () => {
+    const t = await started(`<p id="a">${SAME}</p><p id="b">${SAME}</p><p id="c">${SAME}</p>`);
+    t.show();
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    const call = t.port.calls[1];
+    say(t.port.calls[0], 0, '错');
+    call?.onChunk?.({
+      id: idAt(call, 0),
+      error: appError('provider', 'provider/server-error', 'x'),
+    });
+    call?.onChunk?.({ id: idAt(call, 1), text: SAME, disposition: 'same-language', cached: false });
+    end(call);
+    await vi.waitFor(() => expect(translations()).toHaveLength(2));
+    take(t.port.calls[0], 0, '错');
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(3));
+    expect(textsOf(t.port.calls[2])).toEqual([SAME]);
+    expect(el('#b').querySelector('et-tr[data-et-state="error"]')).not.toBeNull();
+    expect(el('#c').querySelector('et-tr')).toBeNull();
+    expect(t.session.state()).toMatchObject({ failed: 1 });
+  });
+
+  it('leaves alone a paragraph with the same text that is on its way, waiting or pending', async () => {
+    const t = await started(
+      `<p id="a">${SAME}</p><p id="b">${SAME}</p><p id="c">${SAME}</p><p id="d">${SAME}</p>`,
+    );
+    t.show([el('#b')]);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    t.show([el('#c')]);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(3));
+    // c's request fails as a whole: it waits for its retry.
+    t.port.calls[2]?.finish({
+      status: 'error',
+      error: appError('network', 'network/timeout', 'x'),
+    });
+    // d comes into range before any translation is in memory: pending for the next send.
+    t.show([el('#d')]);
+    say(t.port.calls[0], 0, '错');
+    take(t.port.calls[0], 0, '错');
+    // a again, with d: one request; b is still on its way, c waits.
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(4));
+    expect(textsOf(t.port.calls[3])).toEqual([SAME, SAME]);
+    // c's retry, on its own.
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(5), { timeout: 2000 });
+    expect(textsOf(t.port.calls[4])).toEqual([SAME]);
+    await wait(100);
+    expect(t.port.calls).toHaveLength(5);
+    expect(translations()).toEqual([]);
+  });
+
+  it('keeps a paragraph asked for again in flight when a late revocation names it', async () => {
+    const t = await started(`<p id="a">${SAME}</p><p id="b">${SAME}</p>`);
+    t.show([el('#a'), el('#b')]);
+    // a went alone first; b follows in a second request.
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    const first = t.port.calls[0];
+    say(first, 0, '错');
+    say(t.port.calls[1], 0, '错');
+    await vi.waitFor(() => expect(translations()).toEqual(['错', '错']));
+    // One revocation takes both back (same text, same wrong translation): both asked again.
+    take(first, 0, '错');
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(3));
+    expect(textsOf(t.port.calls[2])).toEqual([SAME, SAME]);
+    // b's own revocation comes late, while it is on its way again.
+    take(t.port.calls[1], 0, '错');
+    t.show();
+    await wait(120);
+    expect(t.port.calls).toHaveLength(3);
+    t.port.calls[2]?.answer();
+    await vi.waitFor(() => expect(translations()).toEqual([`译:${SAME}`, `译:${SAME}`]));
+  });
+
+  it('never renders a revoked translation still waiting to go in, and shows memory’s instead', async () => {
+    const t = await started(`<p id="a">${SAME}</p><p id="b">${SAME}</p>`);
+    t.show([el('#b')]);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    const seen: string[] = [];
+    const observer = new MutationObserver(() => seen.push(...translations().map(String)));
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    // All within one render window: a's wrong one, b's right one, then a's revocation.
+    say(t.port.calls[0], 0, '错');
+    say(t.port.calls[1], 0, '对');
+    take(t.port.calls[0], 0, '错');
+    await vi.waitFor(() => expect(translations()).toEqual(['对', '对']));
+    await wait();
+    observer.disconnect();
+    expect(seen).not.toContain('错');
+    expect(t.port.calls).toHaveLength(2);
+  });
+
+  it('cancels a revoked translation whose write waits for its frame', async () => {
+    const t = await started(`<p id="a">${SAME}</p>`);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    say(t.port.calls[0], 0, '错');
+    // Past the render window: the write now waits for its frame.
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0));
+    take(t.port.calls[0], 0, '错');
+    vi.restoreAllMocks();
+    for (const callback of frames.splice(0)) callback(0);
+    await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    await wait();
+    expect(translations()).toEqual([]);
+  });
+
+  it.each(['done', 'cancelled', 'error'] as const)(
+    'keeps a paragraph asked for again on its way when its first request ends (%s)',
+    async (ending) => {
+      const A = 'Alpha text here.';
+      const t = setup(`<p id="a">${A}</p><p id="c">Gamma text here.</p>`);
+      await t.session.start();
+      t.show([el('#a'), el('#c')]);
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+      const first = t.port.calls[0];
+      say(first, 0, '错');
+      take(first, 0, '错');
+      // a goes out again while the first request still waits for c (its batch was split).
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+      if (ending === 'done') {
+        say(first, 1, '丙');
+        end(first);
+      } else if (ending === 'cancelled') {
+        first?.finish({ status: 'cancelled' });
+      } else {
+        first?.finish({ status: 'error', error: appError('network', 'network/timeout', 'x') });
+      }
+      await wait(20);
+      // a comes into range again: it is on its way, nothing new may go out for it.
+      t.show([el('#a')]);
+      await wait(700);
+      expect(t.sentTexts().filter((text) => text === A)).toHaveLength(2);
+      t.port.calls[1]?.answer();
+      await vi.waitFor(() => expect(translations()).toContain(`译:${A}`));
+    },
+  );
+
+  it('drops its claim on a write that failed', async () => {
+    rendering.failInsert = true;
+    try {
+      const t = await started(`<p id="a">${SAME}</p>`);
+      say(t.port.calls[0], 0, '错');
+      await wait();
+      rendering.failInsert = false;
+      expect(translations()).toEqual([]);
+      // Nothing of it shows: the revocation clears memory and asks for nothing.
+      take(t.port.calls[0], 0, '错');
+      await wait(120);
+      expect(t.port.calls).toHaveLength(1);
+    } finally {
+      rendering.failInsert = false;
+    }
+  });
+
+  describe('asking again', () => {
+    function viewportSetup(markup: string, near: (el: Element) => boolean) {
+      return started(markup, {
+        // Long enough that only an immediate dot can show during the test.
+        loadingDelayMs: 60_000,
+        loadingScanMs: 20,
+        inViewport: near,
+      });
+    }
+
+    it('shows the loading dot at once on what is in the viewport', async () => {
+      const t = await viewportSetup(`<p id="a">${SAME}</p>`, () => true);
+      say(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(translations()).toEqual(['错']));
+      take(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(dots()).toBe(1));
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+    });
+
+    it('asks again without a dot for what is outside the viewport', async () => {
+      const t = await viewportSetup(`<p id="a">${SAME}</p>`, () => false);
+      say(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(translations()).toEqual(['错']));
+      take(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+      await wait();
+      expect(dots()).toBe(0);
+    });
+
+    it('asks again in a session of held paragraphs', async () => {
+      const t = setup(`<div id="r"><p id="a">${SAME}</p></div>`, undefined, {
+        loadingDelayMs: 60_000,
+        inViewport: () => true,
+      });
+      expect(await t.session.region('translate', el('#r'))).toBe(true);
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+      say(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(translations()).toEqual(['错']));
+      take(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+      expect(dots()).toBe(1);
+      expect(t.session.state()).toMatchObject({ scope: 'units' });
+    });
+
+    it('asks again for a held paragraph pinned to one line', async () => {
+      const styles: StyleReader = (node) => {
+        const own = (node as HTMLElement).style;
+        return {
+          display: own.display || (node.tagName === 'DIV' ? 'block' : 'inline'),
+          whiteSpace: own.whiteSpace || 'normal',
+          textOverflow: own.textOverflow || 'clip',
+        };
+      };
+      const t = setup(
+        '<div id="a" style="display:flex;white-space:nowrap">Locked flex row text</div>',
+        undefined,
+        { createReadStyle: () => styles },
+      );
+      await t.session.start();
+      t.show();
+      await wait();
+      expect(t.port.calls).toHaveLength(0);
+      point.caretRangeFromPoint = () => ({ startContainer: el('#a').firstChild, startOffset: 0 });
+      await t.session.toggleAt({ x: 1, y: 1 });
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(1));
+      say(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(translations()).toEqual(['错']));
+      take(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+      expect(textsOf(t.port.calls[1])).toEqual(['Locked flex row text']);
+    });
+
+    it('only takes back, never asks again for, a paragraph held away', async () => {
+      const t = await started(`<p id="a">${SAME}</p>`);
+      say(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(translations()).toEqual(['错']));
+      point.caretRangeFromPoint = () => ({ startContainer: el('#a').firstChild, startOffset: 0 });
+      await t.session.toggleAt({ x: 1, y: 1 });
+      expect(translations()).toEqual([]);
+      take(t.port.calls[0], 0, '错');
+      t.show();
+      await wait(120);
+      expect(t.port.calls).toHaveLength(1);
+      // Held back in: asked for, not taken from memory.
+      await t.session.toggleAt({ x: 1, y: 1 });
+      await vi.waitFor(() => expect(t.port.calls).toHaveLength(2));
+      // Only its loading dot.
+      expect(translations()).toEqual(['']);
+    });
+
+    it('only takes back, never asks again for, a paragraph in a region left alone', async () => {
+      const t = await started(`<div id="side"><p id="a">${SAME}</p></div><p id="c">Main text.</p>`);
+      say(t.port.calls[0], 0, '错');
+      await vi.waitFor(() => expect(translations()).toEqual(['错']));
+      expect(await t.session.region('exclude', el('#side'))).toBe(true);
+      take(t.port.calls[0], 0, '错');
+      t.show([el('#a')]);
+      await wait(120);
+      expect(t.port.calls).toHaveLength(1);
+      expect(translations()).toEqual([]);
+    });
   });
 });

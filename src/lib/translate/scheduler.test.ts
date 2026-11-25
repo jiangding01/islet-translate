@@ -4,6 +4,7 @@ import type { ItemOutcome } from './codec';
 import {
   abortedError,
   badResponseError,
+  interruptedError,
   outputTruncatedError,
   safeFetch,
 } from './providers/errors';
@@ -11,6 +12,7 @@ import { createOpenAICompatAdapter } from './providers/openai-compat';
 import {
   type CacheEntry,
   createScheduler,
+  REVOKED_LIMIT,
   SCHEDULER_LIMITS,
   SCHEDULER_STREAM,
   type Scheduler,
@@ -193,7 +195,8 @@ async function at(time: number) {
   await flush();
 }
 
-const ok = (text: string) => ({ ok: true, text });
+// LLM page items also carry a verdict (see 'scheduler: revoking items delivered early').
+const ok = (text: string) => expect.objectContaining({ ok: true, text });
 const err = (code: string) => ({ ok: false, error: expect.objectContaining({ code }) });
 
 beforeEach(() => {
@@ -1262,12 +1265,14 @@ interface ManualCall {
  * LLM page adapter whose items the test sends one at a time. With `honorAbort: false`
  * it keeps going after an abort, like a provider that has already read the data.
  */
-function manualAdapter(options: { honorAbort?: boolean } = {}) {
+function manualAdapter(
+  options: { honorAbort?: boolean; kind?: ProviderAdapter['kind']; maxItems?: number } = {},
+) {
   const honorAbort = options.honorAbort ?? true;
   const calls: ManualCall[] = [];
   const adapter: ProviderAdapter = {
-    kind: 'llm',
-    limits: { maxItems: 20, maxChars: 100_000 },
+    kind: options.kind ?? 'llm',
+    limits: { maxItems: options.maxItems ?? 20, maxChars: 100_000 },
     async *translate(batch, ctx) {
       const queue: (ProviderEvent | AppError | 'end')[] = [];
       let wake: () => void = () => undefined;
@@ -1603,6 +1608,24 @@ describe('scheduler: items delivered as they arrive', () => {
       ]);
     });
 
+    it('revokes what came early when the length check closed the scanner and the array is cut short', async () => {
+      const fn = llmFetch((sources) =>
+        sources.length === 3
+          ? `[{"i":0,"t":"T:A"},{"i":1,"t":"${'乙'.repeat(11)}"},{"i":2,"t":"T:`
+          : answer(sources),
+      );
+      const { submit } = setup({ fetch: fn });
+      const { results } = submit(['a', 'b', 'c'], {
+        adapter: createOpenAICompatAdapter(),
+        engine: 'openai',
+      });
+      await at(1000);
+      const first = results[0];
+      expect(first).toEqual(ok('T:A'));
+      if (!first?.ok || !first.verdict) throw new Error('no verdict');
+      expect(await first.verdict).toBe(false);
+    });
+
     it('caches nothing of an array cut short, then caches the halves that succeed', async () => {
       const fn = llmFetch((sources) => {
         const full = answer(sources);
@@ -1659,5 +1682,265 @@ describe('scheduler: items delivered as they arrive', () => {
     await at(20);
     // The last increment still comes before the result.
     expect(s.events).toEqual(['k:x reset', 'k:x +a', 'k:x +b', 'x final']);
+  });
+});
+
+describe('scheduler: revoking items delivered early', () => {
+  const llm = { engine: 'openai' };
+  /** An outcome's verdict: kept, revoked, not decided yet, or none at all. */
+  async function verdictOf(outcome: ItemOutcome | undefined) {
+    if (!outcome?.ok || outcome.verdict === undefined) return 'none';
+    const pending = flush().then(() => 'pending' as const);
+    return Promise.race([outcome.verdict.then((keep) => (keep ? 'kept' : 'revoked')), pending]);
+  }
+  const verdicts = (results: (ItemOutcome | undefined)[]) => Promise.all(results.map(verdictOf));
+  const texts = (calls: ManualCall[]) => calls.map((call) => call.texts);
+
+  it('revokes what a batch delivered once it ends with bad-response, and halves the rest', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c', 'd'], { adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(1);
+    await at(1);
+    expect(await verdicts(results.slice(0, 2))).toEqual(['pending', 'pending']);
+    calls[0]?.fail(badResponseError());
+    await at(2);
+    expect(results.slice(0, 2)).toEqual([ok('T:a'), ok('T:b')]);
+    expect(await verdicts(results.slice(0, 2))).toEqual(['revoked', 'revoked']);
+    await at(1000);
+    expect(texts(calls).slice(1)).toEqual([['c'], ['d']]);
+  });
+
+  it('holds the keys as revoked before the verdict resolves', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b'], { adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(1);
+    await at(1);
+    const first = results[0];
+    if (!first?.ok || !first.verdict) throw new Error('no verdict');
+    // The page asks again as soon as it hears of the revocation.
+    void first.verdict.then(() => submit(['x', 'a', 'b', 'y'], { adapter, ...llm }));
+    calls[0]?.fail(badResponseError());
+    await at(1000);
+    expect(texts(calls).slice(1)).toEqual([['a'], ['b'], ['x', 'y']]);
+  });
+
+  it('decides before anything else of the attempt, even before the rest of the batch fails', async () => {
+    const { scheduler } = setup();
+    const { adapter, calls } = manualAdapter();
+    const [a, , c] = scheduler.submit({
+      caller: 'A',
+      signal: new AbortController().signal,
+      engine: 'openai',
+      adapter,
+      context: CONTEXT,
+      segments: ['a', 'b', 'c'].map((text) => ({ key: `k:${text}`, text })),
+    });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(1);
+    await at(1);
+    const first = await a;
+    if (!first?.ok || !first.verdict) throw new Error('no verdict');
+    const { verdict } = first;
+    // c, left alone, fails with the batch: by then the verdict is in.
+    const seen = c?.then(() => Promise.race([verdict, Promise.resolve('pending')]));
+    calls[0]?.fail(badResponseError());
+    await at(2);
+    expect(await seen).toBe(false);
+  });
+
+  it('runs a revoked segment alone, first in its caller’s queue, and only the next time', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    submit(['a', 'b'], { adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(1);
+    calls[0]?.fail(badResponseError());
+    await at(1);
+    // Three requests take every LLM slot; `s` waits in the queue.
+    for (const text of ['p', 'q', 'r', 's']) submit([text], { adapter, ...llm });
+    await at(1000);
+    expect(texts(calls).slice(1)).toEqual([['p'], ['q'], ['r']]);
+    submit(['t', 'a'], { adapter, ...llm });
+    await at(1001);
+    // The first slot to free goes to `a`, ahead of `s` that waited longer.
+    calls[1]?.item(0);
+    calls[1]?.end();
+    await at(2000);
+    expect(texts(calls).slice(4)).toEqual([['a']]);
+    const finish = async (time: number) => {
+      for (const call of calls) {
+        call.item(0);
+        call.end();
+      }
+      await at(time);
+    };
+    await finish(3000);
+    expect(texts(calls).slice(4)).toEqual([['a'], ['s'], ['t']]);
+    await finish(4000);
+    // Taken out of the set by that submission: batched as usual from now on.
+    submit(['a', 'u'], { adapter, ...llm });
+    await at(5000);
+    expect(texts(calls).at(-1)).toEqual(['a', 'u']);
+  });
+
+  it('never revokes a single-segment attempt, nor holds its key', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a'], { adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.fail(badResponseError());
+    await at(1);
+    expect(await verdicts(results)).toEqual(['kept']);
+    submit(['a', 'z'], { adapter, ...llm });
+    await at(1000);
+    expect(texts(calls).at(-1)).toEqual(['a', 'z']);
+  });
+
+  it('counts the segments an attempt started with: a retry left with one never revokes', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b'], { adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.fail(serverError());
+    await at(1001);
+    expect(texts(calls)).toEqual([['a', 'b'], ['b']]);
+    calls[1]?.item(0);
+    calls[1]?.fail(badResponseError());
+    await at(1002);
+    expect(await verdicts(results)).toEqual(['kept', 'kept']);
+  });
+
+  const rateLimited = () =>
+    appError('rate-limit', 'rate-limit/too-many-requests', 'HTTP 429', { retryable: true });
+  const ENDINGS: [string, (run: { call?: ManualCall; cancel(): void }) => Promise<void>][] = [
+    [
+      'success',
+      async ({ call }) => {
+        call?.item(2);
+        call?.end();
+      },
+    ],
+    ['truncation', async ({ call }) => call?.fail(outputTruncatedError())],
+    ['an interrupted stream', async ({ call }) => call?.fail(interruptedError())],
+    ['a network error', async ({ call }) => call?.fail(serverError())],
+    ['a rate limit', async ({ call }) => call?.fail(rateLimited())],
+    ['the deadline', () => at(LLM_DEADLINE)],
+    ['a cancel', async ({ cancel }) => cancel()],
+  ];
+
+  it.each(ENDINGS)('keeps what was delivered when the attempt ends with %s', async (_n, end) => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results, cancel } = submit(['a', 'b', 'c'], { adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(1);
+    await at(1);
+    await end({ call: calls[0], cancel });
+    await at(LLM_DEADLINE + 1);
+    expect(await verdicts(results.slice(0, 2))).toEqual(['kept', 'kept']);
+  });
+
+  it('keeps what was delivered when every subscriber leaves', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const first = submit(['a', 'b', 'c'], { adapter, ...llm });
+    const second = submit(['b', 'c'], { caller: 'B', adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    await at(1);
+    first.cancel();
+    await at(2);
+    expect(calls[0]?.signal.aborted).toBe(false);
+    second.cancel();
+    await at(3);
+    expect(calls[0]?.signal.aborted).toBe(true);
+    expect(await verdicts(first.results.slice(0, 1))).toEqual(['kept']);
+  });
+
+  it('decides a split half by its own attempt', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter();
+    const { results } = submit(['a', 'b', 'c', 'd', 'e'], { adapter, ...llm });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.fail(badResponseError());
+    await at(1000);
+    expect(texts(calls).slice(1)).toEqual([
+      ['b', 'c'],
+      ['d', 'e'],
+    ]);
+    calls[1]?.item(0);
+    calls[1]?.item(1);
+    calls[1]?.end();
+    calls[2]?.item(0);
+    calls[2]?.fail(badResponseError());
+    await at(1001);
+    expect(await verdicts(results.slice(0, 4))).toEqual(['revoked', 'kept', 'kept', 'revoked']);
+  });
+
+  it(`forgets every revoked key once it holds ${REVOKED_LIMIT}, then takes the next`, async () => {
+    expect(REVOKED_LIMIT).toBe(500);
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter({ maxItems: 1000 });
+    const many = Array.from({ length: REVOKED_LIMIT }, (_, index) => `k${index}`);
+    submit(many, { adapter, ...llm });
+    await at(0);
+    for (const index of many.keys()) calls[0]?.item(index);
+    calls[0]?.fail(badResponseError());
+    await at(1000);
+    submit(['x', 'y'], { adapter, ...llm });
+    await at(2000);
+    calls[1]?.item(0);
+    calls[1]?.item(1);
+    calls[1]?.fail(badResponseError());
+    await at(2001);
+    submit(['k0', 'k1', 'x', 'y'], { adapter, ...llm });
+    await at(3000);
+    expect(texts(calls).slice(2)).toEqual([['x'], ['y'], ['k0', 'k1']]);
+  });
+
+  it('gives Google items no verdict and holds none of their keys', async () => {
+    const { submit } = setup();
+    const { adapter, calls } = manualAdapter({ kind: 'mt' });
+    const { results } = submit(['a', 'b'], { adapter });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.item(1);
+    calls[0]?.fail(badResponseError());
+    await at(1000);
+    expect(results[0]).toEqual({ ok: true, text: 'T:a' });
+    submit(['a', 'b'], { adapter });
+    await at(2000);
+    expect(texts(calls).at(-1)).toEqual(['a', 'b']);
+  });
+
+  it('gives stream items no verdict', async () => {
+    const { scheduler } = setup();
+    const { adapter, calls } = manualAdapter();
+    const [outcome] = scheduler.submit({
+      caller: 'S',
+      signal: new AbortController().signal,
+      engine: 'openai',
+      adapter,
+      context: CONTEXT,
+      segments: [{ key: 'k:x', text: 'x' }],
+      onReset: () => undefined,
+    });
+    await at(0);
+    calls[0]?.item(0);
+    calls[0]?.end();
+    await at(1);
+    expect(await outcome).toEqual({ ok: true, text: 'T:x' });
   });
 });

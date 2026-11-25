@@ -1,4 +1,5 @@
 import { type AppError, appError, isAppError } from '@/lib/errors';
+import { INLINE_TAG } from './echo';
 import { badResponseError, emptyTranslationError, outputTruncatedError } from './providers/errors';
 import type { BuiltPrompt, ProviderEvent } from './types';
 
@@ -265,10 +266,12 @@ export interface BatchScanner {
   /**
    * - `open`: still committing;
    * - `closed`: commits nothing more, what it committed stands;
+   * - `suspect`: closed by the length check: what it committed may be misplaced, so a
+   *   stream that then fails must not let it stand;
    * - `tainted`: what it committed may be a draft (a `</think>` outside strings, or
    *   content after the array).
    */
-  readonly state: 'open' | 'closed' | 'tainted';
+  readonly state: 'open' | 'closed' | 'suspect' | 'tainted';
   /**
    * Tainted by what may be a second answer: after the array, `[` then `{`, `{` then
    * `"` (whitespace between allowed), a `[` or `{` still open when the output
@@ -283,6 +286,39 @@ export interface BatchScanner {
 }
 
 const SPACE = /\s/;
+/** Han, kana, Hangul, or any other character but whitespace and zero-width ones. */
+const WEIGHTED = /(\p{sc=Han})|([\p{sc=Hira}\p{sc=Kana}])|(\p{sc=Hang})|[^\s\u200B-\u200D\u2060]/gu;
+
+/**
+ * Length weighted by script, so a translation and its source come out about equal in
+ * common language pairs: Han 3, kana 1.5, Hangul 2, everything else 1; inline tags,
+ * zero-width characters and whitespace do not count.
+ */
+export function weightedLength(text: string): number {
+  let weight = 0;
+  text.replace(INLINE_TAG, '').replace(WEIGHTED, (_, han, kana, hangul) => {
+    weight += han ? 3 : kana ? 1.5 : hangul ? 2 : 1;
+    return '';
+  });
+  return weight;
+}
+
+/** A pair this long (weighted, either side) must stay within this ratio either way. */
+const LENGTH_FLOOR = 30;
+const LENGTH_RATIO = 3;
+/**
+ * Only items this long (weighted, either side) take part in the relative rule: a short
+ * label's ratio ("FAQ" → "常见问题", "OK" → "确定") says nothing about misplacement. From
+ * this many of them on, the next must stay within this factor of their median ratio.
+ */
+const RATIO_FLOOR = 15;
+const RATIO_ITEMS = 3;
+const RATIO_SPREAD = 2;
+
+/** The upper median (the middle value; of two, the higher one). */
+function median(values: readonly number[]): number {
+  return [...values].sort((a, b) => a - b)[values.length >> 1] ?? 0;
+}
 
 function sameText(a: string, b: string): boolean {
   const normal = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -293,10 +329,14 @@ function sameText(a: string, b: string): boolean {
  * Reads a streamed `batch` answer and commits items as soon as they are complete,
  * as a strict prefix: only item `i` equal to the next expected index (below the
  * batch size) with a non-empty `t`. The first deviation, and the end of the
- * top-level array, close it. Items equal to their source are held until an item
- * that differs. Only an output that starts with the array (after whitespace, one
- * closed `<think>` block and one fence) is read; anything else is left to the
- * whole-output decode. Every character is looked at once (no rescans).
+ * top-level array, close it. So does a translation whose weighted length is far
+ * off its source's (see weightedLength): under a third or over three times it when
+ * either side reaches 30, or from the fourth item on, under half or over twice the
+ * median ratio of the items before it; the scanner is then `suspect`. Items equal to
+ * their source are held until an item that differs. Only an output that starts with
+ * the array (after whitespace, one closed `<think>` block and one fence) is read;
+ * anything else is left to the whole-output decode. Every character is looked at
+ * once (no rescans).
  */
 export function createBatchScanner(sources: readonly string[]): BatchScanner {
   let state: BatchScanner['state'] = 'open';
@@ -304,6 +344,8 @@ export function createBatchScanner(sources: readonly string[]): BatchScanner {
   let draft = false;
   const committed: string[] = [];
   const held: string[] = [];
+  /** Translation-to-source length ratios of the long items taken so far (held ones included). */
+  const ratios: number[] = [];
   /**
    * Lead-in before the array: whitespace (`space`, `gap` after a fence), the
    * `<think>` tag (`open`), its block (`think`), backticks (`fence`), `json` (`lang`).
@@ -404,6 +446,22 @@ export function createBatchScanner(sources: readonly string[]): BatchScanner {
     const t = isRecord(value) ? value.t : undefined;
     if (!isRecord(value) || value.i !== next || next >= sources.length) return close();
     if (typeof t !== 'string' || t.trim() === '') return close();
+    // Ids in order cannot show a merged or skipped item: a length far off can.
+    const source = weightedLength(sources[next] ?? '');
+    const target = weightedLength(t);
+    const ratio = (target || 1) / (source || 1);
+    const long = Math.max(source, target) >= RATIO_FLOOR;
+    const spread = long && ratios.length >= RATIO_ITEMS ? median(ratios) : 0;
+    if (
+      (Math.max(source, target) >= LENGTH_FLOOR &&
+        (ratio < 1 / LENGTH_RATIO || ratio > LENGTH_RATIO)) ||
+      ratio < spread / RATIO_SPREAD ||
+      (spread > 0 && ratio > spread * RATIO_SPREAD)
+    ) {
+      state = 'suspect';
+      return;
+    }
+    if (long) ratios.push(ratio);
     held.push(t);
     if (sameText(t, sources[next] ?? '')) return;
     for (const text of held) out.push({ index: committed.push(text) - 1, text });
@@ -489,14 +547,19 @@ export function createBatchScanner(sources: readonly string[]): BatchScanner {
   };
 }
 
+/** What the scanner committed may not stand once the output fails: a draft, or misplaced. */
+export function doubtful(scanner: BatchScanner | undefined): boolean {
+  return scanner?.state === 'tainted' || scanner?.state === 'suspect';
+}
+
 /**
  * Ends a streamed batch once the stream is over: yields the items the scanner did
- * not commit, from the whole-output decode. Throws `validation/bad-response` when
- * that decode disagrees with what was committed or the output carries a possible
- * second answer (both after yielding the rest), or when it fails on a tainted
- * output; `provider/output-truncated` when it fails inside an array that never
- * ended; otherwise the decode error. Only a run that ends without throwing has
- * been checked as a whole.
+ * not commit, from the whole-output decode. Throws `validation/bad-response`, yielding
+ * nothing more, when that decode disagrees with what was committed or the output
+ * carries a possible second answer (what was committed is revoked, the rest sent
+ * again in halves), or when it fails on a tainted or suspect output; `provider/output-truncated`
+ * when it fails inside an array that never ended; otherwise the decode error. Only a
+ * run that ends without throwing has been checked as a whole.
  */
 export function* finishBatch(
   scanner: BatchScanner,
@@ -507,20 +570,21 @@ export function* finishBatch(
   try {
     decoded = decodeLlmOutput(raw, count);
   } catch (error) {
-    if (scanner.state === 'tainted') throw badResponseError('Draft output');
+    // An array cut short after the length check closed the scanner is not a plain truncation.
+    if (doubtful(scanner)) throw badResponseError('Doubtful output');
     if (scanner.array === 'open') throw outputTruncatedError();
     throw error;
   }
   const { committed } = scanner;
-  for (let index = committed.length; index < count; index += 1) {
-    yield { type: 'item', index, text: decoded[index] ?? '' };
-  }
   if (committed.some((text, index) => text !== decoded[index])) {
     throw badResponseError('Streamed items differ from the output');
   }
   // A second answer after the array may be the one the decode skipped (it prefers a
   // fence and the first array): never trust it as checked.
   if (scanner.draft) throw badResponseError('Draft output');
+  for (let index = committed.length; index < count; index += 1) {
+    yield { type: 'item', index, text: decoded[index] ?? '' };
+  }
 }
 
 /** Greedy grouping by item and character limits; returns index groups in order. */
@@ -554,7 +618,14 @@ export function splitInHalf<T>(items: readonly T[]): [T[], T[]] | undefined {
   return [items.slice(0, middle), items.slice(middle)];
 }
 
-export type ItemOutcome = { ok: true; text: string } | { ok: false; error: AppError };
+/**
+ * `verdict`: set on LLM page items delivered before their batch was checked as a whole;
+ * resolves once that attempt ends, to `false` when the batch failed its check and the
+ * translation must be taken back.
+ */
+export type ItemOutcome =
+  | { ok: true; text: string; verdict?: Promise<boolean> }
+  | { ok: false; error: AppError };
 
 const SPLITTABLE: ReadonlySet<string> = new Set([
   'validation/bad-response',

@@ -12,7 +12,7 @@ export const ECHO_MIN_LETTERS = 20;
 export const ECHO_MIN_LOWERCASE_WORDS = 2;
 
 /** Inline tags of page segments (<t0>, </t0>, <t1/>; prefixes are one or two letters). */
-const INLINE_TAG = /<\s*\/?\s*[a-z]{1,2}\d+\s*\/?\s*>/gi;
+export const INLINE_TAG = /<\s*\/?\s*[a-z]{1,2}\d+\s*\/?\s*>/gi;
 const ZERO_WIDTH = /[\u200B-\u200D\u2060\uFEFF]/g;
 const URL_LIKE = /\b(?:https?:\/\/|www\.)\S+|\S+@\S+\.\S+/gi;
 /** Sentence ends: ASCII ones need whitespace after them, full-width ones do not. */

@@ -194,16 +194,21 @@ describe('openai-compat adapter: items as they complete', () => {
     expect(await iterator.next()).toEqual({ done: true, value: undefined });
   });
 
-  it('fills in the rest from the whole output, then fails with bad-response, when they differ', async () => {
+  it('fails with bad-response, yielding nothing more, when the whole output differs', async () => {
     const raw =
       '[{"i":0,"t":"草稿"},{"i":1,"t":"b"}]</think>[{"i":0,"t":"终稿"},{"i":1,"t":"乙"},{"i":2,"t":"丙"}]';
     const result = await runBatch(mockFetch(sseResponse([delta(raw), 'data: [DONE]\n\n'])));
-    expect(result.events).toEqual([item(0, '草稿'), item(1, '乙'), item(2, '丙')]);
+    expect(result.events).toEqual([item(0, '草稿')]);
     expect(result.error).toEqual(code('validation/bad-response'));
   });
 
   const CLEAN = [delta('[{"i":0,"t":"甲"},'), delta('{"i":1,"t":"乙"},{"i":2,"t":"丙')];
   const TAINTED = [delta('[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]'), delta('</think>[{"i":0,"t":"甲')];
+  // Item 1 is far longer than its source: the length check closes the scanner.
+  const SUSPECT = [
+    delta('[{"i":0,"t":"甲"},'),
+    delta('{"i":1,"t":"乙乙乙乙乙乙乙乙乙乙乙"},{"i":2,"t":"丙'),
+  ];
   const ENDINGS: [string, (chunks: string[]) => Response, object, string][] = [
     [
       'finish_reason length',
@@ -240,6 +245,21 @@ describe('openai-compat adapter: items as they complete', () => {
     expect(result.events).toEqual([item(0, '甲'), item(1, '乙')]);
     expect(result.error).toEqual(code('validation/bad-response'));
   });
+
+  it('fails a suspect output whose array never closes but whose stream ends normally with bad-response', async () => {
+    const result = await runBatch(mockFetch(sseResponse([...SUSPECT, 'data: [DONE]\n\n'])));
+    expect(result.events).toEqual([item(0, '甲')]);
+    expect(result.error).toEqual(code('validation/bad-response'));
+  });
+
+  it.each(ENDINGS)(
+    'turns %s after the length check closed the scanner into bad-response',
+    async (_name, reply, ctx) => {
+      const result = await runBatch(mockFetch(reply(SUSPECT)), ctx);
+      expect(result.events).toEqual([item(0, '甲')]);
+      expect(result.error).toEqual(code('validation/bad-response'));
+    },
+  );
 
   it('reports an array that never closes as output-truncated, a short one as bad-response', async () => {
     const open = await runBatch(mockFetch(sseResponse([...CLEAN, 'data: [DONE]\n\n'])));

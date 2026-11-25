@@ -180,7 +180,8 @@ interface Pending {
  * Port `et-translate` handler logic: preprocess, same-language skip (unless
  * `force`), cache lookup, then one scheduler submission; emits one final chunk
  * per item (preceded by reset / delta chunks for a `stream` request that reaches
- * the provider) and resolves with `{ total, failed }`. Results reach the cache through the scheduler, so
+ * the provider, followed by a `revoked` chunk when an AI batch takes back what it
+ * delivered early) and resolves with `{ total, failed }`. Results reach the cache through the scheduler, so
  * they are stored even when this caller has gone away.
  */
 export function createTranslateService(deps: TranslateServiceDeps): TranslateService {
@@ -355,6 +356,10 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
             },
           }
         : {};
+      // A verdict still pending when the request is cancelled or the port goes no longer matters.
+      const left = new Promise<boolean>((resolve) => {
+        signal.addEventListener('abort', () => resolve(true), { once: true });
+      });
       const outcomes = scheduler.submit({
         caller,
         signal,
@@ -372,12 +377,17 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
           const item = misses[index];
           if (!item) return;
           if (outcome.ok) {
-            emit({
-              id: item.id,
-              text: outcome.text,
-              disposition: classifyTranslation(item.text, outcome.text),
-              cached: false,
-            });
+            const disposition = classifyTranslation(item.text, outcome.text);
+            emit({ id: item.id, text: outcome.text, disposition, cached: false });
+            // Delivered before its AI batch was checked: the item ends only once the batch
+            // has, so a revocation always comes before `done`.
+            if (
+              outcome.verdict &&
+              disposition === 'translated' &&
+              !(await Promise.race([outcome.verdict, left]))
+            ) {
+              emit({ id: item.id, revoked: outcome.text });
+            }
           } else {
             emit({ id: item.id, error: outcome.error });
           }

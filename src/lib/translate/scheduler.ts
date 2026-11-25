@@ -64,6 +64,8 @@ export const SCHEDULER_STREAM = {
 export const MAX_RETRIES = 1;
 export const RETRY_BASE_MS = 1000;
 export const RETRY_JITTER = 0.1;
+/** The "revoked just now" set is emptied when a key would go past this many. */
+export const REVOKED_LIMIT = 500;
 /** Cooldown after a 429 without `retry-after`. */
 export const DEFAULT_COOLDOWN_MS = 2000;
 /** Defensive ceiling for any cooldown, whatever the error says. */
@@ -297,7 +299,8 @@ function createAttemptFetch(
  * - segment-level dedupe by cache key, subscriptions counted per segment;
  * - page jobs: each item is delivered (and leaves the job) as soon as it arrives;
  *   retries, splits and the deadline apply to what is left; only a successful
- *   attempt is cached;
+ *   attempt is cached; LLM items carry a verdict, `false` when their batch of more
+ *   than one ends with bad-response; a revoked segment runs alone, first, next time;
  * - streams: reset before every attempt, increments coalesced, output capped.
  */
 export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
@@ -318,6 +321,8 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
   let wakeTimer: ReturnType<typeof setTimeout> | undefined;
   let pumping = false;
   let pumpAgain = false;
+  /** Keys of segments revoked just now: their next submission runs alone, first. */
+  const revoked = new Set<string>();
 
   function cooldownState(key: string): CooldownState {
     let state = cooldowns.get(key);
@@ -594,8 +599,17 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
     const texts = members.map((segment) => segment.text);
     /** Translations this attempt delivered, cached together when it ends. */
     const pairs: Pair[] = [];
+    /** LLM page items delivered early, and whether they stand: decided when the attempt ends. */
+    const early: Segment[] = [];
+    let decide: (keep: boolean) => void = () => undefined;
+    const verdict =
+      adapter.kind === 'llm'
+        ? new Promise<boolean>((resolve) => {
+            decide = resolve;
+          })
+        : undefined;
 
-    let result: Result<undefined>;
+    let result: Result<undefined> | undefined;
     try {
       const events = adapter.translate(texts, {
         ...context,
@@ -620,13 +634,32 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
           if (job.state !== 'running') continue;
           pairs.push({ segment, text: event.text });
           job.segments = job.segments.filter((member) => member !== segment);
-          resolveSegment(segment, outcomeOf(event.text));
+          const outcome = outcomeOf(event.text);
+          if (verdict && outcome.ok) {
+            outcome.verdict = verdict;
+            early.push(segment);
+          }
+          resolveSegment(segment, outcome);
         }
         if (seen.size < members.length) throw badResponseError('Item count mismatch');
       }
       result = { ok: true, data: undefined };
     } catch (error) {
       result = { ok: false, error: toAppError(error) };
+    } finally {
+      // Decided first, however the attempt ended. A batch of one cannot misplace its item:
+      // it is never revoked, so asking again (alone) always ends.
+      const revoke =
+        result?.ok === false &&
+        result.error.code === 'validation/bad-response' &&
+        members.length > 1;
+      if (revoke) {
+        for (const { key } of early) {
+          if (revoked.size >= REVOKED_LIMIT) revoked.clear();
+          revoked.add(key);
+        }
+      }
+      decide(!revoke);
     }
     stream?.close(result.ok);
 
@@ -795,20 +828,26 @@ export function createScheduler(deps: SchedulerDeps = {}): Scheduler {
       subscriptions.push({ segment, subscriber, outcome });
     }
 
-    // Interactive segments run alone and go to the front, keeping their order.
-    const groups = interactive
-      ? fresh.map((_, index) => [index]).reverse()
-      : chunkByLimits(
-          fresh.map((segment) => segment.text),
-          adapter.limits,
-        );
-    for (const group of groups) {
-      const members = group.flatMap((index) => {
-        const segment = fresh[index];
-        return segment ? [segment] : [];
-      });
-      enqueue(createJob(task, members), interactive);
+    // Interactive segments, and those revoked just now (a batch could misplace them
+    // again), run alone and go to the front, keeping their order.
+    const alone: Segment[] = [];
+    const rest: Segment[] = [];
+    for (const segment of fresh) {
+      (interactive || revoked.delete(segment.key) ? alone : rest).push(segment);
     }
+    for (const group of chunkByLimits(
+      rest.map((segment) => segment.text),
+      adapter.limits,
+    )) {
+      enqueue(
+        createJob(
+          task,
+          group.flatMap((index) => rest[index] ?? []),
+        ),
+        false,
+      );
+    }
+    for (const segment of alone.reverse()) enqueue(createJob(task, [segment]), true);
 
     const onAbort = () => {
       const error = abortedError();
