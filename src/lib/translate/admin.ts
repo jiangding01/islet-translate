@@ -62,18 +62,19 @@ export function isOptionsSender(sender: AdminSender | undefined, optionsUrl: str
 
 function parseDraft(raw: unknown): ProviderTestDraft {
   if (!isRecord(raw)) throw invalidPayload();
-  const { engine, baseURL, model, apiKey } = raw;
+  const { engine, baseURL, model, apiKey, thinking } = raw;
   if (
     !isEngineId(engine) ||
     typeof baseURL !== 'string' ||
     baseURL.length > CUSTOM_PROVIDER_LIMITS.baseURL ||
     typeof model !== 'string' ||
     model.length > CUSTOM_PROVIDER_LIMITS.model ||
-    (apiKey !== undefined && typeof apiKey !== 'string')
+    (apiKey !== undefined && typeof apiKey !== 'string') ||
+    (thinking !== undefined && typeof thinking !== 'boolean')
   ) {
     throw invalidPayload();
   }
-  return { engine, baseURL, model, apiKey };
+  return { engine, baseURL, model, apiKey, thinking };
 }
 
 export function createAdminHandlers(deps: AdminDeps) {
@@ -99,7 +100,11 @@ export function createAdminHandlers(deps: AdminDeps) {
       throw appError('config', 'config/model-required', 'Model is required');
     }
     // Only the draft's own fields are used: nothing is read from or written to the config.
-    const settings = settingsFor(engine, { baseURL: draft.baseURL, model });
+    const settings = settingsFor(engine, {
+      baseURL: draft.baseURL,
+      model,
+      thinking: draft.thinking,
+    });
     const permission = await checkPermission(engine, settings.baseURL);
     if (!permission.ok) throw permission.error;
 

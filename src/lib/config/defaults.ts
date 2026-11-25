@@ -12,7 +12,7 @@ export function createDefaultConfig(uiLanguage: string): ConfigV1 {
     selection: { showDot: true },
     providers: {
       openai: { baseURL: DEFAULT_OPENAI_BASE_URL, model: 'gpt-5-mini' },
-      deepseek: { model: 'deepseek-chat' },
+      deepseek: { model: 'deepseek-chat', thinking: false },
       gemini: { model: '' },
     },
     customProviders: {},

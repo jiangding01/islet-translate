@@ -17,12 +17,39 @@ describe('engine fields', () => {
       baseURL: 'https://api.openai.com/v1',
       model: 'gpt-5-mini',
     });
-    expect(engineFields(config, 'deepseek')).toEqual({ baseURL: '', model: 'deepseek-chat' });
+    expect(engineFields(config, 'deepseek')).toEqual({
+      baseURL: '',
+      model: 'deepseek-chat',
+      thinking: false,
+    });
+    expect(engineFields(config, 'gemini')).toEqual({ baseURL: '', model: '' });
     expect(engineFields(config, 'custom-aaaaaaaa')).toEqual({
       baseURL: 'http://localhost:11434/v1',
       model: 'q',
     });
     expect(engineFields(config, 'custom-zzzzzzzz')).toBeUndefined();
+  });
+
+  it('gives only DeepSeek a thinking switch', () => {
+    const engines = [...BUILTIN_ENGINES, 'custom-aaaaaaaa'] as const;
+    expect(
+      engines.filter((engine) => engineFields(config, engine)?.thinking !== undefined),
+    ).toEqual(['deepseek']);
+  });
+
+  it('reads DeepSeek thinking as on only when it is exactly true', () => {
+    const deepseek = (thinking: unknown) =>
+      engineFields(
+        {
+          ...config,
+          providers: { ...config.providers, deepseek: { model: 'd', thinking } },
+        } as never,
+        'deepseek',
+      )?.thinking;
+    expect(deepseek(true)).toBe(true);
+    expect(deepseek(false)).toBe(false);
+    expect(deepseek(undefined)).toBe(false);
+    expect(deepseek('yes')).toBe(false);
   });
 
   it('writes each field to its own path, and updates custom providers field by field', () => {

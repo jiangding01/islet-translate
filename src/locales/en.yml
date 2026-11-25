@@ -239,6 +239,10 @@ options:
     model: Model
     modelPlaceholder: Enter a model ID
     modelPlaceholderGemini: Enter a model ID, such as a flash model from the official list
+    thinking: Thinking mode
+    thinkingHint: When on, the model reasons before it translates. Translations may be more accurate, but are noticeably slower and use more tokens.
+    thinkingOn: "On"
+    thinkingOff: "Off"
     access: Access
     # $1: the API URL's host name (the code splits the text around it and puts the host node between).
     grantNeeded: The extension needs access to $1

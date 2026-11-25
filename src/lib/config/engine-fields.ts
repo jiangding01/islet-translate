@@ -13,6 +13,8 @@ export interface EngineFields {
   /** Raw, unnormalized; '' for engines with a fixed endpoint. */
   baseURL: string;
   model: string;
+  /** DeepSeek only: thinking mode (`providers.deepseek.thinking`); absent for other engines. */
+  thinking?: boolean;
 }
 
 /** Configured fields of an engine; undefined for a custom provider that does not exist. */
@@ -26,7 +28,11 @@ export function engineFields(
     case 'openai':
       return { baseURL: config.providers.openai.baseURL, model: config.providers.openai.model };
     case 'deepseek':
-      return { baseURL: '', model: config.providers.deepseek.model };
+      return {
+        baseURL: '',
+        model: config.providers.deepseek.model,
+        thinking: config.providers.deepseek.thinking === true,
+      };
     case 'gemini':
       return { baseURL: '', model: config.providers.gemini.model };
     default: {
@@ -51,7 +57,7 @@ export function takesApiKey(engine: Engine): engine is Exclude<Engine, 'google'>
 /** The change that stores one field of an engine; undefined when the engine has no such field. */
 export function fieldChange(
   engine: Engine,
-  field: keyof EngineFields,
+  field: 'baseURL' | 'model',
   value: string,
 ): ConfigChange | undefined {
   if (isCustomProviderId(engine)) {

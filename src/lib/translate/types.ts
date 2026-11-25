@@ -26,6 +26,8 @@ export interface BuiltPrompt {
 export interface ProviderSettings {
   baseURL: string;
   model: string;
+  /** Extra request body fields (OpenAI-compatible only); never override the request itself. */
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ProviderContext {

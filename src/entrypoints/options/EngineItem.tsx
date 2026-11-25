@@ -51,6 +51,11 @@ interface Props {
 
 type TextField = 'name' | 'baseURL' | 'model';
 
+const THINKING_OPTIONS = [
+  { value: true, label: 'options.engine.thinkingOn' },
+  { value: false, label: 'options.engine.thinkingOff' },
+] as const;
+
 /** A private-use character stands in for the node that goes mid-sentence (the host name). */
 export const SPLIT_MARK = '\uE000';
 
@@ -180,7 +185,7 @@ export function EngineItem(props: Props) {
     ? i18n.t(TEST_BLOCKED_TEXT[testReadiness.reason])
     : undefined;
   // Key saves are not part of it: a key saved mid-test must not discard that result.
-  const testedWith = `${draft.baseURL.trim()}\n${draft.model.trim()}`;
+  const testedWith = `${draft.baseURL.trim()}\n${draft.model.trim()}\n${fields?.thinking ?? ''}`;
 
   const sub = rowSubtitle(engine, saved);
   const [grantBefore, grantAfter] = splitAround(i18n.t('options.engine.grantNeeded', [SPLIT_MARK]));
@@ -394,6 +399,10 @@ export function EngineItem(props: Props) {
               </label>
             )}
 
+            {fields?.thinking !== undefined && (
+              <ThinkingRow thinking={fields.thinking} change={apply} />
+            )}
+
             {pattern && granted === false && (
               <div className={styles.field}>
                 <span className={styles.label}>{i18n.t('options.engine.access')}</span>
@@ -421,6 +430,7 @@ export function EngineItem(props: Props) {
                     baseURL: draft.baseURL,
                     model: draft.model.trim(),
                     apiKey: keyDraft.trim() || undefined,
+                    thinking: fields?.thinking,
                   })
                 }
               />
@@ -470,6 +480,53 @@ export function EngineItem(props: Props) {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** DeepSeek's thinking mode (`providers.deepseek.thinking`), with what turning it on costs. */
+export function ThinkingRow({
+  thinking,
+  change,
+}: {
+  thinking: boolean;
+  change: (next: ConfigChange) => unknown;
+}) {
+  const id = useId();
+  return (
+    <div className={styles.field}>
+      <span id={`${id}-label`} className={styles.label}>
+        {i18n.t('options.engine.thinking')}
+      </span>
+      <div className={styles.fieldStack}>
+        <div className={styles.inline}>
+          <fieldset
+            aria-labelledby={`${id}-label`}
+            aria-describedby={`${id}-hint`}
+            className={styles.segmented}
+            style={{ '--index': thinking ? 0 : 1 } as React.CSSProperties}
+          >
+            <span aria-hidden="true" className={styles.segmentThumb} />
+            {THINKING_OPTIONS.map((item) => (
+              <label key={item.label} className={styles.segment} data-label={i18n.t(item.label)}>
+                <input
+                  type="radio"
+                  name={`${id}-thinking`}
+                  className={styles.radioInput}
+                  checked={thinking === item.value}
+                  onChange={() =>
+                    void change({ path: 'providers.deepseek.thinking', value: item.value })
+                  }
+                />
+                {i18n.t(item.label)}
+              </label>
+            ))}
+          </fieldset>
+        </div>
+        <span id={`${id}-hint`} className={styles.hint}>
+          {i18n.t('options.engine.thinkingHint')}
+        </span>
       </div>
     </div>
   );

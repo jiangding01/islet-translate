@@ -232,6 +232,10 @@ options:
     model: 模型
     modelPlaceholder: 填写模型 ID
     modelPlaceholderGemini: 填写模型 ID，例如官方列表中的 flash 型号
+    thinking: 思考模式
+    thinkingHint: 开启后模型会先推理再翻译，译文可能更准确，但明显更慢，也更费 token。
+    thinkingOn: 开
+    thinkingOff: 关
     access: 访问权限
     # $1：接口地址的主机名（代码里拆成前后两段，中间放主机名节点）。
     grantNeeded: 需要允许扩展访问 $1

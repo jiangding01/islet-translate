@@ -232,6 +232,10 @@ options:
     model: 模型
     modelPlaceholder: 填寫模型 ID
     modelPlaceholderGemini: 填寫模型 ID，例如官方清單中的 flash 型號
+    thinking: 思考模式
+    thinkingHint: 開啟後模型會先推理再翻譯，譯文可能更準確，但明顯更慢，也更耗費 token。
+    thinkingOn: 開
+    thinkingOff: 關
     access: 存取權限
     # $1：API 網址的主機名稱（程式碼裡拆成前後兩段，中間放主機名稱節點）。
     grantNeeded: 需要允許擴充功能存取 $1

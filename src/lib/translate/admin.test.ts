@@ -311,9 +311,27 @@ describe('provider.test', () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
+  it('tests DeepSeek with thinking as the draft sets it, off when not given', async () => {
+    const { handlers, contexts } = setup();
+    const deepseek = { engine: 'deepseek', baseURL: '', model: 'deepseek-chat' };
+    await handlers['provider.test'](options, draft({ ...deepseek, thinking: false }));
+    await handlers['provider.test'](options, draft({ ...deepseek, thinking: true }));
+    await handlers['provider.test'](options, draft(deepseek));
+    expect(contexts.map((ctx) => ctx.settings.extraBody)).toEqual([
+      { thinking: { type: 'disabled' } },
+      undefined,
+      { thinking: { type: 'disabled' } },
+    ]);
+  });
+
   it('rejects a malformed draft', async () => {
     const { handlers } = setup();
-    for (const bad of [null, { engine: 'nope', baseURL: '', model: '' }, draft({ model: 1 })]) {
+    for (const bad of [
+      null,
+      { engine: 'nope', baseURL: '', model: '' },
+      draft({ model: 1 }),
+      draft({ thinking: 'yes' }),
+    ]) {
       expect(await handlers['provider.test'](options, bad)).toMatchObject({
         ok: false,
         error: { code: 'validation/invalid-payload' },
