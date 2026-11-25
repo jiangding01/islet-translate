@@ -1,13 +1,13 @@
-<!-- handoff: head=161cc58 branch=fix/deepseek-no-thinking updated=2026-11-25T14:00:00+08:00 by=claude-opus-5-5 -->
+<!-- handoff: head=1d3f10c branch=chore/release-v0.6.0 updated=2026-11-25T15:00:00+08:00 by=claude-opus-5-5 -->
 # HANDOFF：译屿 / Islet Translate
 
 > 本文给接手的 Agent 或开发者用，按顺序读完即可开工。与其他文档冲突时，以本文和第 2 节「文档地位」表中的权威文档为准。本文只写现状，不写流水账：进度写进 `CHANGELOG.md` 和 [`docs/history.md`](docs/history.md)。
 
 ## 0. TL;DR
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
-- 停在哪：**v0.5.0 已发布**（发版 PR #82，M3c 收尾）；M0–M3c、i18n、冒烟 e2e 全部完成；**M3c 已完成**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（#77）、PR4「翻译一个区域」（#78）、PR5「不翻译一个区域」（#79）已合入 `main`，M3c 六个 PR 全部完成（实施记录见方案「PR1 实施记录」至「PR5 实施记录」）。
+- 停在哪：**v0.6.0 已发布**（发版 PR #待补，体验债小批必做项收尾：AI 逐段显示 #83、撤回重译 #87、DeepSeek 默认关闭思考 #88）；v0.5.0（#82）为 M3c 收尾；M0–M3c、i18n、冒烟 e2e 全部完成；**M3c 已完成**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（#77）、PR4「翻译一个区域」（#78）、PR5「不翻译一个区域」（#79）已合入 `main`，M3c 六个 PR 全部完成（实施记录见方案「PR1 实施记录」至「PR5 实施记录」）。
 - Gemini 架构审查已核实并裁决（`docs/reviews/2026-11-24-gemini-review-verification.md`，执行清单在第 6 节、用户决定在第 7 节）：唯一的 P2 真 bug「LLM 思维链（`<think>`）未剥离」已修（#75）；渲染三项小修（等帧空窗守卫、重扫不再重新分段、首屏不等防抖）在 #76 完成。
-- 下一步：**发 v0.6.0**（AI 逐段显示 #83、撤回重译 #87、DeepSeek 默认关闭思考与开关 #88、依赖升级；PR① 真机验收已通过，2026-11-25 用户用 deepseek-flash 实测逐段出现）。之后：OpenAI、Gemini 的「不思考或最低思考」规则与自定义服务的「额外请求参数（JSON）」放到 M4 `TranslateOptions` 一起做（用户 2026-11-25 同意分层方案）。PR②「长度对照拦截 + 撤回重译」（#87，方案 `docs/plans/llm-batch-revoke.md`）随本文提交：整批校验失败时页面撤下提前显示的段并单段重译，残余风险见 `docs/known-issues.md`。体积：palette-runtime 已用 17.80 / 18 KB，只剩约 0.2 KB，往指令台加东西前要先评估。M3c 六个 PR 的真机验收已全部通过（2026-11-24；PR1/PR2 的补丁为 #72，PR6 验收发现的「指令台开着时切换停靠位置错位」由 #80 修复）。未验证：Windows/Linux 上 Alt+Shift+K 与 accesskey 冲突。
+- 下一步：**由用户选择：体验债小批可选项（Shadow DOM 测量、浮层协调器、边扫边注册）或直接进入 M3e Chrome 内置本地引擎**（见第 4 节）。AI 逐段显示与 DeepSeek 思考开关已于 2026-11-25 真机验收通过。后续规划：OpenAI、Gemini 的「不思考或最低思考」规则与自定义服务的「额外请求参数（JSON）」放到 M4 `TranslateOptions` 一起做（用户 2026-11-25 同意分层方案）。PR②「长度对照拦截 + 撤回重译」（#87，方案 `docs/plans/llm-batch-revoke.md`）随本文提交：整批校验失败时页面撤下提前显示的段并单段重译，残余风险见 `docs/known-issues.md`。体积：palette-runtime 已用 17.80 / 18 KB，只剩约 0.2 KB，往指令台加东西前要先评估。M3c 六个 PR 的真机验收已全部通过（2026-11-24；PR1/PR2 的补丁为 #72，PR6 验收发现的「指令台开着时切换停靠位置错位」由 #80 修复）。未验证：Windows/Linux 上 Alt+Shift+K 与 accesskey 冲突。
 
 ## 1. 目标与范围
 - 目标：做近乎原生、少打扰的沉浸式双语阅读（界面方向「隐中生岛」+ 琥珀主题，见 `docs/plans/ui-isle-direction.md`）；差异化针对竞品痛点：免费额度不透明与订阅弹窗打扰、大页面卡顿、排版错乱与悬停结果消失、429 只能手动换引擎、每页默认浮球。**从 M2 起每个批次的方案都要有「差异化」一节**。
@@ -15,12 +15,12 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main`（已合入 M3c 全部 PR #70–#79、验收补丁 #80、设置页入口 #81、发版 #82、小批 PR① #83、PR② #87、依赖升级 #84–#86；v0.5.0 已发布）；本文随 DeepSeek 思考模式开关修改。
+- 分支 / HEAD：`main`（已合入 M3c 全部 PR #70–#79、验收补丁 #80、设置页入口 #81、发版 #82、小批 PR① #83、PR② #87、依赖升级 #84–#86、DeepSeek 思考开关 #88；v0.5.0 已发布）；本文随发版 v0.6.0 修改。
 - 未提交改动：无。
 - 验证状态：截至 DeepSeek 思考模式开关 `npm run check` 通过，单测 2356 个（91 个文件），e2e 81 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
 - 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.66 / 7.75（余 0.09，**改引导层或常驻监听前必须先评估**）、page-runtime 27.14 / 28（余约 0.86）、selection-runtime 18.20 / 19、palette-runtime 17.80 / 18（用户 2026-11-24 批准由 15 提到 18 KB，随 PR4 生效；余约 0.2）、background 59.49 / 60（PR① +1.07、PR② +0.48、思考开关 +0.09；余约 0.5，M3e 新增 provider 前大概率要单独报批）、popup 83.28 / 90、options 89.88 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
-- 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68）、v0.5.0（#82），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
-- 路线图：**M3c 已完成并随 v0.5.0 发布（方案 `docs/plans/m3c.md`）→ 体验债小批（不新开里程碑编号）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**。小批（用户 2026-11-24 同意，见核实文档第 6、7 节）：必做「LLM 批量逐段提交 + 增量解析」（M3e 硬前置，先用 think 写方案过审，两条硬约束：顺序前缀规则、缓存延后写）；可选 Shadow DOM 测量 spike、浮层协调器重构（PR5 合并后）、边扫边注册。批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
+- 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68）、v0.5.0（#82）、v0.6.0（#待补），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
+- 路线图：**M3c 已完成并随 v0.5.0 发布（方案 `docs/plans/m3c.md`）→ 体验债小批必做项已随 v0.6.0 发布（可选项待定）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**。小批（用户 2026-11-24 同意，见核实文档第 6、7 节）：必做「LLM 批量逐段提交 + 增量解析」（M3e 硬前置，先用 think 写方案过审，两条硬约束：顺序前缀规则、缓存延后写）；可选 Shadow DOM 测量 spike、浮层协调器重构（PR5 合并后）、边扫边注册。批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
 
 ## 3. 已定决策
 - 优先级：先做完整翻译能力（M0–M6），可选打磨放 M7，账户放 M8 —— 用户 2026-11-13 拍板。

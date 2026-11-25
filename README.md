@@ -48,7 +48,7 @@ Islet Translate is at version `0.1.0`. M0 (foundation), M1 (translation core), M
 
 | Feature | What it does | Preview |
 | --- | --- | --- |
-| Whole-page translation | Translations appear below the original text and keep the page's own font. The visible paragraphs are translated first, and the rest follows as you read down.<br>Switch between **Bilingual** and **Translation only**, retry paragraphs that were not translated, or choose **Show original** to restore the page.<br>Turn on **Always translate this site** to translate a site on every visit. Inline formatting such as links is kept.<br>A paragraph that waits more than about 0.6 seconds for its translation shows a small dot at its end. Text fields and `translate="no"` areas are never translated, including content added later.<br>A paragraph that is too long to translate (over 5000 characters) is marked in place, and the panel shows how many. | <img src="docs/assets/readme/en-page-isle.png" width="240" alt="A Chinese article translated into English"> |
+| Whole-page translation | Translations appear below the original text and keep the page's own font. The visible paragraphs are translated first, and the rest follows as you read down.<br>Switch between **Bilingual** and **Translation only**, retry paragraphs that were not translated, or choose **Show original** to restore the page.<br>Turn on **Always translate this site** to translate a site on every visit. Inline formatting such as links is kept.<br>With an AI engine, each paragraph shows as soon as the model has written it; if a batch turns out misaligned, the paragraphs already shown are taken down and translated again. A paragraph that waits more than about 0.6 seconds for its translation shows a small dot at its end. Text fields and `translate="no"` areas are never translated, including content added later.<br>A paragraph that is too long to translate (over 5000 characters) is marked in place, and the panel shows how many. | <img src="docs/assets/readme/en-page-isle.png" width="240" alt="A Chinese article translated into English"> |
 | Control bar | While a page is being translated, a small bar docks to the edge of the page.<br>It switches the display mode, retries paragraphs that were not translated, and changes the engine for this page only; the ⌘ button at its end opens the command palette.<br>It can dock on the right, on the left or at the bottom. | <img src="docs/assets/readme/en-isle.png" width="240" alt="The control bar docked on the right"> |
 | Translate one paragraph | You do not need to translate the whole page. Rest the pointer on a paragraph and hold Ctrl (⌃ on macOS) for about 0.6 seconds to translate just that paragraph. Hold again to restore it. In Settings you can switch the key to Alt (⌥ Option on macOS) or turn the gesture off.<br>The control bar stays hidden and the panel still offers **Translate this page**. Starting a whole-page translation later keeps the paragraphs you already translated.<br>During a whole-page translation the same gesture restores a translated paragraph and excludes it, or translates one that has not been reached yet. | <sub>Coming soon</sub> |
 | Selection card and phonetics | Select foreign text and an amber dot appears at the end of the selection. Click it, or pause on it, and the card opens. The right-click menu and a keyboard shortcut work too.<br>AI engines stream the translation as it is written. The card can switch engine, collapse the original, copy the translation, read the text aloud, and be pinned and dragged.<br>A single English word shows **UK** and **US** phonetics from offline word lists (about 175,000 and 117,000 words). Click one to hear it in that accent. | <img src="docs/assets/readme/en-card.png" width="240" alt="The selection card"> |
@@ -68,7 +68,7 @@ Islet Translate is not in a web store yet. There are three ways to install it.
 
 **From a GitHub Release**
 
-1. Open the [Releases](https://github.com/jiangding01/islet-translate/releases) page and download `Islet-Translate-v<version>-chrome.zip` (for example `Islet-Translate-v0.5.0-chrome.zip`) from the latest release.
+1. Open the [Releases](https://github.com/jiangding01/islet-translate/releases) page and download `Islet-Translate-v<version>-chrome.zip` (for example `Islet-Translate-v0.6.0-chrome.zip`) from the latest release.
 2. Unzip it, open `chrome://extensions`, turn on Developer mode, and choose **Load unpacked**, then select the unzipped folder.
 3. Optional: each release also has a `.sha256` file. Run `sha256sum -c Islet-Translate-v<version>-chrome.zip.sha256` next to the zip (on macOS, `shasum -a 256 -c`) to check the download.
 
@@ -106,7 +106,7 @@ Change them at `chrome://extensions/shortcuts`.
 | --- | --- |
 | Google Translate | Free, no setup. The default. |
 | OpenAI | Your own API key |
-| DeepSeek | Your own API key |
+| DeepSeek | Your own API key. Thinking mode is off by default for translation (faster, cheaper); turn it on in Settings |
 | Gemini | Your own API key and a model ID |
 | Custom | Any OpenAI-compatible API, with presets for Ollama, LM Studio, OpenRouter and SiliconFlow |
 
@@ -359,7 +359,9 @@ Unit tests sit next to the source they cover and are named `*.test.ts`.
 | ✅ Done | v0.4.0 as a GitHub Release |
 | ✅ Done | M3c command palette and keyboard control of the control bar |
 | ✅ Done | v0.5.0 as a GitHub Release |
-| Next | A small batch of polish: AI batch translations shown paragraph by paragraph, and more |
+| ✅ Done | A small batch of polish: AI batch translations shown paragraph by paragraph, with misaligned ones taken back |
+| ✅ Done | v0.6.0 as a GitHub Release |
+| Next | Optional polish items, or M3e Chrome's built-in local engine |
 | Later | M3e Chrome's built-in local engine |
 | Later | M4 expert styles, glossary, input translation, multi-engine comparison on the card |
 | Later | M5 YouTube subtitles, article refinement, vocabulary list, bilingual export |

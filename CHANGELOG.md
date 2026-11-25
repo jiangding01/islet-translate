@@ -6,12 +6,22 @@
 
 ## [未发布]
 
+## [0.6.0] - 2026-11-25
+
+### 本版要点
+- AI 翻译整页时一段一段出现：用 OpenAI 兼容服务、DeepSeek 或 Gemini 整页翻译，模型每写完一段就先显示这一段，不再等一整批译完。
+- 译文错位会自动纠正：模型偶尔合并或漏掉一段时，已显示的错位译文会被撤下并重新翻译；只有整批校验通过的译文才写进缓存。
+- DeepSeek 翻译更快更省：默认关闭思考模式，需要时可在设置 → 翻译服务 → DeepSeek 打开「思考模式」。
+
 ### 变更
 - AI 翻译（OpenAI 兼容服务、Gemini）整页翻译时，模型每写完一段译文就立即显示在页面上，不再等一批（最多 20 段）全部生成完，首屏译文出现得更早。模型输出正常时译文与以前相同，提示词和缓存键不变，已有缓存继续可用；只有整批校验通过的请求才写缓存：模型输出编号错乱、先写一份草稿再给出另一份答案，或请求被截断、中断、超时、取消时，这一批一条都不写，没出结果的段落重新请求。提前显示的译文错位时会自动撤回并重新翻译，见下方「修复」。方案与实施记录见 `docs/plans/llm-batch-incremental.md`（#83）。
 - 用 DeepSeek 翻译时默认关闭模型的思考模式（DeepSeek 官方 API 默认开启、且为高强度思考），请求里带上 `thinking: {"type": "disabled"}`，翻译明显更快、也更省 token。设置页「翻译服务」里 DeepSeek 的详情新增「思考模式」开关（默认关），需要更准确的译文时可以打开，测试连接也按这个开关发请求。旧配置读入时自动补上默认值（关），无需迁移；OpenAI、Gemini、Google 和自定义服务的请求不变，缓存键不变（#88）。
 
 ### 修复
 - AI 翻译（OpenAI 兼容服务、Gemini）整页翻译时，模型漏掉或合并了一段、导致提前显示的译文错位到别的段落下面时，页面会自动撤下这一批已显示的译文（同一句话在页面别处显示的同一份错译一并撤下），在原处显示加载点，并把这些段落逐段重新翻译，不再需要点「显示原文」或刷新页面。显示前还会粗查一次译文与原文的长度是否大体相当，明显对不上的一批不再提前显示，等整批校验后再出现。划词卡片、快速翻译、Google 引擎、提示词与缓存都不受影响。仍可能留下错位译文的少数情况见 `docs/known-issues.md` 第 4 节。方案与实施记录见 `docs/plans/llm-batch-revoke.md`（#87）。
+
+### 依赖
+- 小版本升级：`@webext-core/messaging` 4.0.2、`@wxt-dev/i18n` 0.2.9（运行时），Biome 2.6.8、Vitest 5.1.1（开发），CI 的 `actions/dependency-review-action` 5.0.1（#84–#86）。
 
 ## [0.5.0] - 2026-11-24
 
@@ -270,7 +280,8 @@
 ### 文档
 - 2026-11-12：整理分模块技术方案 `docs/design/00–15`，把前期逆向研究资料归档。
 
-[未发布]: https://github.com/jiangding01/islet-translate/compare/v0.5.0...HEAD
+[未发布]: https://github.com/jiangding01/islet-translate/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jiangding01/islet-translate/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jiangding01/islet-translate/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jiangding01/islet-translate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jiangding01/islet-translate/compare/v0.2.0...v0.3.0
