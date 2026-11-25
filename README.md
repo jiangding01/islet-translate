@@ -361,9 +361,8 @@ Unit tests sit next to the source they cover and are named `*.test.ts`.
 | ✅ Done | v0.5.0 as a GitHub Release |
 | ✅ Done | A small batch of polish: AI batch translations shown paragraph by paragraph, with misaligned ones taken back |
 | ✅ Done | v0.6.0 as a GitHub Release |
-| Next | Optional polish items, or M3e Chrome's built-in local engine |
-| Later | M3e Chrome's built-in local engine |
-| Later | M4 expert styles, glossary, input translation, multi-engine comparison on the card |
+| Next | M4 expert styles, glossary, input translation, multi-engine comparison on the card |
+| Later | M3e Chrome's built-in local engine (moved after M4) |
 | Later | M5 YouTube subtitles, article refinement, vocabulary list, bilingual export |
 | Later | M6 TikTok and subtitle files |
 | Later | M7 optional polish |
