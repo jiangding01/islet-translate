@@ -1,6 +1,6 @@
 # AI 批量逐段显示：长度对照拦截与撤回重译（体验债小批 PR②）
 
-> 状态：已实施（#待补，见文末「实施记录」）。方案第 2 稿，2026-11-25 用户批准（第 1 稿经 Opus 对抗式审查，结论「需修改后批」，1 条阻断与 6 条重要项已改，见文末「审查记录」）。依据：PR①（#83，`docs/plans/llm-batch-incremental.md`）的残余风险与 `docs/known-issues.md` 第 4 节两条已知限制；用户 2026-11-24 选方案 A：PR① 合并后紧接着做本 PR，不改提示词，须在下次发版前上线。
+> 状态：已实施（#87，见文末「实施记录」）。方案第 2 稿，2026-11-25 用户批准（第 1 稿经 Opus 对抗式审查，结论「需修改后批」，1 条阻断与 6 条重要项已改，见文末「审查记录」）。依据：PR①（#83，`docs/plans/llm-batch-incremental.md`）的残余风险与 `docs/known-issues.md` 第 4 节两条已知限制；用户 2026-11-24 选方案 A：PR① 合并后紧接着做本 PR，不改提示词，须在下次发版前上线。
 
 ## 目标
 PR① 之后，AI 批量翻译一段完成就先显示。模型合并或漏掉一段、但编号仍连续时，错位的译文会先显示到别的段落下面；整批校验失败（`validation/bad-response`）后也撤不回，要点「显示原文」或刷新才消失。本 PR：
@@ -148,7 +148,7 @@ revert 本 PR 即可。不改缓存键与存储结构；同一扩展版本内后
 | I6 | 「两者都 ≥30」漏掉短标题并进下一段 | 采纳：绝对规则改为 `max(原文, 译文) ≥ 30` |
 | S | 500 条 LRU 改满了清空；非 translated 不发撤回；selection 不需运行时改动；同文 settled、failed 不动 | 采纳 |
 
-## 实施记录（2026-11-25，#待补）
+## 实施记录（2026-11-25，#87）
 
 ### 范围
 按第 2 稿第 1–5 节实现，「审查记录」B1、I1–I6、S 的处理全部落地。改动 `codec.ts`、`providers/openai-compat.ts`、`providers/gemini.ts`、`scheduler.ts`、`service.ts`、`messaging/protocol.ts`、`content/session.ts`；`content/selection/request.ts` 只加了一处类型断言（没有运行时分支）；`echo.ts` 只把行内标签正则改为导出，供加权长度复用。测试改 `codec.test.ts`、`openai-compat.test.ts`、`gemini.test.ts`、`scheduler.test.ts`、`service.test.ts`、`content/session.test.ts`。提示词、`PROMPT_VERSION`、缓存键、缓存规则、批大小与并发参数、`TranslateDone` 都没有改。

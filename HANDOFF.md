@@ -7,7 +7,7 @@
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
 - 停在哪：**v0.5.0 已发布**（发版 PR #82，M3c 收尾）；M0–M3c、i18n、冒烟 e2e 全部完成；**M3c 已完成**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（#77）、PR4「翻译一个区域」（#78）、PR5「不翻译一个区域」（#79）已合入 `main`，M3c 六个 PR 全部完成（实施记录见方案「PR1 实施记录」至「PR5 实施记录」）。
 - Gemini 架构审查已核实并裁决（`docs/reviews/2026-11-24-gemini-review-verification.md`，执行清单在第 6 节、用户决定在第 7 节）：唯一的 P2 真 bug「LLM 思维链（`<think>`）未剥离」已修（#75）；渲染三项小修（等帧空窗守卫、重扫不再重新分段、首屏不等防抖）在 #76 完成。
-- 下一步：**请用户真机验收 AI 逐段显示（PR① #83、PR② #待补），之后评估发 v0.6.0 或继续小批可选项**。PR②「长度对照拦截 + 撤回重译」（#待补，方案 `docs/plans/llm-batch-revoke.md`）随本文提交：整批校验失败时页面撤下提前显示的段并单段重译，残余风险见 `docs/known-issues.md`。体积：palette-runtime 已用 17.80 / 18 KB，只剩约 0.2 KB，往指令台加东西前要先评估。M3c 六个 PR 的真机验收已全部通过（2026-11-24；PR1/PR2 的补丁为 #72，PR6 验收发现的「指令台开着时切换停靠位置错位」由 #80 修复）。未验证：Windows/Linux 上 Alt+Shift+K 与 accesskey 冲突。
+- 下一步：**请用户真机验收 AI 逐段显示（PR① #83、PR② #87），之后评估发 v0.6.0 或继续小批可选项**。PR②「长度对照拦截 + 撤回重译」（#87，方案 `docs/plans/llm-batch-revoke.md`）随本文提交：整批校验失败时页面撤下提前显示的段并单段重译，残余风险见 `docs/known-issues.md`。体积：palette-runtime 已用 17.80 / 18 KB，只剩约 0.2 KB，往指令台加东西前要先评估。M3c 六个 PR 的真机验收已全部通过（2026-11-24；PR1/PR2 的补丁为 #72，PR6 验收发现的「指令台开着时切换停靠位置错位」由 #80 修复）。未验证：Windows/Linux 上 Alt+Shift+K 与 accesskey 冲突。
 
 ## 1. 目标与范围
 - 目标：做近乎原生、少打扰的沉浸式双语阅读（界面方向「隐中生岛」+ 琥珀主题，见 `docs/plans/ui-isle-direction.md`）；差异化针对竞品痛点：免费额度不透明与订阅弹窗打扰、大页面卡顿、排版错乱与悬停结果消失、429 只能手动换引擎、每页默认浮球。**从 M2 起每个批次的方案都要有「差异化」一节**。
@@ -38,7 +38,7 @@
 - 「仅看译文」、翻译占位符、标签保护等实现细节以各 `docs/plans/*.md` 为准，这里不重复。
 
 ## 4. 待办
-1. 体验债小批（核实文档第 6 节执行清单 #5–#8）：必做项 PR①「AI 批量逐段提交」已完成（#83；规则：顺序前缀才提前提交，只缓存经过整批校验的结果）；PR②「长度对照拦截 + 撤回重译」已完成（#待补；整批校验失败时发撤回帧，页面撤下并重排，被撤回的段单段成批且永不撤回；不改提示词）；可选 `chore/shadow-dom-survey`（两个常用站待用户指定）、`refactor/overlay-coordinator`、`perf/scan-streaming-register`（带大页面 e2e 与「每段只发一次」断言）。
+1. 体验债小批（核实文档第 6 节执行清单 #5–#8）：必做项 PR①「AI 批量逐段提交」已完成（#83；规则：顺序前缀才提前提交，只缓存经过整批校验的结果）；PR②「长度对照拦截 + 撤回重译」已完成（#87；整批校验失败时发撤回帧，页面撤下并重排，被撤回的段单段成批且永不撤回；不改提示词）；可选 `chore/shadow-dom-survey`（两个常用站待用户指定）、`refactor/overlay-coordinator`、`perf/scan-streaming-register`（带大页面 e2e 与「每段只发一次」断言）。
 2. 之后按路线图做 M3e 本地引擎；开工前先实测 Translator / LanguageDetector API 在 Service Worker 中是否可用。
 3. 仍有效的已知限制与后续项（按住 Ctrl 手势、冷却计时、流式思维链缺口、观察项等）见 [`docs/known-issues.md`](docs/known-issues.md)，动到相关代码前先读。
 
