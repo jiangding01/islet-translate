@@ -48,7 +48,7 @@
 
 | 功能 | 说明 | 示例 |
 | --- | --- | --- |
-| 整页双语翻译 | 译文出现在原文下方，沿用网页自己的字体。先翻眼前的段落，往下读时继续。<br>可以切换「双语 / 仅译文」，重试没译出的段落，或点「显示原文」还原网页。<br>打开「总是翻译此站」后，每次访问该站都自动翻译。链接等行内格式在译文里保留。<br>段落等待译文超过约 0.6 秒时，段末会显示一个小圆点。文本输入框和 `translate="no"` 区域不会被翻译，之后动态新增的内容也一样。<br>过长（超过 5000 字符）无法翻译的段落会在原处标出，面板显示段数。 | <img src="docs/assets/readme/zh-page-isle.png" width="240" alt="英文文章译成中文"> |
+| 整页双语翻译 | 译文出现在原文下方，沿用网页自己的字体。先翻眼前的段落，往下读时继续。<br>可以切换「双语 / 仅译文」，重试没译出的段落，或点「显示原文」还原网页。<br>打开「总是翻译此站」后，每次访问该站都自动翻译。链接等行内格式在译文里保留。<br>用 AI 引擎时，模型每写完一段就先显示这一段；如果一批译文校验出错位，已显示的段会自动撤下重译。段落等待译文超过约 0.6 秒时，段末会显示一个小圆点。文本输入框和 `translate="no"` 区域不会被翻译，之后动态新增的内容也一样。<br>过长（超过 5000 字符）无法翻译的段落会在原处标出，面板显示段数。 | <img src="docs/assets/readme/zh-page-isle.png" width="240" alt="英文文章译成中文"> |
 | 控制条（灵岛） | 翻译时，一个小条贴在网页边缘。<br>可以切换显示方式、重试没译出的段落，并只为本页更换引擎；末尾的 ⌘ 按钮打开指令台。<br>可停靠在右侧、左侧或底部。 | <img src="docs/assets/readme/zh-isle.png" width="240" alt="停靠在右侧的控制条"> |
 | 单段翻译 | 不必翻译整页：指针停在段落上，按住 Ctrl（macOS 为 ⌃）约 0.6 秒，只翻译这一段，再按住还原；可在设置中改为 Alt（macOS 为 ⌥ Option）或关闭。<br>此时灵岛不出现，面板仍显示「翻译此页」；之后再开整页翻译，已译的段会沿用。<br>整页翻译进行中，同样的手势可以还原已译的段并不再翻译它，或立即翻译还没轮到的段。 | <sub>示例图待补充</sub> |
 | 划词卡片与音标 | 选中外文，选区末尾出现琥珀小点；点击或停留片刻，翻译卡片就长出来。右键菜单和快捷键同样可用。<br>AI 引擎的译文边生成边显示。卡片可以换引擎、折叠原文、复制译文、朗读原文，也可以固定并拖动。<br>选中单个英文单词时显示 **UK** / **US** 音标，来自离线词表（约 17.5 万 / 11.7 万词），点击按对应口音朗读。 | <img src="docs/assets/readme/zh-card.png" width="240" alt="划词卡片，单词带英美音标"> |
@@ -68,7 +68,7 @@
 
 **从 GitHub Release 下载**
 
-1. 打开 [Releases](https://github.com/jiangding01/islet-translate/releases) 页面，在最新版本里下载 `Islet-Translate-v<版本号>-chrome.zip`（例如 `Islet-Translate-v0.5.0-chrome.zip`）。
+1. 打开 [Releases](https://github.com/jiangding01/islet-translate/releases) 页面，在最新版本里下载 `Islet-Translate-v<版本号>-chrome.zip`（例如 `Islet-Translate-v0.6.0-chrome.zip`）。
 2. 解压后打开 `chrome://extensions`，启用「开发者模式」，点击「加载已解压的扩展程序」，选择解压出的文件夹。
 3. 可选：每个版本还附带一个 `.sha256` 文件。在 zip 所在目录运行 `sha256sum -c Islet-Translate-v<版本号>-chrome.zip.sha256`（macOS 用 `shasum -a 256 -c`）即可校验下载。
 
@@ -106,7 +106,7 @@ npm run build
 | --- | --- |
 | Google 翻译 | 免费，零配置，默认引擎 |
 | OpenAI | 自带 API 密钥 |
-| DeepSeek | 自带 API 密钥 |
+| DeepSeek | 自带 API 密钥；翻译默认关闭思考模式（更快、更省），可在设置里打开 |
 | Gemini | 自带 API 密钥，并填写模型 |
 | 自定义 | 任意 OpenAI 兼容接口，预设 Ollama、LM Studio、OpenRouter、硅基流动 |
 
@@ -359,7 +359,9 @@ node scripts/screenshots/shoot.mjs --ui zh_CN --article en
 | ✅ 已完成 | v0.4.0（GitHub Release） |
 | ✅ 已完成 | M3c 指令台与控制条键盘操作 |
 | ✅ 已完成 | v0.5.0（GitHub Release） |
-| 下一步 | 体验债小批：AI 批量翻译逐段显示等 |
+| ✅ 已完成 | 体验债小批：AI 批量翻译逐段显示与撤回重译 |
+| ✅ 已完成 | v0.6.0（GitHub Release） |
+| 下一步 | 体验债小批可选项，或 M3e Chrome 内置本地引擎 |
 | 之后 | M3e Chrome 内置本地引擎 |
 | 之后 | M4 专家风格、术语库、输入翻译、卡片多引擎对比 |
 | 之后 | M5 YouTube 字幕、文章精翻、生词本、双语导出 |
