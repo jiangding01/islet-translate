@@ -88,3 +88,10 @@
 | YouTube 的 `captionTracks` 能直接取到字幕 | M5 | 回退到 hook 网络请求，并给出失效诊断提示 |
 
 （Translator / LanguageDetector 在 Service Worker 中的可用性：M3e 前验证；YouTube captionTracks：M5 验证。）
+
+**M3e 本地引擎（2026-11-25 延后到 M4 之后）开工前的半天实测，要回答三个问题**，结论写进 `docs/reviews/`，再决定做不做、做多大：
+1. Translator / LanguageDetector 在扩展的哪里能用：后台 Service Worker、offscreen document，还是只能在页面里。
+2. 中英等常用语言对的模型能否在用户的网络环境下顺利下载（下载可能依赖 Google 服务器），下载进度与失败如何感知。
+3. `create()` 的用户手势限制实际有多严：offscreen 中能否创建，还是必须由设置页点击触发（FluentRead 的做法是设置页「准备」按钮）。
+
+延后期间的约束：M4 的 `TranslateOptions` 要允许引擎声明「不支持某选项」（本地引擎不接收提示词，术语只能靠占位符保护），避免以后接入本地引擎时返工；background 预算到时需单独报批（现余约 0.5 KB）。

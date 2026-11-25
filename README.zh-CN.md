@@ -361,9 +361,8 @@ node scripts/screenshots/shoot.mjs --ui zh_CN --article en
 | ✅ 已完成 | v0.5.0（GitHub Release） |
 | ✅ 已完成 | 体验债小批：AI 批量翻译逐段显示与撤回重译 |
 | ✅ 已完成 | v0.6.0（GitHub Release） |
-| 下一步 | 体验债小批可选项，或 M3e Chrome 内置本地引擎 |
-| 之后 | M3e Chrome 内置本地引擎 |
-| 之后 | M4 专家风格、术语库、输入翻译、卡片多引擎对比 |
+| 下一步 | M4 专家风格、术语库、输入翻译、卡片多引擎对比 |
+| 之后 | M3e Chrome 内置本地引擎（延后到 M4 之后） |
 | 之后 | M5 YouTube 字幕、文章精翻、生词本、双语导出 |
 | 之后 | M6 TikTok 与字幕文件 |
 | 之后 | M7 可选打磨 |
