@@ -71,7 +71,8 @@ export interface ConfigV1 {
   selection: { showDot: boolean };
   providers: {
     openai: { baseURL: string; model: string };
-    deepseek: { model: string };
+    /** `thinking`: DeepSeek's thinking mode, off by default to keep translations fast. */
+    deepseek: { model: string; thinking: boolean };
     gemini: { model: string };
   };
   /** Insertion order is display order. Keys are CustomProviderId (validated at runtime). */

@@ -95,6 +95,17 @@ describe('readConfig', () => {
     expect((await readConfig()).data.selection.showDot).toBe(false);
   });
 
+  it('fills DeepSeek thinking (off) for a config stored before it existed', async () => {
+    await fakeBrowser.storage.local.set({
+      config: { schemaVersion: 1, data: { providers: { deepseek: { model: 'd' } } } },
+    });
+    expect((await readConfig()).data.providers.deepseek).toEqual({ model: 'd', thinking: false });
+    await fakeBrowser.storage.local.set({
+      config: { schemaVersion: 1, data: { providers: { deepseek: { thinking: true } } } },
+    });
+    expect((await readConfig()).data.providers.deepseek.thinking).toBe(true);
+  });
+
   it('guards the engine and source language enums', async () => {
     await fakeBrowser.storage.local.set({
       config: {

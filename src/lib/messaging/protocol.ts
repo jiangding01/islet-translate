@@ -36,6 +36,8 @@ export interface ProviderTestDraft {
   baseURL: string;
   model: string;
   apiKey?: string;
+  /** DeepSeek thinking mode; off when omitted, as in the config default. */
+  thinking?: boolean;
 }
 
 export interface ProviderTestResult {

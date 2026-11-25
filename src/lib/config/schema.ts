@@ -50,7 +50,10 @@ export const configSchema = z
         baseURL: z.string().max(LIMITS.baseURL),
         model: z.string().max(LIMITS.model),
       }),
-      deepseek: z.looseObject({ model: z.string().max(LIMITS.model) }),
+      deepseek: z.looseObject({
+        model: z.string().max(LIMITS.model),
+        thinking: z.boolean(),
+      }),
       gemini: z.looseObject({ model: z.string().max(LIMITS.model) }),
     }),
     // The 10-entry limit is enforced when adding (repository), not here: a stored

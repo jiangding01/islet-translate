@@ -127,6 +127,23 @@ describe('parseStoredConfig', () => {
     expect(missing.snapshot.data.selection.showDot).toBe(true);
   });
 
+  it('fills DeepSeek thinking (off) for a config stored before it existed, and repairs it', () => {
+    const missing = parse(
+      stored({ ...defaults, providers: { ...defaults.providers, deepseek: { model: 'd' } } }),
+    );
+    expect(missing.snapshot.data.providers.deepseek).toEqual({ model: 'd', thinking: false });
+    expect(missing.repaired).toBe(true);
+    expect(missing.resetPaths).toEqual([]);
+    const broken = parse(
+      stored({
+        ...defaults,
+        providers: { ...defaults.providers, deepseek: { model: 'd', thinking: 'yes' } },
+      }),
+    );
+    expect(broken.resetPaths).toContain('providers.deepseek.thinking');
+    expect(broken.snapshot.data.providers.deepseek).toEqual({ model: 'd', thinking: false });
+  });
+
   it('resets a default engine that points at a missing custom provider to Google', () => {
     const result = parse(stored({ ...defaults, translation: { engine: 'custom-zzzzzzzz' } }));
     expect(result.snapshot.data.translation.engine).toBe('google');

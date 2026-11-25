@@ -5,7 +5,7 @@ export const EXTRA_DEFAULTS = {
   selection: { showDot: true },
   providers: {
     openai: { baseURL: 'https://api.openai.com/v1', model: 'gpt-5-mini' },
-    deepseek: { model: 'deepseek-chat' },
+    deepseek: { model: 'deepseek-chat', thinking: false },
     gemini: { model: '' },
   },
   customProviders: {},

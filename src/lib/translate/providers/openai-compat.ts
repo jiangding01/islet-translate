@@ -42,6 +42,7 @@ async function* translate(batch: string[], ctx: ProviderContext): AsyncGenerator
     method: 'POST',
     headers,
     body: JSON.stringify({
+      ...settings.extraBody,
       model: settings.model,
       stream: true,
       messages: [

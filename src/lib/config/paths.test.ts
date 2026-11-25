@@ -68,6 +68,7 @@ describe('whitelist', () => {
       'providers.openai.baseURL',
       'providers.openai.model',
       'providers.deepseek.model',
+      'providers.deepseek.thinking',
       'providers.gemini.model',
       'customProviders',
     ] as const satisfies readonly ConfigPath[];

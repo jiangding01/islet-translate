@@ -1,4 +1,4 @@
-import { engineFields } from '@/lib/config/engine-fields';
+import { type EngineFields, engineFields } from '@/lib/config/engine-fields';
 import type { ConfigV1, Engine } from '@/lib/config/types';
 import { normalizeBaseURL } from '@/lib/endpoint';
 import { appError } from '@/lib/errors';
@@ -9,6 +9,8 @@ import { createOpenAICompatAdapter } from './openai-compat';
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+// DeepSeek thinks (at high effort) unless told not to: slow and costly for translation.
+const DEEPSEEK_NO_THINKING = { thinking: { type: 'disabled' } };
 
 const google = createGoogleAdapter();
 const openaiCompat = createOpenAICompatAdapter();
@@ -22,14 +24,16 @@ export function getAdapter(engine: Engine): ProviderAdapter {
 
 /**
  * Effective settings from raw field values: `baseURL` is normalized; engines
- * with a fixed endpoint ignore it, and Google needs neither.
+ * with a fixed endpoint ignore it, and Google needs neither. DeepSeek thinking
+ * stays off unless `thinking` is true.
  */
-export function settingsFor(
-  engine: Engine,
-  fields: { baseURL: string; model: string },
-): ProviderSettings {
+export function settingsFor(engine: Engine, fields: EngineFields): ProviderSettings {
   if (engine === 'google') return { baseURL: '', model: '' };
-  if (engine === 'deepseek') return { baseURL: DEEPSEEK_BASE_URL, model: fields.model };
+  if (engine === 'deepseek') {
+    const settings: ProviderSettings = { baseURL: DEEPSEEK_BASE_URL, model: fields.model };
+    if (!fields.thinking) settings.extraBody = DEEPSEEK_NO_THINKING;
+    return settings;
+  }
   if (engine === 'gemini') return { baseURL: GEMINI_BASE_URL, model: fields.model };
   return { baseURL: normalizeBaseURL(fields.baseURL), model: fields.model };
 }

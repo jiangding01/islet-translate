@@ -41,6 +41,34 @@ describe('openai-compat adapter', () => {
     expect(adapter.limits).toEqual({ maxItems: 20, maxChars: 3000 });
   });
 
+  it('merges the engine extra body fields, which cannot override the request itself', async () => {
+    const fn = mockFetch(sseResponse([delta(OUTPUT), 'data: [DONE]\n\n']));
+    await run(fn, {
+      settings: {
+        baseURL: 'https://api.example.com/v1',
+        model: 'm',
+        extraBody: { thinking: { type: 'disabled' }, model: 'other', stream: false },
+      },
+    });
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.thinking).toEqual({ type: 'disabled' });
+    expect(body.model).toBe('m');
+    expect(body.stream).toBe(true);
+    expect(body.messages).toHaveLength(2);
+  });
+
+  it('sends no extra body fields when the engine has none', async () => {
+    const fn = mockFetch(sseResponse([delta(OUTPUT), 'data: [DONE]\n\n']));
+    await run(fn);
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(Object.keys(JSON.parse(init.body as string)).sort()).toEqual([
+      'messages',
+      'model',
+      'stream',
+    ]);
+  });
+
   it('sends a streaming chat completion with a Bearer header', async () => {
     const fn = mockFetch(sseResponse([delta(OUTPUT), 'data: [DONE]\n\n']));
     const events = await run(fn);
