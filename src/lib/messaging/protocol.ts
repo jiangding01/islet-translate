@@ -197,12 +197,16 @@ export type TranslateDisposition = 'translated' | 'unchanged' | 'same-language';
  * A `phonetic` request may also get one `phonetic` chunk, before or after the final
  * chunk but always before the request ends; it is not a result, so consumers must test
  * for it (like `delta` / `reset`) before treating a chunk as final.
+ * A page (non-stream) request may get one `revoked` chunk after an item's translated
+ * final chunk, before the request ends: that translation (`revoked`) came early from an
+ * AI batch that then failed its check as a whole, and must be taken back and asked for again.
  */
 export type TranslateChunk =
   | { id: string; text: string; disposition: TranslateDisposition; cached: boolean }
   | { id: string; error: AppError }
   | { id: string; delta: string }
   | { id: string; reset: true }
+  | { id: string; revoked: string }
   /**
    * British and American IPA without slashes, at least one of them. `lemma` is set only
    * when the readings are the headword's (the form's own could not be derived).

@@ -1,4 +1,4 @@
-<!-- handoff: head=18e7cbd branch=feat/llm-batch-incremental updated=2026-11-24T21:00:00+08:00 by=claude-opus-5-5 -->
+<!-- handoff: head=6259ce6 branch=feat/llm-batch-revoke updated=2026-11-25T12:00:00+08:00 by=claude-opus-5-5 -->
 # HANDOFF：译屿 / Islet Translate
 
 > 本文给接手的 Agent 或开发者用，按顺序读完即可开工。与其他文档冲突时，以本文和第 2 节「文档地位」表中的权威文档为准。本文只写现状，不写流水账：进度写进 `CHANGELOG.md` 和 [`docs/history.md`](docs/history.md)。
@@ -7,7 +7,7 @@
 - 是什么：译屿（Islet Translate），Chrome MV3 网页翻译扩展，WXT 0.21 + React 19 + TypeScript strict + Vite 8 + CSS Modules；独立新扩展，不读取、不迁移旧扩展数据。
 - 停在哪：**v0.5.0 已发布**（发版 PR #82，M3c 收尾）；M0–M3c、i18n、冒烟 e2e 全部完成；**M3c 已完成**：方案 `docs/plans/m3c.md` 已批准（6 个 PR），PR1「指令台本体」（#70）、PR2「设置入口与快捷键显示」（#71）、PR6「灵岛 ⌘ 入口与铰链位置」（#74）、PR3「快速翻译框」（#77）、PR4「翻译一个区域」（#78）、PR5「不翻译一个区域」（#79）已合入 `main`，M3c 六个 PR 全部完成（实施记录见方案「PR1 实施记录」至「PR5 实施记录」）。
 - Gemini 架构审查已核实并裁决（`docs/reviews/2026-11-24-gemini-review-verification.md`，执行清单在第 6 节、用户决定在第 7 节）：唯一的 P2 真 bug「LLM 思维链（`<think>`）未剥离」已修（#75）；渲染三项小修（等帧空窗守卫、重扫不再重新分段、首屏不等防抖）在 #76 完成。
-- 下一步：**体验债小批 PR②「长度对照拦截 + 撤回重译」**（用户 2026-11-24 定，下次发版前必须上线）：先用 think 写方案过审。PR①「AI 批量逐段提交」（#83，方案 `docs/plans/llm-batch-incremental.md`）随本文提交，显示层的错位（编号连续、内容错位）留给 PR② 解决，见 `docs/known-issues.md`。体积：palette-runtime 已用 17.80 / 18 KB，只剩约 0.2 KB，往指令台加东西前要先评估。M3c 六个 PR 的真机验收已全部通过（2026-11-24；PR1/PR2 的补丁为 #72，PR6 验收发现的「指令台开着时切换停靠位置错位」由 #80 修复）。未验证：Windows/Linux 上 Alt+Shift+K 与 accesskey 冲突。
+- 下一步：**请用户真机验收 AI 逐段显示（PR① #83、PR② #待补），之后评估发 v0.6.0 或继续小批可选项**。PR②「长度对照拦截 + 撤回重译」（#待补，方案 `docs/plans/llm-batch-revoke.md`）随本文提交：整批校验失败时页面撤下提前显示的段并单段重译，残余风险见 `docs/known-issues.md`。体积：palette-runtime 已用 17.80 / 18 KB，只剩约 0.2 KB，往指令台加东西前要先评估。M3c 六个 PR 的真机验收已全部通过（2026-11-24；PR1/PR2 的补丁为 #72，PR6 验收发现的「指令台开着时切换停靠位置错位」由 #80 修复）。未验证：Windows/Linux 上 Alt+Shift+K 与 accesskey 冲突。
 
 ## 1. 目标与范围
 - 目标：做近乎原生、少打扰的沉浸式双语阅读（界面方向「隐中生岛」+ 琥珀主题，见 `docs/plans/ui-isle-direction.md`）；差异化针对竞品痛点：免费额度不透明与订阅弹窗打扰、大页面卡顿、排版错乱与悬停结果消失、429 只能手动换引擎、每页默认浮球。**从 M2 起每个批次的方案都要有「差异化」一节**。
@@ -15,10 +15,10 @@
 - 明确不做：账户、登录、订阅/会员、短码、Coco 等依赖账户的服务端接口（只保留 `AuthState` 恒匿名、`getTier()` 全放行、provider 注册表 3 个扩展点）；网页正文的文章模式；不常驻悬浮球；不兼容其他翻译扩展的私有类名。
 
 ## 2. 当前状态
-- 分支 / HEAD：`main`（已合入 M3c 全部 PR #70–#79、验收补丁 #80、设置页入口 #81、发版 #82；v0.5.0 已发布）；本文随小批 PR① 修改。
+- 分支 / HEAD：`main`（已合入 M3c 全部 PR #70–#79、验收补丁 #80、设置页入口 #81、发版 #82、小批 PR① #83；v0.5.0 已发布）；本文随小批 PR② 修改。
 - 未提交改动：无。
-- 验证状态：截至小批 PR① `npm run check` 通过，单测 2247 个（89 个文件），e2e 81 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
-- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.65 / 7.75（余 0.10，**改引导层或常驻监听前必须先评估**）、page-runtime 26.97 / 28（余约 1.0）、selection-runtime 18.20 / 19、palette-runtime 17.80 / 18（用户 2026-11-24 批准由 15 提到 18 KB，随 PR4 生效；余约 0.2）、background 58.92 / 60（PR① 逐段提交 +1.07；余约 1.1，M3e 新增 provider 时可能要单独报批）、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
+- 验证状态：截至小批 PR② `npm run check` 通过，单测 2343 个（89 个文件），e2e 81 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
+- 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.65 / 7.75（余 0.10，**改引导层或常驻监听前必须先评估**）、page-runtime 27.14 / 28（余约 0.86）、selection-runtime 18.20 / 19、palette-runtime 17.80 / 18（用户 2026-11-24 批准由 15 提到 18 KB，随 PR4 生效；余约 0.2）、background 59.40 / 60（PR① +1.07、PR② +0.48；余约 0.6，M3e 新增 provider 前大概率要单独报批）、popup 83.28 / 90、options 89.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
 - 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68）、v0.5.0（#82），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
 - 路线图：**M3c 已完成并随 v0.5.0 发布（方案 `docs/plans/m3c.md`）→ 体验债小批（不新开里程碑编号）→ M3e Chrome 内置本地引擎 → M4（术语库、`TranslateOptions`、专有名词保护）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**。小批（用户 2026-11-24 同意，见核实文档第 6、7 节）：必做「LLM 批量逐段提交 + 增量解析」（M3e 硬前置，先用 think 写方案过审，两条硬约束：顺序前缀规则、缓存延后写）；可选 Shadow DOM 测量 spike、浮层协调器重构（PR5 合并后）、边扫边注册。批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
 
@@ -38,7 +38,7 @@
 - 「仅看译文」、翻译占位符、标签保护等实现细节以各 `docs/plans/*.md` 为准，这里不重复。
 
 ## 4. 待办
-1. 体验债小批（核实文档第 6 节执行清单 #5–#8）：必做项 PR①「AI 批量逐段提交」已完成（#83；规则：顺序前缀才提前提交，只缓存经过整批校验的结果）；PR②「长度对照拦截 + 撤回重译」（新增 revoke 消息，页面撤下错位译文并重新排队，不改提示词）下一步做，先写方案过审；可选 `chore/shadow-dom-survey`（两个常用站待用户指定）、`refactor/overlay-coordinator`、`perf/scan-streaming-register`（带大页面 e2e 与「每段只发一次」断言）。
+1. 体验债小批（核实文档第 6 节执行清单 #5–#8）：必做项 PR①「AI 批量逐段提交」已完成（#83；规则：顺序前缀才提前提交，只缓存经过整批校验的结果）；PR②「长度对照拦截 + 撤回重译」已完成（#待补；整批校验失败时发撤回帧，页面撤下并重排，被撤回的段单段成批且永不撤回；不改提示词）；可选 `chore/shadow-dom-survey`（两个常用站待用户指定）、`refactor/overlay-coordinator`、`perf/scan-streaming-register`（带大页面 e2e 与「每段只发一次」断言）。
 2. 之后按路线图做 M3e 本地引擎；开工前先实测 Translator / LanguageDetector API 在 Service Worker 中是否可用。
 3. 仍有效的已知限制与后续项（按住 Ctrl 手势、冷却计时、流式思维链缺口、观察项等）见 [`docs/known-issues.md`](docs/known-issues.md)，动到相关代码前先读。
 

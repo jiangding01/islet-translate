@@ -7,8 +7,10 @@ import { createPortClient, type PortLike, servePort } from '@/lib/messaging/port
 import type { TranslateChunk, TranslateDone, TranslateRequest } from '@/lib/messaging/protocol';
 import type { PhoneticHit } from '@/lib/phonetic/lookup';
 import { createTranslationCache, openCacheDb } from './cache';
+import type { ItemOutcome } from './codec';
 import type { DetectLanguage } from './language';
 import { checkEngineEndpoint } from './permissions';
+import type { Scheduler } from './scheduler';
 import {
   classifyTranslation,
   cooldownKeyFor,
@@ -341,9 +343,11 @@ describe('translate service over the port', () => {
     const result = await run({ items: items('one', 'two', 'three'), source: 'en' });
     expect(result.outcome).toEqual({ status: 'done', data: { total: 3, failed: 0 } });
     // Item 0 is shown as soon as it arrives (ids in order, so it cannot be told apart from
-    // a good answer: docs/known-issues.md), but the batch is not cached; the rest is halved.
-    expect(Object.values(result.byId).map((chunk) => 'text' in chunk && chunk.text)).toEqual([
+    // a good answer), then revoked once the batch fails its check; nothing of the batch is
+    // cached, and the rest is halved.
+    expect(result.chunks.map((chunk) => ('text' in chunk ? chunk.text : chunk))).toEqual([
       'only one',
+      { id: 'i0', revoked: 'only one' },
       'O:two',
       'O:three',
     ]);
@@ -971,5 +975,172 @@ describe('translate service: phonetic', () => {
     expect(await pending).toMatchObject({ code: 'network/aborted' });
     await flush();
     expect(emit).not.toHaveBeenCalled();
+  });
+});
+
+// ------------------------------------------------------------ revoked translations
+
+describe('translate service: revoked translations', () => {
+  /** A scheduler whose items all come back at once, sharing one verdict the test decides. */
+  function verdictScheduler(text: (source: string) => string = (source) => `F:${source}`) {
+    let decide: (keep: boolean) => void = () => undefined;
+    const verdict = new Promise<boolean>((resolve) => {
+      decide = resolve;
+    });
+    const scheduler: Scheduler = {
+      submit: (request) =>
+        request.segments.map((segment) =>
+          Promise.resolve<ItemOutcome>({ ok: true, text: text(segment.text), verdict }),
+        ),
+      inspect: () => ({
+        active: { mt: 0, llm: 0 },
+        queued: 0,
+        waiting: 0,
+        segments: 0,
+        callers: 0,
+      }),
+    };
+    return { scheduler, decide };
+  }
+
+  function llmSetup(scheduler: Scheduler) {
+    const t = setup({ scheduler });
+    t.config.translation.engine = 'openai';
+    return t;
+  }
+
+  /** Whether the promise is still pending after the queued work has run. */
+  async function pending(promise: Promise<unknown>) {
+    let settled = false;
+    void promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await flush();
+    return !settled;
+  }
+
+  it('sends the translation, then the revocation, then done', async () => {
+    const { scheduler, decide } = verdictScheduler();
+    const { request } = llmSetup(scheduler);
+    const handle = request({ items: items('Hello', 'World'), source: 'en' });
+    await vi.waitFor(() => expect(handle.chunks).toHaveLength(2));
+    expect(await pending(handle.outcome)).toBe(true);
+    decide(false);
+    expect(await handle.outcome).toEqual({ status: 'done', data: { total: 2, failed: 0 } });
+    expect(handle.chunks).toEqual([
+      { id: 'i0', text: 'F:Hello', disposition: 'translated', cached: false },
+      { id: 'i1', text: 'F:World', disposition: 'translated', cached: false },
+      { id: 'i0', revoked: 'F:Hello' },
+      { id: 'i1', revoked: 'F:World' },
+    ]);
+  });
+
+  it('sends no revocation for a translation that is kept', async () => {
+    const { scheduler, decide } = verdictScheduler();
+    const { request } = llmSetup(scheduler);
+    const handle = request({ items: items('Hello'), source: 'en' });
+    await vi.waitFor(() => expect(handle.chunks).toHaveLength(1));
+    decide(true);
+    expect(await handle.outcome).toEqual({ status: 'done', data: { total: 1, failed: 0 } });
+    expect(handle.chunks).toHaveLength(1);
+  });
+
+  it('sends no revocation for a result that is not a translation', async () => {
+    const { scheduler, decide } = verdictScheduler((source) => source.toLowerCase());
+    const { request } = llmSetup(scheduler);
+    const handle = request({ items: items('GitHub'), source: 'en' });
+    await vi.waitFor(() => expect(handle.chunks).toHaveLength(1));
+    // Not waiting for the verdict: done comes at once.
+    expect(await handle.outcome).toEqual({ status: 'done', data: { total: 1, failed: 0 } });
+    decide(false);
+    await flush();
+    expect(handle.chunks).toEqual([
+      { id: 'i0', text: 'github', disposition: 'unchanged', cached: false },
+    ]);
+  });
+
+  it('stops waiting for the verdict when the request is cancelled', async () => {
+    const { scheduler } = verdictScheduler();
+    const { service } = llmSetup(scheduler);
+    const controller = new AbortController();
+    const chunks: TranslateChunk[] = [];
+    const translating = service.translate(
+      { items: items('Hello'), source: 'en' },
+      { signal: controller.signal, emit: (chunk) => chunks.push(chunk) },
+    );
+    await vi.waitFor(() => expect(chunks).toHaveLength(1));
+    expect(await pending(translating)).toBe(true);
+    controller.abort();
+    await expect(translating).rejects.toMatchObject({ code: 'network/aborted' });
+    expect(chunks).toHaveLength(1);
+  });
+
+  it('stops waiting for the verdict when the port disconnects', async () => {
+    const { scheduler } = verdictScheduler();
+    const { service } = llmSetup(scheduler);
+    const pair = createPortPair();
+    const served: Promise<unknown>[] = [];
+    servePort<TranslateRequest, TranslateChunk, TranslateDone>(pair.server, (payload, ctx) => {
+      const translating = service.translate(payload, ctx);
+      served.push(translating);
+      return translating;
+    });
+    const client = createPortClient<TranslateRequest, TranslateChunk, TranslateDone>(
+      () => pair.client,
+    );
+    const chunks: TranslateChunk[] = [];
+    client.request({ items: items('Hello'), source: 'en' }, (chunk) => chunks.push(chunk));
+    await vi.waitFor(() => expect(chunks).toHaveLength(1));
+    expect(served).toHaveLength(1);
+    expect(await pending(served[0] as Promise<unknown>)).toBe(true);
+    pair.breakConnection();
+    expect(await pending(served[0] as Promise<unknown>)).toBe(false);
+  });
+
+  it('shows a misplaced batch, revokes it before done, and the items asked again go one by one', async () => {
+    const { providers, config, cache, request, run } = setup();
+    config.translation.engine = 'openai';
+    let release: () => void = () => undefined;
+    providers.handlers.openai = (texts, call) => {
+      if (texts.length < 4) return openaiOk(texts, call);
+      // The model skipped "one": the ids run on, every text one item off.
+      const gated = gatedSseResponse(
+        [openaiDelta('[{"i":0,"t":"O:two"},')],
+        [openaiDelta('{"i":1,"t":"O:three"}]'), 'data: [DONE]\n\n'],
+      );
+      release = gated.release;
+      return gated.response;
+    };
+    const first = request({ items: items('one', 'two', 'three', 'four'), source: 'en' });
+    await vi.waitFor(() =>
+      expect(first.chunks).toEqual([expect.objectContaining({ id: 'i0', text: 'O:two' })]),
+    );
+    release();
+    expect(await first.outcome).toEqual({ status: 'done', data: { total: 4, failed: 0 } });
+    expect(first.chunks.filter((chunk) => 'revoked' in chunk)).toEqual([
+      { id: 'i0', revoked: 'O:two' },
+      { id: 'i1', revoked: 'O:three' },
+    ]);
+    // The rest was halved and came back right.
+    expect(first.chunks.slice(-2).map((chunk) => 'text' in chunk && chunk.text)).toEqual([
+      'O:three',
+      'O:four',
+    ]);
+    expect(providers.calls).toHaveLength(3);
+    // The page asks again for what was revoked: each runs as a batch of its own.
+    const again = await run({ items: items('one', 'two'), source: 'en' });
+    expect(again.outcome).toEqual({ status: 'done', data: { total: 2, failed: 0 } });
+    expect(again.chunks).toEqual([
+      { id: 'i0', text: 'O:one', disposition: 'translated', cached: false },
+      { id: 'i1', text: 'O:two', disposition: 'translated', cached: false },
+    ]);
+    expect(providers.calls).toHaveLength(5);
+    expect(providers.sent.slice(-2)).toEqual(['one', 'two']);
+    await cached(cache, 4);
   });
 });

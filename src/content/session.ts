@@ -225,6 +225,8 @@ export function createPageSession(deps: SessionDeps): PageSession {
   const shown = new Set<Unit>();
   let scanTimer: ReturnType<typeof setTimeout> | undefined;
   const toRender: { unit: Unit; translation: string }[] = [];
+  /** Handed to the renderer, written on its next frame: about to show, like `queued`. */
+  const writing = new Set<Unit>();
 
   const listeners = new Set<(state: PageState) => void>();
   let cancelFrame: (() => void) | undefined;
@@ -447,14 +449,24 @@ export function createPageSession(deps: SessionDeps): PageSession {
         .splice(0)
         .filter(({ unit }) => queued.delete(unit) && !isExcluded(unit));
       if (ready.length === 0) return;
-      void renderer.insert(ready).then((stale) => {
-        if (current !== epoch) return;
-        for (const unit of stale) {
-          forget(unit);
-          void rescan([unit.root]);
-        }
-        report();
-      });
+      for (const { unit } of ready) writing.add(unit);
+      void renderer
+        .insert(ready)
+        .finally(() => {
+          for (const { unit } of ready) writing.delete(unit);
+        })
+        .then(
+          (stale) => {
+            if (current !== epoch) return;
+            for (const unit of stale) {
+              forget(unit);
+              void rescan([unit.root]);
+            }
+            report();
+          },
+          // A write that failed shows nothing: only its claim (above) had to go.
+          () => undefined,
+        );
     }, RENDER_COALESCE_MS);
   }
 
@@ -560,9 +572,15 @@ export function createPageSession(deps: SessionDeps): PageSession {
     inFlight += 1;
     // The engine this request went to: the session may switch while it is out.
     const used = engine;
+    const items = batch.map((unit) => ({ id: idOf(unit), text: unit.seg.text }));
+    /**
+     * Units this request still owes a final chunk. A revoked one may be on its way again in
+     * another request by the time this one ends: that `sent` is not this request's to undo.
+     */
+    const open = new Set(batch);
     const request = port.request(
       {
-        items: batch.map((unit) => ({ id: idOf(unit), text: unit.seg.text })),
+        items,
         target: config.language.target,
         source: config.language.source,
         engine: used,
@@ -572,9 +590,17 @@ export function createPageSession(deps: SessionDeps): PageSession {
         // Stream increments and phonetics belong to selection cards; page requests never
         // ask for them.
         if ('delta' in chunk || 'reset' in chunk || 'phonetic' in chunk) return;
+        // Before `sent.delete`: the unit may be on its way again, and must stay there. The
+        // source comes from this request, so a unit forgotten meanwhile still clears memory.
+        if ('revoked' in chunk) {
+          const source = items.find((item) => item.id === chunk.id)?.text;
+          revoke(byId.get(chunk.id), source, chunk.revoked);
+          return;
+        }
         const unit = byId.get(chunk.id);
         if (!unit) return;
         sent.delete(unit);
+        open.delete(unit);
         if ('error' in chunk) {
           // Held away (or its region left alone) while it was out: nothing to show, nothing
           // to resend, nothing counted.
@@ -602,7 +628,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
       if (current !== epoch) return;
       inFlight -= 1;
       // Units the request never answered for (request-level failure or cancel).
-      const unanswered = batch.filter((unit) => sent.has(unit));
+      const unanswered = batch.filter((unit) => open.has(unit) && sent.has(unit));
       for (const unit of unanswered) sent.delete(unit);
       // A done request that left units unanswered: nothing is coming for them any more.
       if (outcome.status === 'done') for (const unit of unanswered) release(unit);
@@ -613,6 +639,38 @@ export function createPageSession(deps: SessionDeps): PageSession {
       scheduleFlush();
       report();
     });
+  }
+
+  /**
+   * The background took back a translation it sent early (its AI batch failed the check as
+   * a whole). It goes wherever it shows or is about to: from the request's own unit in any
+   * case, and, when memory holds it for `source`, from memory and every unit with that text
+   * (units on their way, waiting, failed or settled show none of it and are left alone).
+   * What goes is asked for again, a batch of its own in the background.
+   */
+  function revoke(unit: Unit | undefined, source: string | undefined, revoked: string) {
+    const shows = (u: Unit) => !!renderer?.has(u) || queued.has(u) || writing.has(u);
+    const gone = new Set<Unit>();
+    if (unit && shows(unit)) gone.add(unit);
+    if (source !== undefined && translations.get(source) === revoked) {
+      translations.delete(source);
+      for (const units of unitsByRoot.values()) {
+        for (const u of units) if (u.seg.text === source && shows(u)) gone.add(u);
+      }
+    }
+    for (const u of gone) {
+      queued.delete(u);
+      // Its entry still waiting there would render before a new one.
+      for (let at = toRender.length - 1; at >= 0; at -= 1) {
+        if (toRender[at]?.unit === u) toRender.splice(at, 1);
+      }
+      renderer?.drop(u);
+      // It was shown, so the single-line rule is past; held away or in a region left alone,
+      // it is only taken out.
+      if (want(u, true) && inView(u.root)) showNow(u);
+    }
+    scheduleFlush();
+    report();
   }
 
   /** A whole request failed: never turn that into per-paragraph errors directly. */
@@ -811,6 +869,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
     settled.delete(unit);
     failed.delete(unit);
     queued.delete(unit);
+    writing.delete(unit);
     unnoted.delete(unit);
     wantedAt.delete(unit);
     shown.delete(unit);
@@ -877,6 +936,7 @@ export function createPageSession(deps: SessionDeps): PageSession {
     settled.clear();
     failed.clear();
     queued.clear();
+    writing.clear();
     visibleRoots.clear();
     translations.clear();
     reinserts.clear();

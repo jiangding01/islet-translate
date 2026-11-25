@@ -3,6 +3,7 @@ import {
   cleanTextOutput,
   createBatchScanner,
   createThinkFilter,
+  doubtful,
   finishBatch,
   renderMessages,
 } from '../codec';
@@ -97,8 +98,9 @@ async function* translate(batch: string[], ctx: ProviderContext): AsyncGenerator
       if (shown !== '') yield { type: 'delta', index: 0, delta: shown };
     }
   } catch (error) {
-    // Items may have come from a draft: nothing of this attempt may be cached.
-    throw scanner?.state === 'tainted' ? badResponseError('Draft output') : error;
+    // Items may have come from a draft, or be misplaced (length check): nothing of this
+    // attempt may be cached, and what it delivered is revoked.
+    throw doubtful(scanner) ? badResponseError('Doubtful output') : error;
   }
 
   if (!scanner) {

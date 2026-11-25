@@ -12,6 +12,7 @@ import {
   settleWithSplit,
   splitInHalf,
   USER_INPUT_TOKEN,
+  weightedLength,
 } from './codec';
 import type { ProviderEvent } from './types';
 
@@ -566,12 +567,13 @@ describe('finishBatch', () => {
     expect(result).toEqual({ early: [item(0, '你好')], late: [late(1, 'X')], error: undefined });
   });
 
-  it('yields the rest, then fails with bad-response, when the whole output disagrees', () => {
+  it('fails with bad-response, yielding nothing more, when the whole output disagrees', () => {
     const raw =
       '[{"i":0,"t":"草稿"},{"i":1,"t":"World"}]</think>[{"i":0,"t":"终稿"},{"i":1,"t":"世界"}]';
     const result = finish(['a', 'World'], raw);
     expect(result.early).toEqual([item(0, '草稿')]);
-    expect(result.late).toEqual([late(1, '世界')]);
+    // The rest is halved and sent again: what was committed is revoked (scheduler).
+    expect(result.late).toEqual([]);
     expect(result.error).toEqual(code('validation/bad-response'));
   });
 
@@ -588,29 +590,29 @@ describe('finishBatch', () => {
     [
       'a fenced draft, then a corrected array',
       '```json\n[{"i":0,"t":"草稿0"},{"i":1,"t":"草稿1"}]\n```\nActually corrected:\n[{"i":0,"t":"终稿0"},{"i":1,"t":"终稿1"}]',
-      [],
+      2,
     ],
     [
       'the same array again after a closing think tag',
       '[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]</think>[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]',
-      [],
+      2,
     ],
     [
       'a draft followed by prose that opens an array without closing it',
       '[{"i":0,"t":"草稿0"},{"i":1,"t":"草稿1"}]\nBetter: [{"i":0,"t":"终稿0"',
-      [],
+      2,
     ],
     [
       'a closing think tag inside the array, then the answer',
       '[{"i":0,"t":"甲"}</think>[{"i":0,"t":"甲"},{"i":1,"t":"乙"}]',
-      [late(1, '乙')],
+      1,
     ],
   ])(
-    'yields the rest, then fails with bad-response, after %s even when it agrees',
-    (_name, raw, rest) => {
+    'fails with bad-response, yielding nothing more, after %s even when it agrees',
+    (_name, raw, committed) => {
       const result = finish(['a', 'b'], raw);
-      expect(result.early.length + result.late.length).toBe(2);
-      expect(result.late).toEqual(rest);
+      expect(result.early).toHaveLength(committed);
+      expect(result.late).toEqual([]);
       expect(result.error).toEqual(code('validation/bad-response'));
     },
   );
@@ -675,6 +677,309 @@ describe('finishBatch', () => {
     });
     expect(finish(['a', 'b'], 'Sure: [{"i":0,"t":"甲"}').error).toEqual(
       code('validation/bad-response'),
+    );
+  });
+});
+
+// ------------------------------------------------------------ length check
+
+describe('weightedLength', () => {
+  it.each([
+    ['Latin letters', 'Hello', 5],
+    ['digits', '2026', 4],
+    ['Han characters', '你好', 6],
+    ['kana', 'こんにちは', 7.5],
+    ['katakana', 'カタカナ', 6],
+    ['Hangul', '안녕하세요', 10],
+    ['mixed scripts', 'Hi 你好', 8],
+    ['Japanese with kanji', '日本語です', 12],
+    ['inline tags', '<t0>Hi</t0> <t1/>x <ab12>y</ab12>', 4],
+    ['zero-width characters', 'a​b‌‍⁠﻿c', 3],
+    ['whitespace', ' a  b \n\tc ', 3],
+    ['Cyrillic', 'Привет', 6],
+    ['punctuation and symbols', '!?。—€', 5],
+    ['nothing left', ' <t0></t0> ', 0],
+  ])('counts %s', (_name, text, weight) => {
+    expect(weightedLength(text)).toBe(weight);
+  });
+
+  it.each([
+    ['English and Chinese', 'Hello world, how are you today?', '你好世界，你今天怎么样？'],
+    ['English and Japanese', 'Thank you very much', 'どうもありがとうございます'],
+    ['English and Korean', 'Thank you very much', '정말 감사합니다'],
+    ['Chinese and Japanese', '今天天气很好', '今日はいい天気です'],
+  ])('keeps common language pairs near 1 (%s)', (_name, a, b) => {
+    const ratio = weightedLength(b) / weightedLength(a);
+    expect(ratio).toBeGreaterThan(0.5);
+    expect(ratio).toBeLessThan(2);
+  });
+});
+
+describe('createBatchScanner: length check', () => {
+  const one = (source: string, translation: string) =>
+    scanEverySplit([source, 'next'], `[${JSON.stringify({ i: 0, t: translation })}`);
+  /** 36 when weighted. */
+  const LONG = 'This sentence is long enough to count here.';
+
+  it.each([
+    ['a translation under a third of a long source', LONG, '短句'],
+    ['a translation over three times the source, both long', 'Hello world again', '甲'.repeat(20)],
+    [
+      'a short title merged into the next paragraph',
+      'Intro',
+      '你好，这是一个被模型并进来的很长的下一段',
+    ],
+  ])('closes on %s and marks the scanner suspect', (_name, source, translation) => {
+    const { scanner, items } = one(source, translation);
+    expect(items).toEqual([]);
+    expect(scanner.state).toBe('suspect');
+    expect(scanner.committed).toEqual([]);
+  });
+
+  it.each([
+    ['both sides short, whatever the ratio', 'Hi', '你好你好'],
+    ['a ratio of exactly 3', 'abcdefghij', '甲'.repeat(10)],
+    ['a ratio of exactly 1/3', 'abcdefghijabcdefghijabcdefghijabc', 'abcdefghijk'],
+    ['a long pair near 1', LONG, '这个句子足够长，可以算在这里。'],
+  ])('commits %s', (_name, source, translation) => {
+    const { scanner, items } = one(source, translation);
+    expect(items).toEqual([item(0, translation)]);
+    expect(scanner.state).toBe('open');
+  });
+
+  /** A paragraph-sized source (20 when weighted) and translations of any weight. */
+  const PARAGRAPH = 'abcdefghij'.repeat(2);
+  const SOURCES = Array.from({ length: 6 }, () => PARAGRAPH);
+  const t = (weight: number) => 'x'.repeat(weight);
+  const run = (...translations: string[]) =>
+    scanEverySplit(
+      SOURCES,
+      `[${translations.map((text, i) => JSON.stringify({ i, t: text })).join(',')}`,
+    );
+
+  it.each([
+    ['more than twice', t(50)],
+    ['under half', t(8)],
+  ])('closes on a long item %s the median ratio of the long items before it', (_name, odd) => {
+    const { scanner, items } = run(t(20), t(20), t(20), odd, t(20));
+    expect(items.map((entry) => entry.index)).toEqual([0, 1, 2]);
+    expect(scanner.state).toBe('suspect');
+  });
+
+  it('takes the median, not the mean or the last ratio', () => {
+    // Ratios 1, 1.2, 2: median 1.2, so 2.6 is past twice it (the mean, 1.4, would allow it).
+    const { scanner, items } = run(t(20), t(24), t(40), t(52));
+    expect(items).toHaveLength(3);
+    expect(scanner.state).toBe('suspect');
+  });
+
+  it('keeps items within twice the median, and applies the rule only from the fourth long item', () => {
+    expect(run(t(20), t(20), t(20), t(38)).items).toHaveLength(4);
+    // Third item: only two ratios before it, so the relative rule does not apply yet.
+    const early = run(t(20), t(20), t(50));
+    expect(early.items).toHaveLength(3);
+    expect(early.scanner.state).toBe('open');
+  });
+
+  it('leaves short items (both sides under 15) out of the median and the check', () => {
+    const sources = [PARAGRAPH, PARAGRAPH, PARAGRAPH, 'OK', 'FAQ', 'Home', PARAGRAPH, 'See also'];
+    const answer = [t(20), t(20), t(20), '确定', '常见问题', '首页', t(22), '另请参阅'];
+    const raw = `[${answer.map((text, i) => JSON.stringify({ i, t: text })).join(',')}]`;
+    const { scanner, items } = scanEverySplit(sources, raw);
+    expect(items).toHaveLength(8);
+    expect(scanner.state).toBe('closed');
+    // Short ones before do not count: the third long item is still only the third.
+    const shortFirst = scanEverySplit(
+      ['OK', 'FAQ', 'Home', PARAGRAPH, PARAGRAPH, PARAGRAPH],
+      `[${['确定', '常见问题', '首页', t(20), t(20), t(50)].map((text, i) => JSON.stringify({ i, t: text })).join(',')}`,
+    );
+    expect(shortFirst.items).toHaveLength(6);
+  });
+
+  it('counts held echoes among the long items before', () => {
+    const scanner = createBatchScanner([
+      'GitHub Enterprise Server',
+      'Visual Studio Code Insiders',
+      'Kubernetes Dashboard Pro',
+      PARAGRAPH,
+    ]);
+    const raw =
+      '[{"i":0,"t":"GitHub Enterprise Server"},{"i":1,"t":"Visual Studio Code Insiders"},' +
+      '{"i":2,"t":"Kubernetes Dashboard Pro"},';
+    expect(scanner.push(raw)).toEqual([]);
+    expect(scanner.push(`{"i":3,"t":"${t(50)}"}`)).toEqual([]);
+    expect(scanner.state).toBe('suspect');
+  });
+
+  it('still catches a merge in a batch of real paragraphs', () => {
+    const sources = [
+      'Install the package with npm and import it in your project.',
+      'The configuration file lives at the root of the repository and is read once at startup.',
+      'Call the function with your options object to get a client back.',
+      'Every request the client makes is retried once on a network error.',
+      'Errors carry a code and a message you can show to the user.',
+    ];
+    const answer = [
+      '使用 npm 安装该软件包，并在项目中导入它。',
+      '配置文件位于仓库根目录，启动时读取一次。',
+      '使用选项对象调用该函数，得到一个客户端。',
+      // Items 3 and 4 merged: the text of two paragraphs under one id.
+      '客户端发出的每个请求在网络出错时都会重试一次。错误带有代码和一条可以展示给用户的消息。',
+      '错误带有代码和一条可以展示给用户的消息。',
+    ];
+    const raw = `[${answer.map((text, i) => JSON.stringify({ i, t: text })).join(',')}]`;
+    const { scanner, items } = scanEverySplit(sources, raw);
+    expect(items).toHaveLength(3);
+    expect(scanner.state).toBe('suspect');
+  });
+
+  it.each<[string, [string, string][]]>([
+    [
+      'a navigation bar, English to Chinese',
+      [
+        ['Home', '首页'],
+        ['Products', '产品'],
+        ['Pricing', '价格'],
+        ['Docs', '文档'],
+        ['Blog', '博客'],
+        ['FAQ', '常见问题'],
+        ['Contact us', '联系我们'],
+        ['Log in', '登录'],
+        ['Sign up', '注册'],
+      ],
+    ],
+    [
+      'another navigation bar',
+      [
+        ['Home', '首页'],
+        ['About', '关于'],
+        ['Settings', '设置'],
+        ['Introduction', '简介'],
+        ['Next', '下一页'],
+      ],
+    ],
+    [
+      'an article with headings',
+      [
+        ['Getting started', '入门'],
+        [
+          'Install the package with npm and import it in your project.',
+          '使用 npm 安装该软件包，并在项目中导入它。',
+        ],
+        ['Configuration', '配置'],
+        [
+          'The configuration file lives at the root of the repository and is read once at startup.',
+          '配置文件位于仓库根目录，启动时读取一次。',
+        ],
+        ['Usage', '用法'],
+        ['Call the function with your options object.', '使用选项对象调用该函数。'],
+        ['See also', '另请参阅'],
+        ['API reference', 'API 参考'],
+      ],
+    ],
+    [
+      'a navigation bar, Chinese to English',
+      [
+        ['首页', 'Home'],
+        ['产品', 'Products'],
+        ['文档', 'Docs'],
+        ['博客', 'Blog'],
+        ['常见问题', 'FAQ'],
+        ['联系我们', 'Contact us'],
+      ],
+    ],
+    [
+      'a menu, English to Korean',
+      [
+        ['Home', '홈'],
+        ['Search', '검색'],
+        ['Settings', '설정'],
+        ['Profile', '프로필'],
+        ['Notifications', '알림'],
+        ['Help', '도움말'],
+      ],
+    ],
+    [
+      'a menu, English to Japanese',
+      [
+        ['Home', 'ホーム'],
+        ['Search', '検索'],
+        ['Settings', '設定'],
+        ['Profile', 'プロフィール'],
+        ['Notifications', '通知'],
+        ['Help', 'ヘルプ'],
+      ],
+    ],
+    [
+      'a link row like Hacker News',
+      [
+        ['new', '最新'],
+        ['past', '往期'],
+        ['comments', '评论'],
+        ['ask', '提问'],
+        ['show', '展示'],
+        ['jobs', '招聘'],
+        ['submit', '提交'],
+      ],
+    ],
+    [
+      'comment actions like Reddit',
+      [
+        ['Share', '分享'],
+        ['Reply', '回复'],
+        ['Award', '奖励'],
+        ['Report', '举报'],
+        ['Save', '保存'],
+        ['Follow', '关注'],
+        ['OK', '确定'],
+      ],
+    ],
+  ])('commits every item of %s (right translations, short ones of any ratio)', (_name, pairs) => {
+    const raw = `[${pairs.map(([, text], i) => JSON.stringify({ i, t: text })).join(',')}]`;
+    const { scanner, items } = scanEverySplit(
+      pairs.map(([source]) => source),
+      raw,
+    );
+    expect(items).toHaveLength(pairs.length);
+    expect(scanner.state).toBe('closed');
+  });
+
+  it('commits nothing more after it, and a draft still taints it', () => {
+    const scanner = createBatchScanner([LONG, 'b', 'c']);
+    expect(scanner.push('[{"i":0,"t":"短"},{"i":1,"t":"乙"}')).toEqual([]);
+    expect(scanner.state).toBe('suspect');
+    scanner.push(',{"i":2,"t":"丙"}]</think>');
+    expect(scanner.state).toBe('tainted');
+  });
+
+  it('is not suspect when it closed for another reason first', () => {
+    const { scanner } = scanEverySplit([LONG, 'b'], '[{"i":1,"t":"乙"},{"i":0,"t":"短"}]');
+    expect(scanner.state).toBe('closed');
+  });
+});
+
+describe('finishBatch: after the length check', () => {
+  it('checks a suspect output that ends normally as a whole, as before', () => {
+    const sources = Array.from({ length: 4 }, () => 'abcdefghij'.repeat(2));
+    const answer = ['x'.repeat(20), 'x'.repeat(20), 'x'.repeat(20), 'x'.repeat(50)];
+    const raw = JSON.stringify(answer.map((t, i) => ({ i, t })));
+    const scanner = createBatchScanner(sources);
+    expect(scanner.push(raw)).toHaveLength(3);
+    expect(scanner.state).toBe('suspect');
+    expect([...finishBatch(scanner, raw, 4)]).toEqual([
+      { type: 'item', index: 3, text: 'x'.repeat(50) },
+    ]);
+  });
+});
+
+describe('finishBatch: a suspect output cut short', () => {
+  it('fails with bad-response, never as truncated, so what was committed is revoked', () => {
+    const scanner = createBatchScanner(['a', 'b', 'c']);
+    const raw = `[{"i":0,"t":"甲"},{"i":1,"t":"${'乙'.repeat(11)}"},{"i":2,"t":"丙`;
+    expect(scanner.push(raw)).toEqual([item(0, '甲')]);
+    expect(scanner.state).toBe('suspect');
+    expect(() => [...finishBatch(scanner, raw, 3)]).toThrow(
+      expect.objectContaining({ code: 'validation/bad-response' }),
     );
   });
 });
