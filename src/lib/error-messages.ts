@@ -25,6 +25,7 @@ const MESSAGES: Record<string, ErrorKey> = {
   'config/provider-limit': 'errors.config.providerLimit',
   'config/provider-missing': 'errors.config.providerMissing',
   'config/invalid-value': 'errors.config.invalidValue',
+  'config/invalid-extra-body': 'errors.config.invalidExtraBody',
   'provider/unauthorized': 'errors.provider.unauthorized',
   'provider/local-origin-rejected': 'errors.provider.localOriginRejected',
   'provider/not-found': 'errors.provider.notFound',

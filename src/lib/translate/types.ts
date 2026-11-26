@@ -26,8 +26,17 @@ export interface BuiltPrompt {
 export interface ProviderSettings {
   baseURL: string;
   model: string;
-  /** Extra request body fields (OpenAI-compatible only); never override the request itself. */
+  /**
+   * Extra request body fields: thinking (src/lib/config/thinking-rules.ts), then the user's
+   * own. Adapters spread them first, so they never override the request itself.
+   */
   extraBody?: Record<string, unknown>;
+  /**
+   * Non-default params that change the request (thinking on where a rule applies, the
+   * user's parsed extra fields); part of the cache key. Absent by default, which keeps
+   * every cache key from before M4-A.
+   */
+  cacheParams?: Record<string, unknown>;
 }
 
 export interface ProviderContext {

@@ -13,8 +13,10 @@ export interface EngineFields {
   /** Raw, unnormalized; '' for engines with a fixed endpoint. */
   baseURL: string;
   model: string;
-  /** DeepSeek only: thinking mode (`providers.deepseek.thinking`); absent for other engines. */
+  /** OpenAI, DeepSeek and Gemini: the thinking switch; absent for other engines. */
   thinking?: boolean;
+  /** OpenAI and custom providers: extra request body text as stored; absent for others. */
+  extraBody?: string;
 }
 
 /** Configured fields of an engine; undefined for a custom provider that does not exist. */
@@ -26,7 +28,12 @@ export function engineFields(
     case 'google':
       return { baseURL: '', model: '' };
     case 'openai':
-      return { baseURL: config.providers.openai.baseURL, model: config.providers.openai.model };
+      return {
+        baseURL: config.providers.openai.baseURL,
+        model: config.providers.openai.model,
+        thinking: config.providers.openai.thinking === true,
+        extraBody: config.providers.openai.extraBody ?? '',
+      };
     case 'deepseek':
       return {
         baseURL: '',
@@ -34,12 +41,22 @@ export function engineFields(
         thinking: config.providers.deepseek.thinking === true,
       };
     case 'gemini':
-      return { baseURL: '', model: config.providers.gemini.model };
+      return {
+        baseURL: '',
+        model: config.providers.gemini.model,
+        thinking: config.providers.gemini.thinking === true,
+      };
     default: {
       const custom = Object.hasOwn(config.customProviders, engine)
         ? config.customProviders[engine]
         : undefined;
-      return custom && { baseURL: custom.baseURL, model: custom.model };
+      return (
+        custom && {
+          baseURL: custom.baseURL,
+          model: custom.model,
+          extraBody: custom.extraBody ?? '',
+        }
+      );
     }
   }
 }
@@ -57,7 +74,7 @@ export function takesApiKey(engine: Engine): engine is Exclude<Engine, 'google'>
 /** The change that stores one field of an engine; undefined when the engine has no such field. */
 export function fieldChange(
   engine: Engine,
-  field: 'baseURL' | 'model',
+  field: 'baseURL' | 'model' | 'extraBody',
   value: string,
 ): ConfigChange | undefined {
   if (isCustomProviderId(engine)) {
@@ -65,6 +82,9 @@ export function fieldChange(
   }
   if (field === 'baseURL') {
     return engine === 'openai' ? { path: 'providers.openai.baseURL', value } : undefined;
+  }
+  if (field === 'extraBody') {
+    return engine === 'openai' ? { path: 'providers.openai.extraBody', value } : undefined;
   }
   switch (engine) {
     case 'openai':

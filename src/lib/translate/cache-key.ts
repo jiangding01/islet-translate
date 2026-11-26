@@ -9,7 +9,7 @@ export interface CacheKeyParts {
   source: string;
   target: string;
   promptDigest: string;
-  /** '' in M1; M4 fills it when temperature etc. become variable. */
+  /** '' by default; the digest of `ProviderSettings.cacheParams` when there are any (M4-A). */
   paramsDigest: string;
   text: string;
 }

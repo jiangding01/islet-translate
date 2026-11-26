@@ -33,6 +33,7 @@ errors:
     providerLimit: You can add up to 10 custom services. Delete one you don't use, then try again.
     providerMissing: Couldn't find this custom service. It may have been deleted. Choose a default engine again in Settings.
     invalidValue: Invalid value, so it wasn't saved. Check it and try again.
+    invalidExtraBody: 'Needs to be a JSON object, for example {"key": "value"}.'
   network:
     extensionUnreachable: Can't connect to the extension. Reload the extension and try again.
     pageUnreachable: Can't connect to this page. Refresh it and try again. The extension doesn't work on restricted pages such as the Chrome Web Store.
@@ -241,8 +242,12 @@ options:
     modelPlaceholderGemini: Enter a model ID, such as a flash model from the official list
     thinking: Thinking mode
     thinkingHint: When on, the model reasons before it translates. Translations may be more accurate, but are noticeably slower and use more tokens.
+    # $1: thinkingHint above. For models that can't turn thinking off completely.
+    thinkingHintMinimum: "$1 This model can't turn thinking off completely, so Off uses its lowest level."
     thinkingOn: "On"
     thinkingOff: "Off"
+    extraBody: Extra request parameters (JSON)
+    extraBodyHint: 'Merged into every translation request, to pass extra parameters to the model or gateway, for example {"reasoning_effort": "low"}. It can''t override model, stream or messages. Don''t enter API keys here.'
     access: Access
     # $1: the API URL's host name (the code splits the text around it and puts the host node between).
     grantNeeded: The extension needs access to $1

@@ -37,6 +37,33 @@ describe('gemini adapter', () => {
     expect(events).toEqual([{ type: 'item', index: 0, text: '你好' }]);
   });
 
+  it('sends the engine thinking config, which cannot replace the prompt', async () => {
+    const fn = mockFetch(sseResponse([part(OUTPUT)]));
+    const thinkingConfig = { thinkingLevel: 'MINIMAL' };
+    await run(fn, {
+      settings: {
+        baseURL: '',
+        model: 'gemini-3.5-flash',
+        extraBody: { generationConfig: { thinkingConfig }, contents: [], systemInstruction: 'x' },
+      },
+    });
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.generationConfig).toEqual({ thinkingConfig });
+    expect(body.systemInstruction).toEqual({ parts: [{ text: 'SYS' }] });
+    expect(body.contents[0].parts[0].text).toContain('"t":"hello"');
+  });
+
+  it('sends no generationConfig when thinking is left to the model', async () => {
+    const fn = mockFetch(sseResponse([part(OUTPUT)]));
+    await run(fn, { settings: { baseURL: '', model: 'gemini-2.5-flash' } });
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(Object.keys(JSON.parse(init.body as string)).sort()).toEqual([
+      'contents',
+      'systemInstruction',
+    ]);
+  });
+
   it('accumulates text across chunks and skips thought parts', async () => {
     const fn = mockFetch(
       sseResponse([

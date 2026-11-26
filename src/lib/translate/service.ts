@@ -12,7 +12,7 @@ import {
 import type { LookupPhonetic } from '@/lib/phonetic/lookup';
 import { phoneticKey } from '@/lib/phonetic/word';
 import type { TranslationCache } from './cache';
-import { makeCacheKey } from './cache-key';
+import { makeCacheKey, sha256Hex, stableStringify } from './cache-key';
 import { createSameLanguageCheck, type DetectLanguage, detectWithBrowser } from './language';
 import { checkEngineEndpoint } from './permissions';
 import { buildPrompt, promptDigest } from './prompt';
@@ -296,6 +296,10 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
         ? buildPrompt({ source, target, format: request.stream ? 'text' : 'batch' })
         : undefined;
     const digest = prompt ? await promptDigest(prompt) : '';
+    // '' by default, as before M4-A: only params that change the request key it apart.
+    const params = settings.cacheParams
+      ? await sha256Hex(stableStringify(settings.cacheParams))
+      : '';
     const keyed = await Promise.all(
       candidates.map(async (item) => ({
         ...item,
@@ -307,7 +311,7 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
           source,
           target,
           promptDigest: digest,
-          paramsDigest: '',
+          paramsDigest: params,
           text: item.text,
         }),
       })),

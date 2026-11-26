@@ -27,6 +27,7 @@ errors:
     providerLimit: 自訂服務已達 10 個上限。請先刪除不用的服務。
     providerMissing: 找不到這個自訂服務，可能已被刪除。請在設定頁重新選擇預設引擎。
     invalidValue: 設定值不正確，未儲存。請檢查後重試。
+    invalidExtraBody: '需要是一個 JSON 物件，例如 {"key": "value"}。'
   network:
     extensionUnreachable: 無法連線到擴充功能背景程式，請重新載入擴充功能後重試。
     pageUnreachable: 無法連線到頁面，請重新整理網頁後重試。Chrome 線上應用程式商店等受限頁面無法使用。
@@ -234,8 +235,12 @@ options:
     modelPlaceholderGemini: 填寫模型 ID，例如官方清單中的 flash 型號
     thinking: 思考模式
     thinkingHint: 開啟後模型會先推理再翻譯，譯文可能更準確，但明顯更慢，也更耗費 token。
+    # $1：上面的 thinkingHint。用於無法完全關閉思考的模型。
+    thinkingHintMinimum: $1該模型無法完全關閉思考，關閉時使用最低檔。
     thinkingOn: 開
     thinkingOff: 關
+    extraBody: 額外請求參數（JSON）
+    extraBodyHint: '會合併到每次翻譯請求中，用來為模型或閘道傳遞額外參數，例如 {"reasoning_effort": "low"}。不能覆寫 model、stream、messages。請勿在這裡填寫金鑰。'
     access: 存取權限
     # $1：API 網址的主機名稱（程式碼裡拆成前後兩段，中間放主機名稱節點）。
     grantNeeded: 需要允許擴充功能存取 $1

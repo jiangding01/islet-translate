@@ -45,3 +45,13 @@ describe('UI language', () => {
     );
   });
 });
+
+describe('extra request body error', () => {
+  it('explains what the field needs, in zh and en', async () => {
+    const error = appError('config', 'config/invalid-extra-body', 'Extra body is not an object');
+    expect(describeError(error)).toBe('需要是一个 JSON 对象，例如 {"key": "value"}。');
+    expect(withUserMessage(error).userMessage).toBe(describeError(error));
+    await useEnglish();
+    expect(describeError(error)).toBe('Needs to be a JSON object, for example {"key": "value"}.');
+  });
+});

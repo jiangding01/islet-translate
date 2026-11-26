@@ -67,9 +67,12 @@ describe('whitelist', () => {
       'selection.showDot',
       'providers.openai.baseURL',
       'providers.openai.model',
+      'providers.openai.thinking',
+      'providers.openai.extraBody',
       'providers.deepseek.model',
       'providers.deepseek.thinking',
       'providers.gemini.model',
+      'providers.gemini.thinking',
       'customProviders',
     ] as const satisfies readonly ConfigPath[];
     // Type side: every ConfigPath is listed (and `satisfies` checks the reverse).

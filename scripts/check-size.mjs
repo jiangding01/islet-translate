@@ -75,7 +75,9 @@ const entries = [
   },
   {
     name: 'background',
-    budget: 60 * KB,
+    // Raised to 66KB (2026-11-26, user approved, M4 plan docs/plans/m4.md), in effect from
+    // M4-A (thinking rules and extra request body).
+    budget: 66 * KB,
     files: manifest.background?.service_worker ? [manifest.background.service_worker] : [],
   },
   {

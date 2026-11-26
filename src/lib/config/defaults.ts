@@ -11,9 +11,14 @@ export function createDefaultConfig(uiLanguage: string): ConfigV1 {
     page: { style: 'faded', mode: 'bilingual', isleDock: 'right', holdKey: 'ctrl' },
     selection: { showDot: true },
     providers: {
-      openai: { baseURL: DEFAULT_OPENAI_BASE_URL, model: 'gpt-5-mini' },
+      openai: {
+        baseURL: DEFAULT_OPENAI_BASE_URL,
+        model: 'gpt-5-mini',
+        thinking: false,
+        extraBody: '',
+      },
       deepseek: { model: 'deepseek-chat', thinking: false },
-      gemini: { model: '' },
+      gemini: { model: '', thinking: false },
     },
     customProviders: {},
   };

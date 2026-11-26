@@ -1,5 +1,6 @@
 import { appError, isAppError } from '@/lib/errors';
 import { createDefaultConfig } from './defaults';
+import { isExtraBodyValid } from './extra-body';
 import { isPlainObject } from './merge';
 import { parseStoredConfig } from './parse';
 import { CONFIG_PATHS, getPath, isConfigPath, setPath } from './paths';
@@ -133,6 +134,7 @@ export function createConfigRepository(deps: ConfigRepositoryDeps): ConfigReposi
             throw appError('config', 'config/unknown-path', `Unknown config path: ${change.path}`);
           }
           if (change.path === 'translation.engine') engineSet = true;
+          if (change.path === 'providers.openai.extraBody') checkExtraBody(change.value);
           data = setPath(data, change.path, change.value);
         }
         return write(fallBackFromMissingEngine(data, { explicit: engineSet }));
@@ -157,7 +159,18 @@ function isCustomProviderChange(change: ConfigChange): change is CustomProviderC
   return change.path === 'customProviders' && 'key' in change;
 }
 
-const CUSTOM_FIELDS = ['name', 'baseURL', 'model'] as const;
+// Every field an update may change: one left out is silently dropped.
+const CUSTOM_FIELDS = ['name', 'baseURL', 'model', 'extraBody'] as const;
+
+/**
+ * Extra body text must be blank or a JSON object. Checked where it is written (the schema
+ * only caps the length), so a hand-edited stored value never blocks unrelated writes.
+ */
+function checkExtraBody(value: unknown): void {
+  if (typeof value === 'string' && !isExtraBodyValid(value)) {
+    throw appError('config', 'config/invalid-extra-body', 'Extra body is not a JSON object');
+  }
+}
 
 function applyCustomProviderChange(data: unknown, change: CustomProviderChange): unknown {
   if (!isCustomProviderId(change.key)) {
@@ -178,6 +191,7 @@ function applyCustomProviderChange(data: unknown, change: CustomProviderChange):
         `At most ${MAX_CUSTOM_PROVIDERS} custom providers`,
       );
     }
+    checkExtraBody(isPlainObject(change.add) ? change.add.extraBody : undefined);
     providers[change.key] = structuredClone(change.add);
   } else {
     // Updating a provider another page just removed must not bring it back.
@@ -189,6 +203,7 @@ function applyCustomProviderChange(data: unknown, change: CustomProviderChange):
     for (const field of CUSTOM_FIELDS) {
       if (field in change.update) fields[field] = change.update[field];
     }
+    checkExtraBody(fields.extraBody);
     // Merge field by field, so quick successive edits of one provider all survive.
     providers[change.key] = { ...existing, ...fields };
   }

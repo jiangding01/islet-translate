@@ -4,9 +4,14 @@ export const EXTRA_DEFAULTS = {
   page: { style: 'faded', mode: 'bilingual', isleDock: 'right', holdKey: 'ctrl' },
   selection: { showDot: true },
   providers: {
-    openai: { baseURL: 'https://api.openai.com/v1', model: 'gpt-5-mini' },
+    openai: {
+      baseURL: 'https://api.openai.com/v1',
+      model: 'gpt-5-mini',
+      thinking: false,
+      extraBody: '',
+    },
     deepseek: { model: 'deepseek-chat', thinking: false },
-    gemini: { model: '' },
+    gemini: { model: '', thinking: false },
   },
   customProviders: {},
 } as const;

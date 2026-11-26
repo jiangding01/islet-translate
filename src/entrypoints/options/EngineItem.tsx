@@ -8,10 +8,13 @@ import {
   hasEditableBaseURL,
   takesApiKey,
 } from '@/lib/config/engine-fields';
+import { isExtraBodyValid } from '@/lib/config/extra-body';
+import { type ThinkingKind, thinkingRule } from '@/lib/config/thinking-rules';
 import {
   type ConfigChange,
   type ConfigV1,
   CUSTOM_PROVIDER_LIMITS,
+  type Engine,
   isBuiltinEngine,
 } from '@/lib/config/types';
 import { useConfig } from '@/lib/config/use-config';
@@ -49,7 +52,19 @@ interface Props {
   onDelete(): Promise<void>;
 }
 
-type TextField = 'name' | 'baseURL' | 'model';
+type TextField = 'name' | 'baseURL' | 'model' | 'extraBody';
+
+/** Where each engine with a thinking switch stores it. */
+export type ThinkingPath =
+  | 'providers.openai.thinking'
+  | 'providers.deepseek.thinking'
+  | 'providers.gemini.thinking';
+
+const THINKING_PATHS: Partial<Record<Engine, ThinkingPath>> = {
+  openai: 'providers.openai.thinking',
+  deepseek: 'providers.deepseek.thinking',
+  gemini: 'providers.gemini.thinking',
+};
 
 const THINKING_OPTIONS = [
   { value: true, label: 'options.engine.thinkingOn' },
@@ -76,26 +91,40 @@ export function EngineItem(props: Props) {
   const takesKey = takesApiKey(engine);
 
   const fields = engineFields(config, engine);
+  // OpenAI and custom providers only (the field is absent for other engines).
+  const hasExtra = fields?.extraBody !== undefined;
   const saved: Record<TextField, string> = {
     name: custom?.name ?? '',
     baseURL: fields?.baseURL ?? '',
     model: fields?.model ?? '',
+    extraBody: fields?.extraBody ?? '',
   };
+  // The switch follows what is saved: a model typed but not saved yet does not count.
+  const thinking = thinkingRule(engine, saved.model, saved.baseURL);
+  const thinkingPath = THINKING_PATHS[engine];
   const [draft, setDraft] = useState(saved);
   const [editing, setEditing] = useState<TextField>();
   const [baseError, setBaseError] = useState(false);
+  const [extraError, setExtraError] = useState(false);
   const [keyDraft, setKeyDraft] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Follow changes made elsewhere (another tab, a reset), except in the field being typed in.
-  const savedKey = `${saved.name}\n${saved.baseURL}\n${saved.model}`;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: savedKey captures `saved`
+  // Follow changes made elsewhere (another tab, a reset), except in the field being typed in
+  // and in a field whose draft was refused: that draft is unsaved work its error still
+  // points at, so it stays until it is fixed.
+  const savedKey = JSON.stringify(saved);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: savedKey captures `saved`; the errors are read as of this render
   useEffect(() => {
+    const keep = (field: TextField) =>
+      editing === field ||
+      (field === 'baseURL' && baseError) ||
+      (field === 'extraBody' && extraError);
     setDraft((current) => ({
-      name: editing === 'name' ? current.name : saved.name,
-      baseURL: editing === 'baseURL' ? current.baseURL : saved.baseURL,
-      model: editing === 'model' ? current.model : saved.model,
+      name: keep('name') ? current.name : saved.name,
+      baseURL: keep('baseURL') ? current.baseURL : saved.baseURL,
+      model: keep('model') ? current.model : saved.model,
+      extraBody: keep('extraBody') ? current.extraBody : saved.extraBody,
     }));
   }, [savedKey]);
 
@@ -111,6 +140,18 @@ export function EngineItem(props: Props) {
 
   async function commit(field: TextField) {
     setEditing(undefined);
+    if (field === 'extraBody') {
+      // Stored as typed (formatting kept); blank is stored as empty.
+      const text = draft.extraBody.trim() === '' ? '' : draft.extraBody;
+      const valid = isExtraBodyValid(text);
+      setExtraError(!valid);
+      if (!valid) return;
+      setDraft((current) => ({ ...current, extraBody: text }));
+      if (text === saved.extraBody) return;
+      const change = fieldChange(engine, 'extraBody', text);
+      if (change) await apply(change);
+      return;
+    }
     const value = draft[field].trim();
     if (field === 'baseURL') {
       const empty = value === '';
@@ -181,11 +222,19 @@ export function EngineItem(props: Props) {
     granted: draftPattern === pattern ? granted : true,
     keyDraft: keyDraft.trim() !== '',
   });
+  const extraValid = !hasExtra || isExtraBodyValid(draft.extraBody);
   const blocked = testReadiness.reason
     ? i18n.t(TEST_BLOCKED_TEXT[testReadiness.reason])
-    : undefined;
+    : extraValid
+      ? undefined
+      : i18n.t('errors.config.invalidExtraBody');
   // Key saves are not part of it: a key saved mid-test must not discard that result.
-  const testedWith = `${draft.baseURL.trim()}\n${draft.model.trim()}\n${fields?.thinking ?? ''}`;
+  const testedWith = JSON.stringify([
+    draft.baseURL.trim(),
+    draft.model.trim(),
+    fields?.thinking,
+    hasExtra ? draft.extraBody : undefined,
+  ]);
 
   const sub = rowSubtitle(engine, saved);
   const [grantBefore, grantAfter] = splitAround(i18n.t('options.engine.grantNeeded', [SPLIT_MARK]));
@@ -296,10 +345,14 @@ export function EngineItem(props: Props) {
                       engine === 'openai' ? DEFAULT_OPENAI_BASE_URL : 'https://example.com/v1'
                     }
                     aria-invalid={baseError}
+                    aria-describedby={baseError ? `${panelId}-base-error` : undefined}
                     {...field('baseURL')}
                   />
                   {baseError && (
-                    <span className={`${styles.appear} ${styles.fieldError}`}>
+                    <span
+                      id={`${panelId}-base-error`}
+                      className={`${styles.appear} ${styles.fieldError}`}
+                    >
                       {i18n.t('options.engine.baseUrlInvalid')}
                     </span>
                   )}
@@ -399,8 +452,55 @@ export function EngineItem(props: Props) {
               </label>
             )}
 
-            {fields?.thinking !== undefined && (
-              <ThinkingRow thinking={fields.thinking} change={apply} />
+            {thinking && thinkingPath && (
+              <ThinkingRow
+                path={thinkingPath}
+                kind={thinking.kind}
+                thinking={fields?.thinking === true}
+                change={apply}
+              />
+            )}
+
+            {hasExtra && (
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor={`${panelId}-extra`}>
+                  {i18n.t('options.engine.extraBody')}
+                </label>
+                <div className={styles.fieldStack}>
+                  <textarea
+                    id={`${panelId}-extra`}
+                    className={`${styles.input} ${styles.mono} ${styles.textarea}`}
+                    rows={3}
+                    spellCheck={false}
+                    maxLength={CUSTOM_PROVIDER_LIMITS.extraBody}
+                    aria-invalid={extraError}
+                    aria-describedby={
+                      extraError
+                        ? `${panelId}-extra-error ${panelId}-extra-hint`
+                        : `${panelId}-extra-hint`
+                    }
+                    value={draft.extraBody}
+                    onChange={(event) => {
+                      const { value } = event.target;
+                      setDraft((current) => ({ ...current, extraBody: value }));
+                      setExtraError(false);
+                    }}
+                    onFocus={() => setEditing('extraBody')}
+                    onBlur={() => void commit('extraBody')}
+                  />
+                  {extraError && (
+                    <span
+                      id={`${panelId}-extra-error`}
+                      className={`${styles.appear} ${styles.fieldError}`}
+                    >
+                      {i18n.t('errors.config.invalidExtraBody')}
+                    </span>
+                  )}
+                  <span id={`${panelId}-extra-hint`} className={styles.hint}>
+                    {i18n.t('options.engine.extraBodyHint')}
+                  </span>
+                </div>
+              </div>
             )}
 
             {pattern && granted === false && (
@@ -431,6 +531,7 @@ export function EngineItem(props: Props) {
                     model: draft.model.trim(),
                     apiKey: keyDraft.trim() || undefined,
                     thinking: fields?.thinking,
+                    extraBody: hasExtra ? draft.extraBody : undefined,
                   })
                 }
               />
@@ -485,14 +586,22 @@ export function EngineItem(props: Props) {
   );
 }
 
-/** DeepSeek's thinking mode (`providers.deepseek.thinking`), with what turning it on costs. */
+/**
+ * The thinking switch stored at `path`, with what turning it on costs; for a model that can
+ * only go down to its lowest level (`minimum`), the hint also says so.
+ */
 export function ThinkingRow({
+  path,
+  kind,
   thinking,
   change,
 }: {
+  path: ThinkingPath;
+  kind: ThinkingKind;
   thinking: boolean;
   change: (next: ConfigChange) => unknown;
 }) {
+  const hint = i18n.t('options.engine.thinkingHint');
   const id = useId();
   return (
     <div className={styles.field}>
@@ -515,9 +624,7 @@ export function ThinkingRow({
                   name={`${id}-thinking`}
                   className={styles.radioInput}
                   checked={thinking === item.value}
-                  onChange={() =>
-                    void change({ path: 'providers.deepseek.thinking', value: item.value })
-                  }
+                  onChange={() => void change({ path, value: item.value })}
                 />
                 {i18n.t(item.label)}
               </label>
@@ -525,7 +632,7 @@ export function ThinkingRow({
           </fieldset>
         </div>
         <span id={`${id}-hint`} className={styles.hint}>
-          {i18n.t('options.engine.thinkingHint')}
+          {kind === 'minimum' ? i18n.t('options.engine.thinkingHintMinimum', [hint]) : hint}
         </span>
       </div>
     </div>

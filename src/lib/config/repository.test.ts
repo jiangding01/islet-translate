@@ -334,4 +334,66 @@ describe('ConfigRepository: custom providers', () => {
       repo.patch([{ path: 'providers.openai.model', value: 'm'.repeat(201) }]),
     ).rejects.toMatchObject({ code: 'config/invalid-value' });
   });
+
+  it('keeps the extra request body of a provider on add and update, as typed', async () => {
+    const repo = setup();
+    const text = '{\n  "think": false\n}';
+    await repo.patch([
+      {
+        path: 'customProviders',
+        key: 'custom-aaaaaaaa',
+        add: { ...entry('a'), extraBody: text },
+      },
+    ]);
+    expect((await repo.load()).data.customProviders['custom-aaaaaaaa']?.extraBody).toBe(text);
+    await repo.patch([update('custom-aaaaaaaa', { extraBody: '{"a": 1}' })]);
+    await repo.patch([update('custom-aaaaaaaa', { model: 'm2' })]);
+    expect((await repo.load()).data.customProviders['custom-aaaaaaaa']).toEqual({
+      ...entry('a'),
+      model: 'm2',
+      extraBody: '{"a": 1}',
+    });
+    await repo.patch([update('custom-aaaaaaaa', { extraBody: '' })]);
+    expect((await repo.load()).data.customProviders['custom-aaaaaaaa']?.extraBody).toBe('');
+  });
+
+  it('refuses an extra request body that is not a JSON object, and stores nothing', async () => {
+    const store = memoryStore();
+    const repo = createConfigRepository({ store, uiLanguage });
+    await repo.patch([add('custom-aaaaaaaa', 'a')]);
+    const before = structuredClone(store.data.get('config'));
+    for (const extraBody of ['[1]', '{oops', 'null', '"x"', '{"__proto__": {"x": 1}}']) {
+      await expect(repo.patch([update('custom-aaaaaaaa', { extraBody })])).rejects.toMatchObject({
+        code: 'config/invalid-extra-body',
+      });
+      await expect(
+        repo.patch([
+          { path: 'customProviders', key: 'custom-bbbbbbbb', add: { ...entry('b'), extraBody } },
+        ]),
+      ).rejects.toMatchObject({ code: 'config/invalid-extra-body' });
+      await expect(
+        repo.patch([{ path: 'providers.openai.extraBody', value: extraBody }]),
+      ).rejects.toMatchObject({ code: 'config/invalid-extra-body' });
+    }
+    expect(store.data.get('config')).toEqual(before);
+    await expect(
+      repo.patch([update('custom-aaaaaaaa', { extraBody: `{"a":"${'x'.repeat(2000)}"}` })]),
+    ).rejects.toMatchObject({ code: 'config/invalid-value' });
+  });
+
+  it('stores the OpenAI and Gemini thinking switches and the OpenAI extra body', async () => {
+    const repo = setup();
+    const snapshot = await repo.patch([
+      { path: 'providers.openai.thinking', value: true },
+      { path: 'providers.gemini.thinking', value: true },
+      { path: 'providers.openai.extraBody', value: ' { "service_tier": "flex" } ' },
+    ]);
+    expect(snapshot.data.providers.openai).toMatchObject({
+      thinking: true,
+      extraBody: ' { "service_tier": "flex" } ',
+    });
+    expect(snapshot.data.providers.gemini.thinking).toBe(true);
+    const cleared = await repo.patch([{ path: 'providers.openai.extraBody', value: '{}' }]);
+    expect(cleared.data.providers.openai.extraBody).toBe('{}');
+  });
 });
