@@ -7,11 +7,11 @@
 ## [未发布]
 
 ### 新增
-- 用 OpenAI、Gemini 翻译时默认用模型的最低思考档，更快也更省 token；设置 → 翻译服务里 OpenAI、Gemini 的详情新增与 DeepSeek 相同的「思考模式」开关（默认关）。只对官方文档写明档位的模型生效：OpenAI 的 GPT-5 系列（含默认模型 `gpt-5-mini`）与 GPT-5.1 及以后的已收录模型，Gemini 2.5 Flash / Flash-Lite / Pro、3.x 与 Gemini 4 的已收录模型；OpenAI 只在接口地址是官方 `https://api.openai.com/v1` 时生效，改成代理地址后不下发。其他模型、别名（如 `gemini-flash-latest`）不显示开关，请求与以前相同。无法完全关闭思考的模型（如 `gpt-5-mini`、Gemini 2.5 Pro、Gemini 3.x）开关下方会说明「关闭时使用最低档」。测试连接也按这个开关发请求（#待补）。
-- 内置 OpenAI 与每个自定义服务的详情里新增「额外请求参数（JSON）」：填一个 JSON 对象（例如 `{"reasoning_effort": "low"}`），会合并进每次翻译请求，用来给模型或网关传额外参数；`model`、`stream`、`messages` 不能被覆盖。不是 JSON 对象时当场提示、不保存，测试连接按钮不可用。测试连接会带上当前填写的内容。Gemini、DeepSeek 不开放此项（#待补）。
+- 用 OpenAI、Gemini 翻译时默认用模型的最低思考档，更快也更省 token；设置 → 翻译服务里 OpenAI、Gemini 的详情新增与 DeepSeek 相同的「思考模式」开关（默认关）。只对官方文档写明档位的模型生效：OpenAI 的 GPT-5 系列（含默认模型 `gpt-5-mini`）与 GPT-5.1 及以后的已收录模型，Gemini 2.5 Flash / Flash-Lite / Pro、3.x 与 Gemini 4 的已收录模型；OpenAI 只在接口地址是官方 `https://api.openai.com/v1` 时生效，改成代理地址后不下发。其他模型、别名（如 `gemini-flash-latest`）不显示开关，请求与以前相同。无法完全关闭思考的模型（如 `gpt-5-mini`、Gemini 2.5 Pro、Gemini 3.x）开关下方会说明「关闭时使用最低档」。测试连接也按这个开关发请求（#92）。
+- 内置 OpenAI 与每个自定义服务的详情里新增「额外请求参数（JSON）」：填一个 JSON 对象（例如 `{"reasoning_effort": "low"}`），会合并进每次翻译请求，用来给模型或网关传额外参数；`model`、`stream`、`messages` 不能被覆盖。不是 JSON 对象时当场提示、不保存，测试连接按钮不可用。测试连接会带上当前填写的内容。Gemini、DeepSeek 不开放此项（#92）。
 
 ### 变更
-- 缓存：默认设置下所有已有缓存继续有效（OpenAI、Gemini 新的默认最低思考不改变缓存键）；只有打开思考模式（且该模型在收录范围内）或填写了额外请求参数时，同一段文字才会另存一份译文，额外参数按解析后的内容区分，换行、空格、键的顺序不同不影响。#88 之后**已打开** DeepSeek 思考模式的用户，缓存会重建一次（相当于这部分内容重新翻译一遍）；默认关闭思考的用户不受影响。方案与实施记录见 `docs/plans/m4a-thinking-extra.md`（#待补）。
+- 缓存：默认设置下所有已有缓存继续有效（OpenAI、Gemini 新的默认最低思考不改变缓存键）；只有打开思考模式（且该模型在收录范围内）或填写了额外请求参数时，同一段文字才会另存一份译文，额外参数按解析后的内容区分，换行、空格、键的顺序不同不影响。#88 之后**已打开** DeepSeek 思考模式的用户，缓存会重建一次（相当于这部分内容重新翻译一遍）；默认关闭思考的用户不受影响。方案与实施记录见 `docs/plans/m4a-thinking-extra.md`（#92）。
 
 ## [0.6.0] - 2026-11-25
 
