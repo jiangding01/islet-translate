@@ -5,6 +5,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '@/lib/config/defaults';
+import type { GlossaryState } from '@/lib/glossary/client';
 import {
   type GlossaryEntry,
   MAX_GLOSSARY_ENTRIES,
@@ -18,15 +19,18 @@ import styles from './options.module.css';
 
 const client = vi.hoisted(() => ({
   stored: undefined as unknown,
-  listener: undefined as ((entries: GlossaryEntry[]) => void) | undefined,
+  listener: undefined as ((state: GlossaryState) => void) | undefined,
   change: vi.fn(async (_change: unknown) => ({ ok: true as const, data: [] as GlossaryEntry[] })),
 }));
 
 vi.mock('@/lib/glossary/client', async () => {
-  const { readGlossaryEntries: read } = await import('@/lib/glossary/types');
+  const { readGlossaryEntries: read, isReadOnlyGlossary } = await import('@/lib/glossary/types');
   return {
-    readGlossary: async () => read(client.stored),
-    watchGlossary: (callback: (entries: GlossaryEntry[]) => void) => {
+    readGlossary: async () => ({
+      entries: read(client.stored),
+      readOnly: isReadOnlyGlossary(client.stored),
+    }),
+    watchGlossary: (callback: (state: GlossaryState) => void) => {
       client.listener = callback;
       return () => {
         client.listener = undefined;
@@ -75,7 +79,9 @@ const checkbox = () => dialog().querySelector<HTMLInputElement>('input[type="che
 const inDialog = (text: string) =>
   [...dialog().querySelectorAll('button')].find((b) => b.textContent === text);
 const save = () => inDialog('保存');
-const rows = () => [...host.querySelectorAll('li')];
+/** The glossary list (the import dialog, always mounted, has lists of its own). */
+const glossaryList = () => host.querySelector(`.${styles.glossaryList}`);
+const rows = () => [...(glossaryList()?.children ?? [])] as HTMLLIElement[];
 const row = (index: number) => rows()[index] as HTMLLIElement;
 const many = (count: number) =>
   Array.from({ length: count }, (_, index) => ({
@@ -85,7 +91,9 @@ const many = (count: number) =>
   }));
 /** Storage reports a new list, as watchGlossary does after a change. */
 async function stored(entries: unknown[]) {
-  await act(async () => client.listener?.(readGlossaryEntries({ entries })));
+  await act(async () =>
+    client.listener?.({ entries: readGlossaryEntries({ entries }), readOnly: false }),
+  );
 }
 
 async function click(element: Element | null | undefined) {
@@ -127,7 +135,7 @@ describe('GlossaryPage: list', () => {
     await render();
     expect(host.textContent).toContain('还没有术语。添加后，翻译时会按你的译法处理这些词');
     expect(buttons('添加术语')).toHaveLength(1);
-    expect(host.querySelector('ul')).toBeNull();
+    expect(glossaryList()).toBeNull();
     // No count on an empty glossary.
     expect(host.textContent).not.toContain('/ 500');
     await click(button('添加术语'));
@@ -157,7 +165,7 @@ describe('GlossaryPage: list', () => {
 
   it('lays every row on the list grid as a subgrid, so the columns line up', async () => {
     await render([PR, SONNET]);
-    const list = host.querySelector('ul');
+    const list = glossaryList();
     expect(list?.className).toBe(styles.glossaryList);
     for (const row of rows()) {
       expect(row.className.split(' ')).toContain(styles.glossaryRow);

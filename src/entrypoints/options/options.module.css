@@ -1512,3 +1512,321 @@ fieldset.chips {
   font-size: var(--et-fs-caption);
   color: var(--et-color-muted);
 }
+
+/* ---------------------------------------------------------- 术语导入导出 (M4-D) */
+
+.headActions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.menuWrap {
+  position: relative;
+}
+.addButton[aria-expanded="true"] {
+  border-color: var(--et-color-accent-ink);
+}
+.addButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  width: 240px;
+  box-sizing: border-box;
+  padding: 5px;
+  border-radius: var(--et-radius-lg);
+  background: var(--et-color-elevated);
+  box-shadow: var(--et-shadow-3);
+  transform-origin: top right;
+  animation: menugrow var(--et-dur-base) var(--et-ease-grow) both;
+}
+@keyframes menugrow {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+}
+.menuItem {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--et-radius-md);
+  background: transparent;
+  color: var(--et-color-text);
+  font-size: var(--et-fs-control);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+}
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--et-color-surface);
+}
+.menuItem:focus-visible {
+  outline-offset: -2px;
+}
+.menuSub {
+  font-size: var(--et-fs-page-xs);
+  color: var(--et-color-muted);
+}
+.filter {
+  position: relative;
+  display: block;
+}
+.filterIcon {
+  position: absolute;
+  left: 12px;
+  top: 11px;
+  color: var(--et-color-faint);
+  pointer-events: none;
+}
+.filterInput {
+  width: 100%;
+  padding-left: 34px;
+}
+.noMatch {
+  margin: 0;
+  padding: 28px;
+  text-align: center;
+  font-size: var(--et-fs-page-sm);
+  color: var(--et-color-muted);
+}
+
+/* The import dialog: the step body sits where the form grid of the other dialogs does. */
+.importBody {
+  padding: 14px 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.drop {
+  border: 1.5px dashed var(--et-color-border-strong);
+  border-radius: var(--et-radius-lg);
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  background: color-mix(in oklch, var(--et-color-surface) 50%, var(--et-color-elevated));
+  transition:
+    border-color var(--et-dur-fast) var(--et-ease-out),
+    background-color var(--et-dur-fast) var(--et-ease-out);
+}
+.dropOver {
+  border-color: var(--et-color-accent-ink);
+  background: color-mix(in oklch, var(--et-color-accent-soft) 60%, var(--et-color-elevated));
+}
+.dropIcon {
+  display: flex;
+  color: var(--et-color-faint);
+}
+.dropText {
+  font-size: var(--et-fs-page-sm);
+  color: var(--et-color-muted);
+}
+.chooseButton {
+  height: var(--et-h-control-md);
+  color: var(--et-color-text);
+}
+.formatNotes {
+  margin: 2px 0 0;
+  padding: 0 0 0 18px;
+  font-size: var(--et-fs-caption);
+  line-height: 20px;
+  color: var(--et-color-muted);
+}
+.importMeta {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--et-fs-caption);
+  color: var(--et-color-muted);
+}
+.importMeta > svg {
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+/* One sentence that wraps as text; the encoding control sits in it. */
+.importMetaText {
+  min-width: 0;
+  line-height: 26px;
+  overflow-wrap: anywhere;
+}
+.importName {
+  color: var(--et-color-text);
+  font-weight: var(--et-fw-medium);
+}
+.importHeader {
+  margin-left: auto;
+  line-height: 26px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* The encoding switch: a small bordered control inside the file line. */
+.encodingPick {
+  display: inline-block;
+  vertical-align: top;
+}
+.encodingPick > button {
+  height: 26px;
+  margin: 0 2px;
+  border: 1px solid var(--et-color-border);
+  font-size: var(--et-fs-page-xs);
+}
+.importNote {
+  margin: -4px 0 0;
+  font-size: var(--et-fs-caption);
+  color: var(--et-color-muted);
+}
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: var(--et-radius-lg);
+  /* A tint of the text colour: --et-color-surface is close to the dialog in dark mode. */
+  background: color-mix(in oklch, var(--et-color-text) 5%, transparent);
+  font-size: var(--et-fs-caption);
+  color: var(--et-color-muted);
+  white-space: nowrap;
+}
+.stat b {
+  font-size: 17px;
+  color: var(--et-color-text);
+  font-weight: var(--et-fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.banner {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: var(--et-radius-lg);
+  background: var(--et-color-warn-soft);
+  color: var(--et-color-warn);
+  font-size: var(--et-fs-caption);
+  line-height: 19px;
+}
+.banner > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.bannerQuiet {
+  background: color-mix(in oklch, var(--et-color-text) 5%, transparent);
+  color: var(--et-color-muted);
+}
+.previewBox {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--et-color-border);
+  border-radius: var(--et-radius-lg);
+}
+.previewList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 14px minmax(0, 1fr) auto;
+  column-gap: 10px;
+}
+.previewRow {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: var(--et-fs-page-sm);
+}
+.previewRow + .previewRow {
+  border-top: 1px solid var(--et-color-border);
+}
+.previewCell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.previewEmpty {
+  color: var(--et-color-faint);
+}
+.previewArrow {
+  color: var(--et-color-faint);
+}
+.previewChange {
+  color: var(--et-color-faint);
+}
+.previewKeep {
+  color: var(--et-color-accent-ink);
+  font-size: var(--et-fs-page-xs);
+  font-weight: var(--et-fw-semibold);
+}
+.previewLang {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.previewMore {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--et-color-border);
+  font-size: var(--et-fs-caption);
+  color: var(--et-color-muted);
+}
+.pill {
+  justify-self: start;
+  padding: 0 7px;
+  border-radius: var(--et-radius-full);
+  font-size: var(--et-fs-inject-xs);
+  line-height: 18px;
+  font-weight: var(--et-fw-semibold);
+  white-space: nowrap;
+}
+.pillNew {
+  background: color-mix(in oklch, var(--et-color-ok) 14%, var(--et-color-elevated));
+  color: var(--et-color-ok);
+}
+.pillUpdate {
+  background: var(--et-color-accent-soft);
+  color: var(--et-color-accent-ink);
+}
+.pillSame {
+  background: color-mix(in oklch, var(--et-color-text) 6%, transparent);
+  color: var(--et-color-muted);
+}
+.pillInvalid {
+  background: var(--et-color-warn-soft);
+  color: var(--et-color-warn);
+}
+.issues {
+  font-size: var(--et-fs-caption);
+  line-height: 20px;
+  color: var(--et-color-muted);
+  overflow-wrap: anywhere;
+}
+.issuesTitle {
+  font-weight: var(--et-fw-medium);
+  color: var(--et-color-text);
+}
+@media (max-width: 760px) {
+  .sectionHead:has(.headActions) {
+    flex-wrap: wrap;
+  }
+  .statGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

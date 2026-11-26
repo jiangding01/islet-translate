@@ -1,37 +1,57 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { i18n } from '#i18n';
 import type { ConfigV1 } from '@/lib/config/types';
-import { changeGlossary, readGlossary, watchGlossary } from '@/lib/glossary/client';
+import {
+  changeGlossary,
+  type GlossaryState,
+  readGlossary,
+  watchGlossary,
+} from '@/lib/glossary/client';
 import { type GlossaryEntry, MAX_GLOSSARY_ENTRIES } from '@/lib/glossary/types';
 import { languageName } from '@/lib/languages';
 import { GlossaryDialog } from './GlossaryDialog';
+import { GlossaryExportMenu } from './GlossaryExportMenu';
+import { GlossaryImportDialog } from './GlossaryImportDialog';
 import { useRefocus } from './hooks';
-import { DeleteIcon, EditIcon, PlusIcon } from './icons';
+import { DeleteIcon, EditIcon, ImportIcon, PlusIcon, SearchIcon } from './icons';
 import { useNotice } from './notice';
 import styles from './options.module.css';
 
 // The glossary page (M4-C, redesigned in M4): one entry per row on a shared grid, added and
-// edited in a dialog like the custom styles.
+// edited in a dialog like the custom styles. M4-D adds import, export and a filter.
 
-/** The stored entries (malformed ones skipped), kept in step with storage; undefined while loading. */
-export function useGlossaryEntries(): GlossaryEntry[] | undefined {
-  const [entries, setEntries] = useState<GlossaryEntry[]>();
+/**
+ * The stored entries (malformed ones skipped) and whether a newer build wrote them, kept in
+ * step with storage; undefined while loading.
+ */
+export function useGlossary(): GlossaryState | undefined {
+  const [state, setState] = useState<GlossaryState>();
   useEffect(() => {
     let live = true;
-    const stop = watchGlossary((next) => setEntries(next));
+    const stop = watchGlossary((next) => setState(next));
     readGlossary()
       .then((next) => {
-        if (live) setEntries((current) => current ?? next);
+        if (live) setState((current) => current ?? next);
       })
       .catch(() => {
-        if (live) setEntries((current) => current ?? []);
+        if (live) setState((current) => current ?? { entries: [], readOnly: false });
       });
     return () => {
       live = false;
       stop();
     };
   }, []);
-  return entries;
+  return state;
+}
+
+/** Entries whose source or translation contains the query, case ignored. */
+function filterEntries(entries: GlossaryEntry[], query: string): GlossaryEntry[] {
+  const text = query.trim().toLowerCase();
+  if (!text) return entries;
+  return entries.filter(
+    (entry) =>
+      entry.source.toLowerCase().includes(text) || entry.target.toLowerCase().includes(text),
+  );
 }
 
 function BookIcon() {
@@ -71,20 +91,27 @@ function ArrowIcon() {
 type DialogState = { origin: HTMLElement | null; editing?: GlossaryEntry };
 
 export function GlossaryPage({ config }: { config: ConfigV1 }) {
-  const entries = useGlossaryEntries();
+  const glossary = useGlossary();
+  const entries = glossary?.entries;
+  const readOnly = glossary?.readOnly ?? false;
   const notice = useNotice();
   const titleId = useId();
   const addRef = useRef<HTMLButtonElement>(null);
+  const importRef = useRef<HTMLButtonElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const sectionRef = useRef<HTMLElement>(null);
   // Kept after closing, so the closing dialog (it fades out) keeps its title and fields.
   const [dialog, setDialog] = useState<DialogState>({ origin: null });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [confirming, setConfirming] = useState<string>();
-  /** The entry just added or edited: its row flashes once. */
-  const [flash, setFlash] = useState<string>();
+  /** The entries just added, edited or imported: their rows flash once. */
+  const [flash, setFlash] = useState<ReadonlySet<string>>(new Set());
   const list = entries ?? [];
+  const shown = filterEntries(list, query);
   const full = list.length >= MAX_GLOSSARY_ENTRIES;
   const limitText = i18n.t('errors.config.glossaryLimit');
+  const readOnlyText = i18n.t('errors.config.glossaryNewerVersion');
   const refocus = useRefocus(sectionRef, addRef, full);
 
   const openDialog = (state: DialogState) => {
@@ -125,22 +152,60 @@ export function GlossaryPage({ config }: { config: ConfigV1 }) {
             </span>
           )}
         </div>
-        <button
-          ref={addRef}
-          type="button"
-          className={styles.addButton}
-          onClick={() => openDialog({ origin: addRef.current })}
-          disabled={full}
-          title={full ? limitText : undefined}
-        >
-          <PlusIcon />
-          {i18n.t('options.glossary.add')}
-        </button>
+        <div className={styles.headActions}>
+          <button
+            ref={importRef}
+            type="button"
+            className={styles.addButton}
+            onClick={() => {
+              setConfirming(undefined);
+              setImportOpen(true);
+            }}
+            disabled={entries === undefined || readOnly}
+            title={readOnly ? readOnlyText : undefined}
+          >
+            <ImportIcon />
+            {i18n.t('options.glossary.import')}
+          </button>
+          <GlossaryExportMenu
+            entries={list}
+            disabled={list.length === 0 || readOnly}
+            title={readOnly ? readOnlyText : undefined}
+            onExported={() => notice.saved(i18n.t('options.glossary.exported'))}
+          />
+          <button
+            ref={addRef}
+            type="button"
+            className={styles.addButton}
+            onClick={() => openDialog({ origin: addRef.current })}
+            disabled={full}
+            title={full ? limitText : undefined}
+          >
+            <PlusIcon />
+            {i18n.t('options.glossary.add')}
+          </button>
+        </div>
       </div>
+
+      {list.length > 0 && (
+        <label className={styles.filter}>
+          <span className={styles.visuallyHidden}>{i18n.t('options.glossary.filterLabel')}</span>
+          <SearchIcon className={styles.filterIcon} />
+          <input
+            type="search"
+            className={`${styles.input} ${styles.filterInput}`}
+            value={query}
+            placeholder={i18n.t('options.glossary.filterPlaceholder')}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+      )}
 
       {entries !== undefined && (
         <div className={styles.card}>
-          {list.length === 0 ? (
+          {list.length > 0 && shown.length === 0 ? (
+            <p className={styles.noMatch}>{i18n.t('options.glossary.noMatch')}</p>
+          ) : list.length === 0 ? (
             <div className={styles.glossaryEmpty}>
               <span className={styles.glossaryEmptyIcon}>
                 <BookIcon />
@@ -149,12 +214,17 @@ export function GlossaryPage({ config }: { config: ConfigV1 }) {
             </div>
           ) : (
             <ul className={styles.glossaryList}>
-              {list.map((entry) => (
+              {shown.map((entry) => (
                 <li
                   key={entry.id}
-                  className={`${styles.glossaryRow} ${flash === entry.id ? styles.rowFlash : ''}`}
+                  className={`${styles.glossaryRow} ${flash.has(entry.id) ? styles.rowFlash : ''}`}
                   onAnimationEnd={(event) => {
-                    if (event.target === event.currentTarget) setFlash(undefined);
+                    if (event.target !== event.currentTarget) return;
+                    setFlash((current) => {
+                      const next = new Set(current);
+                      next.delete(entry.id);
+                      return next;
+                    });
                   }}
                 >
                   <span
@@ -236,16 +306,40 @@ export function GlossaryPage({ config }: { config: ConfigV1 }) {
         </div>
       )}
       {full && <p className={styles.hint}>{limitText}</p>}
+      {readOnly && <p className={styles.hint}>{readOnlyText}</p>}
 
       <GlossaryDialog
         open={dialogOpen}
         origin={dialog.origin}
         editing={dialog.editing}
         defaultLang={config.language.target}
-        onSaved={setFlash}
+        onSaved={(id) => setFlash(new Set(id ? [id] : []))}
         onClose={() => {
           setDialogOpen(false);
           refocus(dialog.origin);
+        }}
+      />
+      <GlossaryImportDialog
+        open={importOpen}
+        origin={importRef.current}
+        entries={list}
+        defaultLang={config.language.target}
+        onImported={({ ids, added, updated }) => {
+          setImportOpen(false);
+          setQuery('');
+          setFlash(new Set(ids));
+          notice.saved(
+            i18n.t('options.glossary.imported', added + updated, [
+              String(added + updated),
+              String(added),
+              String(updated),
+            ]),
+          );
+          refocus(importRef.current);
+        }}
+        onClose={() => {
+          setImportOpen(false);
+          refocus(importRef.current);
         }}
       />
     </section>

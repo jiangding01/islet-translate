@@ -353,6 +353,94 @@ options:
     sourceRequired: 請填寫原文
     sourceTooLong: 原文最多 200 個字元
     targetTooLong: 譯文最多 200 個字元
+    import: 匯入
+    export: 匯出
+    exportCsv: 匯出為 CSV
+    exportCsvSub: 可用 Excel、Numbers 開啟編輯
+    exportJson: 匯出為 JSON
+    exportJsonSub: 適合備份或換裝置匯入
+    filterLabel: 篩選術語
+    filterPlaceholder: 篩選原文或譯文
+    noMatch: 沒有符合的術語
+    exported: 已匯出
+    # $1：匯入的筆數；$2：新增的筆數；$3：覆蓋的筆數。
+    imported:
+      1: 已匯入 $1 筆（新增 $2，覆蓋 $3）
+      n: 已匯入 $1 筆（新增 $2，覆蓋 $3）
+  glossaryImport:
+    title: 匯入術語
+    sub: 支援 CSV、JSON。匯入前會先預覽，確認後才寫入。
+    drop: 把檔案拖到這裡，或
+    choose: 選擇檔案
+    reading: 正在讀取…
+    rechoose: 重新選擇
+    # $1：要匯入的筆數。
+    submit:
+      1: 匯入 $1 筆
+      n: 匯入 $1 筆
+    note1: 第一列寫表頭：原文、譯文、目標語言、區分大小寫（也認英文 source、target、lang、caseSensitive）。沒有表頭時，前兩欄當作原文和譯文。
+    # $1：目前目標語言的名稱。
+    note2: 譯文留空表示保持原樣；填了譯文但沒寫目標語言的，依目前的目標語言（$1）匯入。
+    note3: 與現有術語重複的（原文相同且目標語言重疊），以檔案裡的譯法覆蓋。
+    note4: 用 Excel 編輯時，請另存為「CSV UTF-8」；檔案不超過 1 MB。
+    # $1：檔名；$2：列數；$3：編碼。
+    meta:
+      1: $1 · $2 列 · $3
+      n: $1 · $2 列 · $3
+    encoding: 檔案編碼
+    header: 第 1 列作為表頭
+    statNew: 新增
+    statUpdate: 覆蓋
+    statSame: 不變
+    statInvalid: 無效
+    # $1：無效的處數。
+    invalidTitle:
+      1: $1 處無效，不會匯入：
+      n: $1 處無效，不會匯入：
+    # $1：列號；$2：原因。
+    lineIssue: 第 $1 列：$2
+    # $1：JSON 裡的項目序號；$2：原因。
+    itemIssue: 第 $1 筆：$2
+    # $1：未顯示的列數。
+    moreRows:
+      1: 還有 $1 列未顯示
+      n: 還有 $1 列未顯示
+    # $1：未列出的處數。
+    moreIssues:
+      1: 等 $1 處
+      n: 等 $1 處
+    # $1：欄名。
+    unknownColumns: 忽略了無法辨識的欄：$1
+    # $1：欄的序號。
+    ignoredColumn: 忽略了第 $1 欄
+    sourceEmpty: 原文為空
+    sourceTooLong: 原文超過 200 個字元
+    targetTooLong: 譯文超過 200 個字元
+    # $1：檔案裡寫的目標語言。
+    badLang: 不支援的目標語言「$1」
+    badCase: 「區分大小寫」只能填是或否
+    extraColumn: 比表頭多出了欄
+    # $1：列號。
+    duplicate: 與第 $1 列重複
+    # $1：列號。
+    sameEntry: 與第 $1 列覆蓋的是同一條術語
+    many: 與現有的多條術語重複
+    multiple: 一次只能匯入一個檔案
+    tooLarge: 檔案超過 1 MB
+    tooManyRows: 檔案超過 2000 列
+    xlsx: 不支援 Excel 檔案，請另存為 CSV
+    unreadable: 無法讀取這個檔案，請另存為「CSV UTF-8」後再試
+    # $1：列號。
+    quote: CSV 第 $1 列引號不完整
+    json: JSON 格式不正確
+    newerVersion: 這個檔案由較新版本的擴充功能匯出，請先更新擴充功能
+    # $1：欄名。
+    duplicateColumn: 表頭裡有重複的欄：$1
+    empty: 檔案裡沒有可匯入的術語
+    # $1：匯入後的筆數；$2：筆數上限。
+    limit: 匯入後共 $1 筆，超過 $2 筆上限。請先從檔案或術語庫裡刪掉一些，再重新匯入。
+    allSame: 術語庫已包含檔案裡的全部術語
+    stale: 術語庫剛被修改過，已依最新內容重新預覽。
   cache:
     title: 翻譯快取
     counting: 正在統計…

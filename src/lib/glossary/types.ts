@@ -26,6 +26,9 @@ export interface GlossaryEntry {
 /** The fields a change sets: everything but the id. */
 export type GlossaryDraft = Omit<GlossaryEntry, 'id'>;
 
+/** One entry of an import: an existing entry keeps its id, a new one has none (M4-D). */
+export type ImportEntry = GlossaryDraft & { id?: string };
+
 /**
  * One entry at a time, so two pages editing different entries never overwrite each other.
  * `update` fails for an entry that is gone instead of bringing it back; `remove` of a missing
@@ -34,7 +37,12 @@ export type GlossaryDraft = Omit<GlossaryEntry, 'id'>;
 export type GlossaryChange =
   | { type: 'add'; entry: GlossaryDraft }
   | { type: 'update'; id: string; entry: GlossaryDraft }
-  | { type: 'remove'; id: string };
+  | { type: 'remove'; id: string }
+  /**
+   * The whole list after an import (M4-D), in display order. Refused as stale unless `base`
+   * still matches the stored glossary (glossaryBase), so nothing changed since the preview.
+   */
+  | { type: 'import'; base: string; entries: ImportEntry[] };
 
 /** Stored as `storage.local.glossary`; the array order is the display order. */
 export interface StoredGlossary {
@@ -70,6 +78,26 @@ export function readGlossaryEntries(raw: unknown): GlossaryEntry[] {
     entries.push(value);
   }
   return entries;
+}
+
+/**
+ * Whether a stored value was written by a build this one does not know (a newer version, or a
+ * version missing or not a number): it is kept as it is, never written over.
+ */
+export function isReadOnlyGlossary(raw: unknown): boolean {
+  return (
+    isPlainObject(raw) && !(typeof raw.version === 'number' && raw.version <= GLOSSARY_VERSION)
+  );
+}
+
+/**
+ * The glossary an import was previewed against, as one string: the id and the four fields of
+ * every entry, in order. The settings page and the background compute it the same way.
+ */
+export function glossaryBase(entries: readonly GlossaryEntry[]): string {
+  return JSON.stringify(
+    entries.map((entry) => [entry.id, entry.source, entry.target, entry.lang, entry.caseSensitive]),
+  );
 }
 
 /** Whether two entries apply to at least one common target language. */

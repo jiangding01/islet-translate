@@ -5,7 +5,10 @@ import {
   GLOSSARY_STORAGE_KEY,
   type GlossaryDraft,
   type GlossaryEntry,
+  glossaryBase,
+  type ImportEntry,
   isDuplicateEntry,
+  isReadOnlyGlossary,
   MAX_GLOSSARY_ENTRIES,
   readGlossaryEntries,
 } from './types';
@@ -204,6 +207,137 @@ describe('glossary repository: changes', () => {
       code: 'config/glossary-write-failed',
     });
     expect((await repo.snapshot()).entries).toEqual([]);
+  });
+});
+
+describe('glossary repository: import (M4-D)', () => {
+  const kept = {
+    id: 'term-aaaaaaaa',
+    source: 'pull request',
+    target: '拉取请求',
+    lang: 'zh-CN',
+    caseSensitive: false,
+    note: 'from a newer build',
+  } as GlossaryEntry;
+  const other: GlossaryEntry = {
+    id: 'term-bbbbbbbb',
+    source: 'GitHub',
+    target: '',
+    lang: '',
+    caseSensitive: false,
+  };
+  const fields = ({ id, source, target, lang, caseSensitive }: GlossaryEntry): ImportEntry => ({
+    id,
+    source,
+    target,
+    lang,
+    caseSensitive,
+  });
+
+  function setupImport(entries: GlossaryEntry[] = [kept, other]) {
+    const context = setup({ version: 1, entries });
+    return { ...context, base: glossaryBase(entries) };
+  }
+
+  it('writes the whole list at once: updates in place keep id and unknown fields', async () => {
+    const { store, repo, base } = setupImport();
+    const entries: ImportEntry[] = [
+      { ...fields(kept), target: '合并请求' },
+      fields(other),
+      draft('token', { target: '词元', lang: 'zh-CN' }),
+      draft('Claude'),
+    ];
+    const written = await repo.change({ type: 'import', base, entries });
+    expect(store.set).toHaveBeenCalledTimes(1);
+    expect(written.map((entry) => [entry.id, entry.source, entry.target])).toEqual([
+      ['term-aaaaaaaa', 'pull request', '合并请求'],
+      ['term-bbbbbbbb', 'GitHub', ''],
+      ['term-00000001', 'token', '词元'],
+      ['term-00000002', 'Claude', ''],
+    ]);
+    expect(stored(store).entries[0]).toMatchObject({ note: 'from a newer build' });
+    expect((await repo.snapshot()).entries).toEqual(written);
+  });
+
+  it('never gives a new entry an id already taken', async () => {
+    const store = memoryStore({
+      version: 1,
+      entries: [{ ...other, id: 'term-00000001' }],
+    });
+    const repo = createGlossaryRepository({ store, random: counterRandom() });
+    const written = await repo.change({
+      type: 'import',
+      base: glossaryBase([{ ...other, id: 'term-00000001' }]),
+      entries: [fields({ ...other, id: 'term-00000001' }), draft('a'), draft('b')],
+    });
+    expect(written.map((entry) => entry.id)).toEqual([
+      'term-00000001',
+      'term-00000002',
+      'term-00000003',
+    ]);
+  });
+
+  it.each([
+    ['removed', [other]],
+    ['edited', [{ ...kept, target: '别的译法' }, other]],
+    ['added to', [kept, other, { ...other, id: 'term-cccccccc', source: 'new' }]],
+    ['reordered', [other, kept]],
+  ])('refuses as stale when the glossary was %s elsewhere, writing nothing', async (_name, now) => {
+    const { store, repo, base } = setupImport();
+    store.data.set(GLOSSARY_STORAGE_KEY, { version: 1, entries: now });
+    vi.mocked(store.set).mockClear();
+    await expect(
+      repo.change({ type: 'import', base, entries: [fields(kept), fields(other), draft('x')] }),
+    ).rejects.toMatchObject({ code: 'config/glossary-stale' });
+    expect(store.set).not.toHaveBeenCalled();
+    expect(stored(store).entries).toEqual(now);
+  });
+
+  it.each([
+    ['an id that does not exist', [{ ...draft('x'), id: 'term-zzzzzzzz' }], 'invalid'],
+    ['an id given twice', [fields(kept), { ...fields(kept), source: 'again' }], 'invalid'],
+    ['a stored entry left out', [fields(kept), draft('x')], 'invalid'],
+    ['a duplicate entry', [fields(kept), draft('Pull Request')], 'duplicate'],
+    ['an invalid field', [draft('x', { target: 'y', lang: 'xx' as never })], 'invalid'],
+    ['an empty source', [draft('  ')], 'invalid'],
+    ['entries that are not an array', 'nope', 'invalid'],
+    [
+      'more than 500 entries',
+      Array.from({ length: MAX_GLOSSARY_ENTRIES + 1 }, (_, index) => draft(`w${index}`)),
+      'limit',
+    ],
+  ])('refuses %s, writing nothing', async (_name, entries, code) => {
+    const { store, repo, base } = setupImport();
+    vi.mocked(store.set).mockClear();
+    await expect(
+      repo.change({ type: 'import', base, entries: entries as ImportEntry[] }),
+    ).rejects.toMatchObject({ code: `config/glossary-${code}` });
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly 500 entries', async () => {
+    const { repo } = setupImport([]);
+    const entries = Array.from({ length: MAX_GLOSSARY_ENTRIES }, (_, index) => draft(`w${index}`));
+    await expect(
+      repo.change({ type: 'import', base: glossaryBase([]), entries }),
+    ).resolves.toHaveLength(MAX_GLOSSARY_ENTRIES);
+  });
+
+  it('never imports into a glossary from a newer version', async () => {
+    const { store, repo } = setup({ version: 2, entries: [other] });
+    await expect(
+      repo.change({ type: 'import', base: glossaryBase([other]), entries: [draft('x')] }),
+    ).rejects.toMatchObject({ code: 'config/glossary-newer-version' });
+    expect(store.set).not.toHaveBeenCalled();
+    expect(isReadOnlyGlossary({ version: 2, entries: [] })).toBe(true);
+    expect(isReadOnlyGlossary({ version: 1, entries: [] })).toBe(false);
+    expect(isReadOnlyGlossary(undefined)).toBe(false);
+  });
+
+  it('computes the base from the id and four fields, in order', () => {
+    expect(glossaryBase([other])).toBe('[["term-bbbbbbbb","GitHub","","",false]]');
+    // Unknown fields never change it.
+    expect(glossaryBase([kept])).toBe(glossaryBase([{ ...kept, note: 'other' } as GlossaryEntry]));
   });
 });
 

@@ -603,6 +603,9 @@ async function start(
     waitForDebuggerOnStart: true,
     flatten: true,
   });
+  // No test ever writes to the machine's download folder (the glossary export, M4-D, stubs the
+  // download in the page and checks the file there).
+  await cdp.send('Browser.setDownloadBehavior', { behavior: 'deny' });
   const page = () => {
     if (!pageSession) throw new Error('the test page is gone');
     return pageSession;
