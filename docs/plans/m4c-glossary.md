@@ -309,7 +309,7 @@
 | 建议：`quoteData` 只接受字符串 | 采纳：改为 `escapeForPrompt(json)`，作用于 stringify 后的结果 |
 
 ## 实施记录（2026-11-26）
-PR：#待定（分支 `feat/m4c-glossary`）。按第 2 稿逐节实现；「需要你决定的事」两条按建议执行：划词只选中一个受保护的词时卡片显示「未变化」，「区分大小写」默认关。
+PR：#95（分支 `feat/m4c-glossary`）。按第 2 稿逐节实现；「需要你决定的事」两条按建议执行：划词只选中一个受保护的词时卡片显示「未变化」，「区分大小写」默认关。
 
 ### 范围
 - 存储与仓库：`src/lib/glossary/types.ts`（类型、常量、设置页与后台共用的宽松读取 `readGlossaryEntries`、重复判定 `isDuplicateEntry`，不含 zod）；`src/lib/glossary/repository.ts`（后台唯一写入方：promise 队列串行写、每次写前重新读存储、内存快照，写入后与 `storage.onChanged` 时整份替换，`version > 1` 只读，坏条目逐条丢弃，未知字段与顶层未知键保留，读失败时本次按空词库翻译、下次重读）；`src/lib/glossary/client.ts`（设置页直接读 `storage.local.glossary` 并监听变化，写入走 `glossary.change`）。
