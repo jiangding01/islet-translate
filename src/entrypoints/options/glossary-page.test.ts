@@ -225,7 +225,7 @@ describe('GlossaryPage: the form', () => {
       error: { kind: 'config', code: 'config/glossary-duplicate', message: 'm', retryable: false },
     } as never);
     await click(save());
-    expect(describedError(sourceInput())).toBe('已有相同原文的术语');
+    expect(describedError(sourceInput())).toBe('已有相同原文的术语。');
     expect(form()).not.toBeNull();
 
     client.change.mockResolvedValueOnce({
@@ -234,7 +234,7 @@ describe('GlossaryPage: the form', () => {
     } as never);
     await type(sourceInput(), 'Opus');
     await click(save());
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe('这条术语已被删除');
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('这条术语已被删除。');
   });
 });
 

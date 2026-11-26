@@ -166,7 +166,7 @@ options:
   nav:
     label: Settings sections
     general: General
-    generalSub: Language, appearance and translation style. Changes apply immediately.
+    generalSub: Language, appearance and how translations look. Changes apply immediately.
     services: Translation services
     servicesSub: Google is free. AI engines and custom services need your own API key.
     styles: Translation styles
