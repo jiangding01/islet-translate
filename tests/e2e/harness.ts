@@ -30,6 +30,8 @@ const BUILD = join(ROOT, '.output/chrome-mv3');
 const FIXTURES = join(ROOT, 'tests/fixtures');
 const RESULTS = join(ROOT, 'test-results/e2e');
 const GOOGLE = 'https://translate.googleapis.com/';
+/** The official OpenAI endpoint (a required host permission); only POST chat completions. */
+const OPENAI_CHAT = 'https://api.openai.com/v1/chat/completions';
 /** Requests the worker may make for real: its own files and the fixture server. */
 const LOCAL = /^(chrome-extension:|http:\/\/127\.0\.0\.1[:/])/;
 const FLAGS = [
@@ -64,6 +66,28 @@ type Point = { x: number; y: number };
 // biome-ignore lint/suspicious/noExplicitAny: CDP payloads are untyped JSON
 type Json = Record<string, any>;
 
+/**
+ * One OpenAI-compatible chat request as the mock reads it. `format` follows the prompt
+ * (src/lib/translate/prompt.ts): `batch` when the user message carries the JSON array of
+ * `{ i, t }` (page translation), `text` for the plain-text prompt between the BEGIN / END
+ * marker lines (stream requests: the selection card). `texts` are the source texts.
+ */
+export interface LlmRequest {
+  body: Json;
+  system: string;
+  user: string;
+  format: 'batch' | 'text';
+  texts: string[];
+}
+
+/**
+ * The whole reply content (streamed as SSE: a JSON array for `batch`, plain text for
+ * `text`), an HTTP status for the request, or undefined for the default (mockTranslate on
+ * every text).
+ */
+type LlmReply = string | number | undefined;
+export type LlmHandler = (request: LlmRequest) => LlmReply | Promise<LlmReply>;
+
 export interface ExtPageOptions {
   /** Script run in the page before any of its own (Page.addScriptToEvaluateOnNewDocument). */
   preload?: string;
@@ -87,7 +111,11 @@ export interface Harness {
   google: { count: number; texts: string[]; targets: string[] };
   /** Replaces the Google handler; no argument restores the default. */
   mockGoogle(handler?: GoogleHandler): void;
-  /** Clears errors, unmocked requests, the worker log and the Google counters. */
+  /** OpenAI chat requests seen (POST /v1/chat/completions), in order, as the mock read them. */
+  llm: { count: number; requests: LlmRequest[] };
+  /** Replaces the OpenAI handler; no argument restores the default. */
+  mockLlm(handler?: LlmHandler): void;
+  /** Clears errors, unmocked requests, the worker log and the Google and OpenAI counters. */
   resetLogs(): void;
   /** Loads tests/fixtures/<fixture> in the test tab (a new document even for the same URL). */
   openPage(fixture: string): Promise<void>;
@@ -175,6 +203,57 @@ export async function waitFor<T>(
  */
 export function mockTranslate(text: string): string {
   return `【MOCK】${text.replace(/(<[^>]*>|&#?\w+;)|[a-z]+/g, (m, keep) => keep ?? m.toUpperCase())}`;
+}
+
+/** The body of a paused request: inline, or (when Chrome left it out) its base64 entries. */
+function postBody(request: Json): string {
+  if (typeof request.postData === 'string') return request.postData;
+  const entries: Json[] = request.postDataEntries ?? [];
+  return entries.map((entry) => Buffer.from(entry.bytes ?? '', 'base64').toString('utf8')).join('');
+}
+
+/**
+ * Reads a chat request the way the extension builds it (src/lib/translate/codec.ts,
+ * renderMessages): a `text` user message is the source between the BEGIN and END marker
+ * lines; a `batch` one is a lead-in line, then the JSON array of `{ i, t }`.
+ */
+function readLlmRequest(body: Json): LlmRequest {
+  const messages: Json[] = Array.isArray(body.messages) ? body.messages : [];
+  const content = (role: string) => String(messages.find((m) => m.role === role)?.content ?? '');
+  const system = content('system');
+  const user = content('user');
+  const text = /^-----BEGIN [^\n]*-----\n([\s\S]*)\n-----END [^\n]*-----$/.exec(user);
+  if (text) return { body, system, user, format: 'text', texts: [text[1] ?? ''] };
+  let items: unknown = [];
+  try {
+    items = JSON.parse(user.slice(user.indexOf('\n') + 1));
+  } catch {}
+  const texts = Array.isArray(items) ? items.map((item: Json) => String(item?.t ?? '')) : [];
+  return { body, system, user, format: 'batch', texts };
+}
+
+/** The default reply: every text through mockTranslate, in the format the prompt asks for. */
+function defaultLlmReply({ format, texts }: LlmRequest): string {
+  if (format === 'text') return mockTranslate(texts[0] ?? '');
+  return JSON.stringify(texts.map((t, i) => ({ i, t: mockTranslate(t) })));
+}
+
+/** A complete Chat Completions stream: the content in small deltas, `stop`, then [DONE]. */
+function sseBody(content: string): string {
+  const event = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
+  const chunk = (delta: Json, finish: string | null) => ({
+    id: 'chatcmpl-e2e',
+    object: 'chat.completion.chunk',
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  });
+  const parts = [chunk({ role: 'assistant', content: '' }, null)];
+  // By code point, so a delta never splits a surrogate pair.
+  const chars = [...content];
+  for (let at = 0; at < chars.length; at += 24) {
+    parts.push(chunk({ content: chars.slice(at, at + 24).join('') }, null));
+  }
+  parts.push(chunk({}, 'stop'));
+  return `${parts.map(event).join('')}data: [DONE]\n\n`;
 }
 
 /** Chrome's id for an unpacked extension: SHA-256 of its real path, hex digits mapped to a-p. */
@@ -342,6 +421,8 @@ async function start(
   const swLog: string[] = [];
   const google = { count: 0, texts: [] as string[], targets: [] as string[] };
   let handler: GoogleHandler | undefined;
+  const llm = { count: 0, requests: [] as LlmRequest[] };
+  let llmHandler: LlmHandler | undefined;
   /** Sessions we set up, by id; the test page is the first page, `sw` our worker. */
   const sessions = new Map<string, { targetId: string; label: string }>();
   let pageSession: string | undefined;
@@ -377,16 +458,42 @@ async function start(
     );
     const status = replies.find((reply) => typeof reply === 'number');
     const body = status ? '' : JSON.stringify(single ? [[[replies[0], 'en']]] : replies);
-    const headers = [{ name: 'content-type', value: 'application/json; charset=utf-8' }];
-    const reply = { requestId, responseCode: status ?? 200, responseHeaders: headers };
+    return fulfill(requestId, sessionId, status ?? 200, 'application/json; charset=utf-8', body);
+  };
+
+  const fulfill = (
+    requestId: string,
+    sessionId: string,
+    responseCode: number,
+    contentType: string,
+    body: string,
+  ) => {
+    const responseHeaders = [{ name: 'content-type', value: contentType }];
+    const params = { requestId, responseCode, responseHeaders };
     const encoded = Buffer.from(body).toString('base64');
     // A slow reply can arrive after its request was cancelled (the page stopped): not an error.
     return cdp
-      .send('Fetch.fulfillRequest', { ...reply, body: encoded }, sessionId)
+      .send('Fetch.fulfillRequest', { ...params, body: encoded }, sessionId)
       .catch((error: Error) => {
         if (!/Invalid InterceptionId/.test(error.message)) throw error;
         return {};
       });
+  };
+
+  const fulfillLlm = async (requestId: string, request: Json, sessionId: string) => {
+    let body: Json = {};
+    try {
+      body = JSON.parse(postBody(request));
+    } catch {}
+    const parsed = readLlmRequest(body);
+    llm.count += 1;
+    llm.requests.push(parsed);
+    const reply = (await llmHandler?.(parsed)) ?? defaultLlmReply(parsed);
+    if (typeof reply === 'number') {
+      const error = JSON.stringify({ error: { message: `mock HTTP ${reply}`, type: 'e2e' } });
+      return fulfill(requestId, sessionId, reply, 'application/json', error);
+    }
+    return fulfill(requestId, sessionId, 200, 'text/event-stream; charset=utf-8', sseBody(reply));
   };
 
   const intercept = (sessionId: string) =>
@@ -422,6 +529,9 @@ async function start(
 
   const onRequest = ({ requestId, request }: Json, sessionId: string) => {
     if (request.url.startsWith(GOOGLE)) return fulfillGoogle(requestId, request, sessionId);
+    if (request.url === OPENAI_CHAT && request.method === 'POST') {
+      return fulfillLlm(requestId, request, sessionId);
+    }
     if (LOCAL.test(request.url)) return cdp.send('Fetch.continueRequest', { requestId }, sessionId);
     unmocked.push(request.url);
     return cdp.send('Fetch.failRequest', { requestId, errorReason: 'NameNotResolved' }, sessionId);
@@ -555,9 +665,16 @@ async function start(
     mockGoogle(next) {
       handler = next;
     },
+    llm,
+    mockLlm(next) {
+      llmHandler = next;
+    },
     resetLogs() {
-      for (const list of [errors, unmocked, swLog, google.texts, google.targets]) list.length = 0;
+      for (const list of [errors, unmocked, swLog, google.texts, google.targets, llm.requests]) {
+        list.length = 0;
+      }
       google.count = 0;
+      llm.count = 0;
     },
     async openPage(fixture) {
       // The test window is not the one the OS focuses: without this `document.hasFocus()` is
@@ -742,7 +859,7 @@ async function start(
 }
 
 /**
- * Per-test hooks: fresh logs and the default Google mock before each test (a handler left
+ * Per-test hooks: fresh logs and the default Google and OpenAI mocks before each test (a handler left
  * behind by a failed test must not reach the next one); after a failed attempt (a retry that passes
  * later included), artifacts in test-results/e2e/<test>, or <test>_retry_<n> for a retry, so
  * a failing retry keeps the first failure's; then, with `closeAfterEach`, the browser closed
@@ -752,6 +869,7 @@ export function trackTests(current: () => Harness | undefined, { closeAfterEach 
   beforeEach(() => {
     current()?.resetLogs();
     current()?.mockGoogle();
+    current()?.mockLlm();
   });
   afterEach(async (context) => {
     const h = current();
