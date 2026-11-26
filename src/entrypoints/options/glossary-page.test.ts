@@ -327,9 +327,12 @@ describe('GlossaryPage: the dialog', () => {
       ok: false,
       error: { kind: 'config', code: 'config/glossary-duplicate', message: 'm', retryable: false },
     } as never);
+    save()?.focus();
     await click(save());
     expect(describedError(sourceInput())).toBe('已有相同原文的术语。');
     expect(sourceInput().getAttribute('aria-invalid')).toBe('true');
+    // The focus moves to the source, so a screen reader reads it with the hint.
+    expect(document.activeElement).toBe(sourceInput());
     expect(isOpen()).toBe(true);
     // Editing the source clears it.
     await type(sourceInput(), 'Opus');

@@ -86,6 +86,18 @@ describe('settings page', () => {
       page.evaluate(
         `[...document.querySelectorAll('button')].find((b) => b.textContent === ${JSON.stringify(label)} || b.getAttribute('aria-label') === ${JSON.stringify(label)}).click()`,
       );
+    const mouse = (
+      type: 'mousePressed' | 'mouseMoved' | 'mouseReleased',
+      point: { x: number; y: number },
+      buttons = 0,
+    ) =>
+      page.input('Input.dispatchMouseEvent', {
+        type,
+        ...point,
+        button: type === 'mouseMoved' && buttons === 0 ? 'none' : 'left',
+        buttons: type === 'mousePressed' ? 1 : buttons,
+        clickCount: 1,
+      });
     /** Types into a React-controlled field (the native setter, then an input event). */
     const fill = (selector: string, value: string) =>
       page.evaluate(`(() => {
@@ -123,6 +135,38 @@ describe('settings page', () => {
     });
     await fill('dialog input', 'Short');
     await fill('dialog textarea', 'Use short sentences.');
+    // Selecting text by dragging out of a field and releasing on the backdrop keeps the dialog
+    // open; a press that starts and ends on the backdrop closes it.
+    // Measured once the dialog has finished growing out of its button.
+    await waitFor(
+      () => page.evaluate<boolean>(`document.querySelector('dialog').getAnimations().length === 0`),
+      { message: 'the dialog to settle' },
+    );
+    const field = await page.evaluate<{ x: number; y: number }>(`(() => {
+      const r = document.querySelector('dialog input').getBoundingClientRect();
+      return { x: r.x + 8, y: r.y + r.height / 2 };
+    })()`);
+    const backdrop = { x: 8, y: 8 };
+    await mouse('mousePressed', field);
+    await mouse('mouseMoved', backdrop, 1);
+    await mouse('mouseReleased', backdrop);
+    await new Promise((done) => setTimeout(done, 300));
+    expect(await page.evaluate<boolean>(`!!document.querySelector('dialog[open]')`)).toBe(true);
+    await mouse('mousePressed', backdrop);
+    await mouse('mouseReleased', backdrop);
+    await waitFor(() => page.evaluate<boolean>(`!document.querySelector('dialog[open]')`), {
+      message: 'the dialog to close on the backdrop',
+    });
+    await clickButton('Add style');
+    // Reopened right away: the previous close's `close` event, which arrives late, must not
+    // close the new one.
+    await waitFor(() => page.evaluate<boolean>(`!!document.querySelector('dialog[open]')`), {
+      message: 'the add style dialog again',
+    });
+    await new Promise((done) => setTimeout(done, 300));
+    expect(await page.evaluate<boolean>(`!!document.querySelector('dialog[open]')`)).toBe(true);
+    await fill('dialog input', 'Short');
+    await fill('dialog textarea', 'Use short sentences.');
     await clickButton('Save');
     await waitFor(
       () =>
@@ -149,6 +193,65 @@ describe('settings page', () => {
       false,
     );
     h?.assertNoErrors();
+  });
+
+  it('keeps a dialog open on Esc while it saves, also after Save was clicked', async () => {
+    const page = await (await start('en')).extPage('options.html#styles');
+    const open = () => page.evaluate<boolean>(`!!document.querySelector('dialog[open]')`);
+    await waitFor(
+      () =>
+        page.evaluate<boolean>(
+          `[...document.querySelectorAll('button')].some((b) => b.textContent === 'Add style')`,
+        ),
+      { message: 'the styles page' },
+    );
+    await page.evaluate(
+      `[...document.querySelectorAll('button')].find((b) => b.textContent === 'Add style').click()`,
+    );
+    await waitFor(open, { message: 'the add style dialog' });
+    await waitFor(
+      () => page.evaluate<boolean>(`document.querySelector('dialog').getAnimations().length === 0`),
+      { message: 'the dialog to settle' },
+    );
+    await page.evaluate(`(() => {
+      for (const [selector, value] of [['dialog input', 'Short'], ['dialog textarea', 'Brief.']]) {
+        const field = document.querySelector(selector);
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value').set.call(field, value);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      // The save never answers: the dialog stays busy.
+      chrome.runtime.sendMessage = () => new Promise(() => {});
+    })()`);
+    // A real click: the focus goes to Save, which is then disabled while saving.
+    const save = await page.evaluate<{ x: number; y: number }>(`(() => {
+      const r = [...document.querySelectorAll('dialog button')]
+        .find((b) => b.textContent === 'Save').getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await page.input('Input.dispatchMouseEvent', {
+        type,
+        ...save,
+        button: 'left',
+        clickCount: 1,
+      });
+    }
+    await waitFor(
+      () =>
+        page.evaluate<boolean>(
+          `[...document.querySelectorAll('dialog button')].find((b) => b.textContent === 'Save').disabled`,
+        ),
+      { message: 'the dialog to be saving' },
+    );
+    const ESC = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 };
+    for (let i = 0; i < 2; i++) {
+      await page.input('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...ESC });
+      await page.input('Input.dispatchKeyEvent', { type: 'keyUp', ...ESC });
+      await new Promise((done) => setTimeout(done, 200));
+      expect(await open(), `open after Esc #${i + 1}`).toBe(true);
+      // The second time with the focus on the page itself, as when Save loses it.
+      await page.evaluate(`document.activeElement?.blur()`);
+    }
   });
 
   it('tests the Google connection and shows the mock translation', async () => {

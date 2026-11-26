@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { i18n } from '#i18n';
 import {
   CUSTOM_STYLE_LIMITS,
@@ -8,7 +8,7 @@ import {
 } from '@/lib/config/types';
 import { useConfig } from '@/lib/config/use-config';
 import { describeError } from '@/lib/error-messages';
-import { CloseIcon } from './icons';
+import { DialogShell } from './DialogShell';
 import { useNotice } from './notice';
 import styles from './options.module.css';
 import { newStyleId } from './providers';
@@ -23,17 +23,13 @@ interface Props {
   onClose(): void;
 }
 
-const DIALOG_WIDTH = 640;
-const DIALOG_TOP = 96;
-
 /**
  * Adds or edits a custom style: a name (shown on the card only) and the description sent to
- * the model. Native modal dialog, written like AddServiceDialog.
+ * the model.
  */
 export function StyleDialog({ open, origin, editing, existingIds, onClose }: Props) {
-  const ref = useRef<HTMLDialogElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
-  const titleId = useId();
+  const fieldId = useId();
   const { patch } = useConfig();
   const notice = useNotice();
   const [name, setName] = useState('');
@@ -45,35 +41,11 @@ export function StyleDialog({ open, origin, editing, existingIds, onClose }: Pro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the draft is filled when the dialog opens, not on every edit elsewhere
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (open && !dialog.open) {
-      setName(editing?.style.name ?? '');
-      setDescription(editing?.style.description ?? '');
-      setTouched({ name: false, description: false });
-      setError(undefined);
-      setBusy(false);
-      if (origin) {
-        const button = origin.getBoundingClientRect();
-        const width = Math.min(DIALOG_WIDTH, window.innerWidth - 32);
-        const left = (window.innerWidth - width) / 2;
-        dialog.style.transformOrigin = `${button.left + button.width / 2 - left}px ${button.top + button.height / 2 - DIALOG_TOP}px`;
-      }
-      dialog.showModal();
-      nameInput.current?.focus();
-    } else if (!open && dialog.open) {
-      dialog.close();
-    }
-  }, [open, origin]);
-
   const nameEmpty = name.trim() === '';
   const descriptionEmpty = description.trim() === '';
   const ready = !nameEmpty && !descriptionEmpty && !busy;
 
-  async function submit(event: { preventDefault(): void }) {
-    event.preventDefault();
+  async function submit() {
     if (!ready) return;
     const fields = { name: name.trim(), description: description.trim() };
     if (!editing && existingIds.length >= MAX_CUSTOM_STYLES) {
@@ -101,128 +73,99 @@ export function StyleDialog({ open, origin, editing, existingIds, onClose }: Pro
   }
 
   return (
-    // Esc is handled natively (onCancel); the click only adds close-on-backdrop.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard users close with Esc
-    <dialog
-      ref={ref}
-      className={styles.dialog}
-      aria-labelledby={titleId}
+    <DialogShell
+      open={open}
+      origin={origin}
+      title={editing ? i18n.t('options.styles.editTitle') : i18n.t('options.styles.addTitle')}
+      busy={busy}
+      initialFocus={nameInput}
+      onOpen={() => {
+        setName(editing?.style.name ?? '');
+        setDescription(editing?.style.description ?? '');
+        setTouched({ name: false, description: false });
+        setError(undefined);
+        setBusy(false);
+      }}
       onClose={onClose}
-      onClick={(event) => {
-        // A click on the backdrop lands on the dialog element itself.
-        if (event.target === event.currentTarget && !busy) onClose();
-      }}
-      onCancel={(event) => {
-        if (busy) event.preventDefault();
-      }}
+      onSubmit={() => void submit()}
+      error={error}
+      cancelLabel={i18n.t('options.styles.cancel')}
+      submitLabel={i18n.t('options.styles.save')}
+      submitDisabled={!ready}
     >
-      <form className={styles.dialogForm} onSubmit={(event) => void submit(event)}>
-        <header className={styles.dialogHeader}>
-          <div>
-            <h2 id={titleId} className={styles.dialogTitle}>
-              {editing ? i18n.t('options.styles.editTitle') : i18n.t('options.styles.addTitle')}
-            </h2>
-          </div>
-          <button
-            type="button"
-            className={styles.iconButton}
-            aria-label={i18n.t('options.add.close')}
-            onClick={onClose}
-            disabled={busy}
-          >
-            <CloseIcon />
-          </button>
-        </header>
-
-        <div className={styles.formGrid}>
-          <div className={styles.formRow}>
-            <label className={styles.label} htmlFor={`${titleId}-name`}>
-              {i18n.t('options.styles.name')}
-            </label>
-            <div className={styles.fieldStack}>
-              <input
-                id={`${titleId}-name`}
-                ref={nameInput}
-                className={styles.input}
-                maxLength={CUSTOM_STYLE_LIMITS.name}
-                value={name}
-                onChange={(event) => {
-                  setName(event.target.value);
-                  setTouched((current) => ({ ...current, name: true }));
-                  setError(undefined);
-                }}
-                placeholder={i18n.t('options.styles.namePlaceholder')}
-                aria-invalid={touched.name && nameEmpty}
-                aria-describedby={touched.name && nameEmpty ? `${titleId}-name-error` : undefined}
-                required
-              />
-              {touched.name && nameEmpty && (
-                <span
-                  id={`${titleId}-name-error`}
-                  className={`${styles.appear} ${styles.fieldError}`}
-                >
-                  {i18n.t('options.styles.nameRequired')}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className={styles.formRow}>
-            <label className={styles.label} htmlFor={`${titleId}-description`}>
-              {i18n.t('options.styles.description')}
-            </label>
-            <div className={styles.fieldStack}>
-              <textarea
-                id={`${titleId}-description`}
-                className={`${styles.input} ${styles.textarea} ${styles.styleTextarea}`}
-                maxLength={CUSTOM_STYLE_LIMITS.description}
-                rows={5}
-                value={description}
-                onChange={(event) => {
-                  setDescription(event.target.value);
-                  setTouched((current) => ({ ...current, description: true }));
-                  setError(undefined);
-                }}
-                placeholder={i18n.t('options.styles.descriptionPlaceholder')}
-                aria-invalid={touched.description && descriptionEmpty}
-                aria-describedby={
-                  touched.description && descriptionEmpty
-                    ? `${titleId}-description-error ${titleId}-count`
-                    : `${titleId}-count`
-                }
-                required
-              />
-              <span className={styles.hint}>
-                {touched.description && descriptionEmpty && (
-                  <span
-                    id={`${titleId}-description-error`}
-                    className={`${styles.appear} ${styles.fieldError}`}
-                  >
-                    {i18n.t('options.styles.descriptionRequired')}
-                  </span>
-                )}
-                <span id={`${titleId}-count`} className={styles.counter}>
-                  {description.length} / {CUSTOM_STYLE_LIMITS.description}
-                </span>
+      <div className={styles.formGrid}>
+        <div className={styles.formRow}>
+          <label className={styles.label} htmlFor={`${fieldId}-name`}>
+            {i18n.t('options.styles.name')}
+          </label>
+          <div className={styles.fieldStack}>
+            <input
+              id={`${fieldId}-name`}
+              ref={nameInput}
+              className={styles.input}
+              maxLength={CUSTOM_STYLE_LIMITS.name}
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setTouched((current) => ({ ...current, name: true }));
+                setError(undefined);
+              }}
+              placeholder={i18n.t('options.styles.namePlaceholder')}
+              aria-invalid={touched.name && nameEmpty}
+              aria-describedby={touched.name && nameEmpty ? `${fieldId}-name-error` : undefined}
+              required
+            />
+            {touched.name && nameEmpty && (
+              <span
+                id={`${fieldId}-name-error`}
+                className={`${styles.appear} ${styles.fieldError}`}
+              >
+                {i18n.t('options.styles.nameRequired')}
               </span>
-            </div>
+            )}
           </div>
         </div>
-
-        <footer className={styles.dialogFooter}>
-          <span
-            className={error ? styles.dialogError : styles.hint}
-            role={error ? 'alert' : undefined}
-          >
-            {error ?? ''}
-          </span>
-          <button type="button" className={styles.ghost} onClick={onClose} disabled={busy}>
-            {i18n.t('options.styles.cancel')}
-          </button>
-          <button type="submit" className={styles.primary} disabled={!ready}>
-            {i18n.t('options.styles.save')}
-          </button>
-        </footer>
-      </form>
-    </dialog>
+        <div className={styles.formRow}>
+          <label className={styles.label} htmlFor={`${fieldId}-description`}>
+            {i18n.t('options.styles.description')}
+          </label>
+          <div className={styles.fieldStack}>
+            <textarea
+              id={`${fieldId}-description`}
+              className={`${styles.input} ${styles.textarea} ${styles.styleTextarea}`}
+              maxLength={CUSTOM_STYLE_LIMITS.description}
+              rows={5}
+              value={description}
+              onChange={(event) => {
+                setDescription(event.target.value);
+                setTouched((current) => ({ ...current, description: true }));
+                setError(undefined);
+              }}
+              placeholder={i18n.t('options.styles.descriptionPlaceholder')}
+              aria-invalid={touched.description && descriptionEmpty}
+              aria-describedby={
+                touched.description && descriptionEmpty
+                  ? `${fieldId}-description-error ${fieldId}-count`
+                  : `${fieldId}-count`
+              }
+              required
+            />
+            <span className={styles.hint}>
+              {touched.description && descriptionEmpty && (
+                <span
+                  id={`${fieldId}-description-error`}
+                  className={`${styles.appear} ${styles.fieldError}`}
+                >
+                  {i18n.t('options.styles.descriptionRequired')}
+                </span>
+              )}
+              <span id={`${fieldId}-count`} className={styles.counter}>
+                {description.length} / {CUSTOM_STYLE_LIMITS.description}
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </DialogShell>
   );
 }

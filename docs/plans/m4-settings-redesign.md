@@ -89,8 +89,8 @@
 |---|---|
 | 次要：窄窗口（≤760px）下，风格页的常驻说明和术语库计数都用了 `.headHint`，被媒体查询隐藏，与「常驻」要求不符 | 已修：改用新类 `.headHintKeep`，媒体查询不隐藏它；组件测试补充类名断言，并断言 CSS 里没有隐藏它的规则 |
 | 建议：满额提示在列表下方，离按钮较远 | 未改：与原型一致；标题旁的「500 / 500」和按钮的 `title` 已能说明原因 |
-| 建议：GlossaryDialog 与 StyleDialog 约 60 行重复（打开/关闭、transformOrigin、页头、底部错误行），AddServiceDialog 是第三份；翻译服务页仍有内联 SVG；对话框表单有 `.formGrid` 与 `.dialogField` 两套布局 | 后续项：抽出 `useModalDialog` 或 `DialogShell` 统一三个对话框，并替换翻译服务页的图标，另开小批次 |
+| 建议：GlossaryDialog 与 StyleDialog 约 60 行重复（打开/关闭、transformOrigin、页头、底部错误行），AddServiceDialog 是第三份；翻译服务页仍有内联 SVG；对话框表单有 `.formGrid` 与 `.dialogField` 两套布局 | 已处理：三个对话框改用共享的 `DialogShell`，表单布局统一为 `.formGrid`，翻译服务页改用 `icons.tsx`，见 `docs/plans/m4-dialog-shell.md` |
 | 建议：部分测试偏弱（长文本只证明全文在 DOM 里；「追加在末尾」实际由 repository 测试覆盖）；e2e 注释夸大 | 未改：如实标注，不影响结论 |
-| 已有问题沿用到新对话框：判重提示读屏不播报；`role=alert` 动态挂载；拖选文字时松手在遮罩上会关闭对话框；busy 时连按两次 Esc；原生 required 气泡 | 后续项：与对话框统一一起处理 |
+| 已有问题沿用到新对话框：判重提示读屏不播报；`role=alert` 动态挂载；拖选文字时松手在遮罩上会关闭对话框；busy 时连按两次 Esc；原生 required 气泡 | 已处理：随对话框统一一起修复，见 `docs/plans/m4-dialog-shell.md` |
 
 第 2 轮（主会话，只审修复增量）：没有新发现。
