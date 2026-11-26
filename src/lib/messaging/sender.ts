@@ -1,6 +1,8 @@
 import type { ConfigRepository } from '@/lib/config/repository';
 import type { ConfigChange, ConfigPath, ConfigSnapshot } from '@/lib/config/types';
 import { type AppError, appError, type Result } from '@/lib/errors';
+import type { GlossaryRepository } from '@/lib/glossary/repository';
+import type { GlossaryChange, GlossaryEntry } from '@/lib/glossary/types';
 import { handle } from './handle';
 
 export interface MessageSenderLike {
@@ -49,6 +51,25 @@ export function createConfigHandlers(deps: ConfigHandlerDeps) {
       handle(() => {
         guard(sender);
         return deps.repo.reset(paths);
+      })(),
+  };
+}
+
+export interface GlossaryHandlerDeps {
+  repo: Pick<GlossaryRepository, 'change'>;
+  extensionRoot: string;
+}
+
+/** The `glossary.change` handler (M4-C), restricted to extension pages like config writes. */
+export function createGlossaryHandlers(deps: GlossaryHandlerDeps) {
+  return {
+    'glossary.change': (
+      sender: MessageSenderLike | undefined,
+      change: GlossaryChange,
+    ): Promise<Result<GlossaryEntry[]>> =>
+      handle(() => {
+        if (!isExtensionPageSender(sender, deps.extensionRoot)) throw forbiddenSenderError();
+        return deps.repo.change(change);
       })(),
   };
 }

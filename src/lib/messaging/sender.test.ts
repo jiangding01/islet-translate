@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createConfigHandlers, isExtensionPageSender } from './sender';
+import { createConfigHandlers, createGlossaryHandlers, isExtensionPageSender } from './sender';
 
 const ROOT = 'chrome-extension://abc/';
 
@@ -51,5 +51,25 @@ describe('config handlers', () => {
       data: { data: 'reset' },
     });
     expect(repo.patch).toHaveBeenCalledWith([]);
+  });
+});
+
+describe('glossary handlers (M4-C)', () => {
+  it('accepts glossary.change from extension pages only', async () => {
+    const repo = { change: vi.fn(async () => []) };
+    const handlers = createGlossaryHandlers({ repo, extensionRoot: ROOT });
+    const change = { type: 'remove' as const, id: 'term-aaaaaaaa' };
+    expect(
+      await handlers['glossary.change']({ url: 'https://evil.example.com/' }, change),
+    ).toMatchObject({
+      ok: false,
+      error: { code: 'validation/forbidden-sender' },
+    });
+    expect(repo.change).not.toHaveBeenCalled();
+    expect(await handlers['glossary.change']({ url: `${ROOT}options.html` }, change)).toEqual({
+      ok: true,
+      data: [],
+    });
+    expect(repo.change).toHaveBeenCalledWith(change);
   });
 });

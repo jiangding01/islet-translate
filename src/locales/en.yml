@@ -36,6 +36,10 @@ errors:
     styleMissing: This style has been deleted.
     invalidValue: Invalid value, so it wasn't saved. Check it and try again.
     invalidExtraBody: 'Needs to be a JSON object, for example {"key": "value"}.'
+    glossaryLimit: You can add up to 500 terms.
+    glossaryDuplicate: A term with the same source already exists.
+    glossaryMissing: This term has been deleted.
+    glossaryNewerVersion: The glossary was saved by a newer version of the extension and can't be changed in this version.
   network:
     extensionUnreachable: Can't connect to the extension. Reload the extension and try again.
     pageUnreachable: Can't connect to this page. Refresh it and try again. The extension doesn't work on restricted pages such as the Chrome Web Store.
@@ -167,6 +171,8 @@ options:
     servicesSub: Google is free. AI engines and custom services need your own API key.
     styles: Translation styles
     stylesSub: Choose a style for AI translation, or add your own.
+    glossary: Glossary
+    glossarySub: Set how specific words are translated, or keep proper nouns as they are. Applies to every translation engine.
     loading: Loading settings…
   notice:
     saved: Saved
@@ -328,6 +334,26 @@ options:
     nameRequired: Enter a name
     descriptionRequired: Enter a style description
     save: Save
+  glossary:
+    add: Add term
+    save: Save
+    cancel: Cancel
+    confirmDelete: Delete
+    source: Source
+    target: Translation
+    lang: Target language
+    caseSensitive: Match case
+    targetPlaceholder: Leave empty to keep it as is
+    keep: Keep as is
+    # $1: the term's source text.
+    editAria: Edit "$1"
+    # $1: the term's source text.
+    deleteAria: Delete "$1"
+    deleteNote: This can't be undone
+    empty: No terms yet. Once added, these words are translated the way you set; leave the translation empty to keep a word as it is, which suits product names, people's names and other proper nouns.
+    sourceRequired: Enter the source text
+    sourceTooLong: The source can be up to 200 characters
+    targetTooLong: The translation can be up to 200 characters
   cache:
     title: Translation cache
     counting: Counting…

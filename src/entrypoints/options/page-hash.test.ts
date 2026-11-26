@@ -7,6 +7,7 @@ describe('pageFromHash', () => {
     expect(pageFromHash('#general')).toBe('general');
     expect(pageFromHash('#services')).toBe('services');
     expect(pageFromHash('#styles')).toBe('styles');
+    expect(pageFromHash('#glossary')).toBe('glossary');
     // Anything else (an old link, a typo) falls back to the general page.
     expect(pageFromHash('#engines')).toBe('general');
   });

@@ -1297,3 +1297,102 @@ fieldset.chips {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---------------------------------------------------------- 术语库 */
+
+/* Takes the focus back (tabIndex -1) when the add button is disabled: no ring for that. */
+.glossarySection:focus {
+  outline: none;
+}
+
+.glossaryEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px;
+}
+.glossaryEmpty p {
+  margin: 0;
+  font-size: var(--et-fs-page-sm);
+  line-height: 1.6;
+  color: var(--et-color-muted);
+}
+.glossaryList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.glossaryRow {
+  border-top: 1px solid var(--et-color-border);
+}
+.glossaryRow:first-child {
+  border-top: 0;
+}
+.glossaryLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 8px 6px 18px;
+}
+.glossaryTerm {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: var(--et-fs-page-sm);
+  overflow-wrap: anywhere;
+}
+.glossaryArrow {
+  color: var(--et-color-faint);
+}
+.glossaryTag {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: var(--et-lh-caption);
+  padding: 0 7px;
+  border-radius: var(--et-radius-full);
+  border: 1px solid var(--et-color-border);
+  color: var(--et-color-muted);
+}
+.glossaryActions {
+  display: flex;
+  flex-shrink: 0;
+}
+.glossaryConfirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 18px 12px;
+}
+.glossaryForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+.glossaryFormFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.glossaryFormFooter > :first-child {
+  margin-right: auto;
+}
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--et-fs-page-sm);
+  color: var(--et-color-text);
+  cursor: pointer;
+}
+.checkbox input {
+  margin: 0;
+  accent-color: var(--et-color-accent);
+}

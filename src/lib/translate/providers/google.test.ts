@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { collect, jsonResponse, makeCtx, mockFetch } from '../test-utils';
 import { createGoogleAdapter } from './google';
 
@@ -306,5 +306,120 @@ describe('google adapter', () => {
         code: 'network/aborted',
       });
     });
+  });
+});
+
+describe('google adapter: glossary term marks (M4-C)', () => {
+  const runTerms = (batch: string[], fetchImpl: ReturnType<typeof mockFetch>) =>
+    collect(
+      adapter.translate(
+        batch,
+        makeCtx({ fetch: fetchImpl, source: 'auto', target: 'zh-CN', terms: true }),
+      ),
+    );
+  /** Answers every q of an HTML request as `译:` plus the q. */
+  const htmlEcho = (init: RequestInit) =>
+    jsonResponse((init.body as URLSearchParams).getAll('q').map((q) => [`译:${q}`, 'en']));
+
+  it('goes straight to HTML mode and never to the plain endpoint or /single', async () => {
+    const fn = mockFetch(
+      jsonResponse([['译:<span translate="no" id="g0">Sonnet</span> 很好', 'en']]),
+    );
+    const events = await runTerms(['<g0>Sonnet</g0> is good'], fn);
+    expect(fn).toHaveBeenCalledTimes(1);
+    const { url, init } = call(fn, 0);
+    expect(url).toContain('/translate_a/t?');
+    expect(url).toContain('&format=html');
+    expect((init.body as URLSearchParams).getAll('q')).toEqual([
+      '<span translate="no" id="g0">Sonnet</span> is good',
+    ]);
+    expect(events).toEqual([{ type: 'item', index: 0, text: '译:<g0>Sonnet</g0> 很好' }]);
+  });
+
+  it('does not retry an echoed or tag-losing answer', async () => {
+    // An echo of a long English sentence would go to /single in plain mode.
+    const source = '<g0>Sonnet</g0> writes the whole report every single morning for the town.';
+    const echo =
+      '<span translate="no" id="g0">Sonnet</span> writes the whole report every single morning for the town.';
+    const fn = mockFetch(jsonResponse([[echo, 'en']]));
+    const events = await runTerms([source], fn);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([{ type: 'item', index: 0, text: source }]);
+  });
+
+  it('cuts requests by HTML length and answers an oversized item with its unmarked source', async () => {
+    const long = `<g0>x</g0> ${'a'.repeat(3000)}`;
+    const huge = `<g0>y</g0> ${'b'.repeat(4980)}`;
+    const calls: string[][] = [];
+    const fn = vi.fn(async (_url: string, init: RequestInit) => {
+      calls.push((init.body as URLSearchParams).getAll('q'));
+      return htmlEcho(init);
+    });
+    const events = await runTerms(
+      [long, huge, long],
+      fn as unknown as ReturnType<typeof mockFetch>,
+    );
+    // Each long item is about 3040 characters of HTML: one per request. The huge one is never sent.
+    expect(calls).toHaveLength(2);
+    expect(calls.every((qs) => qs.length === 1)).toBe(true);
+    expect(events.map((event) => (event.type === 'item' ? event.text.slice(0, 13) : ''))).toEqual([
+      '译:<g0>x</g0> ',
+      `y ${'b'.repeat(11)}`,
+      '译:<g0>x</g0> ',
+    ]);
+  });
+
+  it.each([
+    ['403', () => new Response('', { status: 403 })],
+    ['503', () => new Response('', { status: 503 })],
+    ['a network error', () => new TypeError('offline')],
+  ])(
+    'answers every item with its unmarked source after %s, without /single',
+    async (_name, reply) => {
+      const fn = mockFetch(reply());
+      const events = await runTerms(['<t0><g0>Sonnet</g0></t0> is good', '<g0>A</g0> ok'], fn);
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([
+        { type: 'item', index: 0, text: '<t0>Sonnet</t0> is good' },
+        { type: 'item', index: 1, text: 'A ok' },
+      ]);
+    },
+  );
+
+  it('still throws on 429 and 400, and once aborted', async () => {
+    const limited = mockFetch(new Response('', { status: 429 }));
+    await expect(runTerms(['<g0>Sonnet</g0> is good'], limited)).rejects.toMatchObject({
+      code: 'rate-limit/too-many-requests',
+    });
+    expect(limited).toHaveBeenCalledTimes(1);
+    const bad = mockFetch(new Response('', { status: 400 }));
+    await expect(runTerms(['<g0>Sonnet</g0> is good'], bad)).rejects.toMatchObject({
+      code: 'provider/bad-request',
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = mockFetch(new Response('', { status: 503 }));
+    await expect(
+      collect(
+        adapter.translate(
+          ['<g0>Sonnet</g0> is good'],
+          makeCtx({ fetch: aborted, target: 'zh-CN', terms: true, signal: controller.signal }),
+        ),
+      ),
+    ).rejects.toBeDefined();
+  });
+
+  it('answers an item whose reply does not convert back with its source, marks removed', async () => {
+    const fn = mockFetch(
+      jsonResponse([
+        ['Sonnet 很好', 'en'],
+        ['<span translate="no" id="g0">A</span> 好', 'en'],
+      ]),
+    );
+    const events = await runTerms(['<t0><g0>Sonnet</g0></t0> is good', '<g0>A</g0> ok'], fn);
+    expect(events).toEqual([
+      { type: 'item', index: 0, text: '<t0>Sonnet</t0> is good' },
+      { type: 'item', index: 1, text: '<g0>A</g0> 好' },
+    ]);
   });
 });

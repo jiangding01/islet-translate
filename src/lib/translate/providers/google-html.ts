@@ -8,6 +8,11 @@
 // - an empty <code> survives untouched.
 // Hence: outermost pair → <a id>, inner pairs → <b id>, void → <code id></code>.
 //
+// Glossary terms (M4-C) are marked `<gN>…</gN>` by the service and sent as
+// `<span translate="no" id="gN">`: Google keeps the word and its place in the sentence
+// (m4c plan, appendix A). Line breaks go as `<br>`, since a raw `\n` is merged or even
+// answered with an empty string in HTML mode; Google adds a space after each `<br>`.
+//
 // The reply is never parsed as HTML: tags are matched by pattern, text is decoded.
 //
 // Known limit: the adapter does not know which prefix a segment chose, so a page
@@ -15,10 +20,12 @@
 // treated as a tag here. At worst that costs one extra request (or no repair);
 // the text itself round-trips unchanged.
 
-/** Segment tags as segment() writes them; prefixes as in content/segment.ts. */
-const SOURCE_TAG = /<(\/?)((?:tt|uu|t|u|w|z)\d{1,3})(\/?)>/g;
+/** Segment tags as segment() writes them (prefixes as in content/segment.ts), and term marks. */
+const SOURCE_TAG = /<(\/?)((?:tt|uu|t|u|w|z|g)\d{1,3})(\/?)>/g;
 /** Segment tags as content/segment.ts `tokenize` still accepts them in a reply. */
-const REPLY_TAG = /<(\/?)((?:tt|uu|t|u|w|z)\d{1,3})\s*(\/?)>/g;
+const REPLY_TAG = /<(\/?)((?:tt|uu|t|u|w|z|g)\d{1,3})\s*(\/?)>/g;
+/** Google's line breaks: the tag and the spaces it adds around it. */
+const LINE_BREAK = / *<br\s*\/?> */gi;
 const HTML_TAG = /<(\/?)([a-z]+)\b([^>]*)>/gi;
 const ID_ATTRIBUTE = /\bid\s*=\s*"([^"]*)"/i;
 
@@ -56,7 +63,7 @@ function sourceKinds(source: string): Map<string, Kind> | undefined {
 
 /** Whether the source carries segment tags at all. */
 export function hasTags(source: string): boolean {
-  return /<\/?(?:tt|uu|t|u|w|z)\d{1,3}\/?>/.test(source);
+  return /<\/?(?:tt|uu|t|u|w|z|g)\d{1,3}\/?>/.test(source);
 }
 
 /**
@@ -83,9 +90,15 @@ export function tagsIntact(source: string, output: string): boolean {
 }
 
 const escapeText = (text: string) =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
 
-/** The source with its tags as HTML elements; undefined when the tags are malformed. */
+/** Term marks (`gN`) become spans Google leaves untranslated. */
+const isTerm = (id: string) => id.startsWith('g');
+
+/**
+ * The source with its tags as HTML elements and its line breaks as `<br>`; undefined when the
+ * tags are malformed.
+ */
 export function toHtml(source: string): string | undefined {
   if (!sourceKinds(source)) return undefined;
   const out: string[] = [];
@@ -98,7 +111,10 @@ export function toHtml(source: string): string | undefined {
     const id = match[2] ?? '';
     if (match[1]) out.push(`</${open.pop()}>`);
     else if (match[3]) out.push(`<code id="${id}"></code>`);
-    else {
+    else if (isTerm(id)) {
+      open.push('span');
+      out.push(`<span translate="no" id="${id}">`);
+    } else {
       const name = open.length === 0 ? 'a' : 'b';
       open.push(name);
       out.push(`<${name} id="${id}">`);
@@ -133,12 +149,13 @@ function decodeEntities(text: string): string {
 }
 
 /**
- * An HTML reply back to segment tags; undefined unless it holds only our elements,
- * balanced, and the result passes `tagsIntact` against the source.
+ * An HTML reply back to segment tags and line breaks; undefined unless it holds only our
+ * elements, balanced, and the result passes `tagsIntact` against the source.
  */
-export function fromHtml(html: string, source: string): string | undefined {
+export function fromHtml(reply: string, source: string): string | undefined {
   const kinds = sourceKinds(source);
   if (!kinds) return undefined;
+  const html = reply.replace(LINE_BREAK, '<br>');
   const out: string[] = [];
   const stack: { name: string; id?: string }[] = [];
   let last = 0;
@@ -147,7 +164,11 @@ export function fromHtml(html: string, source: string): string | undefined {
     out.push(decodeEntities(html.slice(last, index)));
     last = index + match[0].length;
     const name = (match[2] ?? '').toLowerCase();
-    if (name !== 'a' && name !== 'b' && name !== 'code') return undefined;
+    if (name === 'br' && !match[1]) {
+      out.push('\n');
+      continue;
+    }
+    if (name !== 'a' && name !== 'b' && name !== 'code' && name !== 'span') return undefined;
     if (match[1]) {
       const top = stack.pop();
       if (!top || top.name !== name) return undefined;
@@ -156,7 +177,14 @@ export function fromHtml(html: string, source: string): string | undefined {
     }
     const id = ID_ATTRIBUTE.exec(match[3] ?? '')?.[1];
     const kind = id ? kinds.get(id) : undefined;
-    if (!id || !kind || (kind === 'void') !== (name === 'code')) return undefined;
+    if (
+      !id ||
+      !kind ||
+      (kind === 'void') !== (name === 'code') ||
+      isTerm(id) !== (name === 'span')
+    ) {
+      return undefined;
+    }
     if (kind === 'void') {
       // Anything Google put inside the empty <code> stays as text after the tag.
       out.push(`<${id}/>`);

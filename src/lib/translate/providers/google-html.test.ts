@@ -96,3 +96,50 @@ describe('fromHtml', () => {
     expect(fromHtml(LEAD_PLAIN_REPLY, LEAD)).toBeUndefined();
   });
 });
+
+describe('glossary term marks and line breaks (M4-C)', () => {
+  const TERMS = 'We used <g0>通义千问</g0> & <t0>read <g1>Sonnet</g1></t0>.\nNext line';
+
+  it('sends marks as untranslated spans inside the other tags, and line breaks as <br>', () => {
+    expect(hasTags('only <g0>x</g0>')).toBe(true);
+    expect(toHtml(TERMS)).toBe(
+      'We used <span translate="no" id="g0">通义千问</span> &amp; <a id="t0">read <span translate="no" id="g1">Sonnet</span></a>.<br>Next line',
+    );
+    // The stack pairs the closing tags with the span, not with an outer tag.
+    expect(toHtml('<t0><g0>a</g0> b</t0> <g1>c</g1>')).toBe(
+      '<a id="t0"><span translate="no" id="g0">a</span> b</a> <span translate="no" id="g1">c</span>',
+    );
+  });
+
+  it('turns the spans back into marks and <br> (with the spaces Google adds) into line breaks', () => {
+    expect(
+      fromHtml(
+        '我们使用了<span translate="no" id="g0">通义千问</span>&amp;<a id="t0">读<span id="g1" translate="no">Sonnet</span></a>。<br> 下一行',
+        TERMS,
+      ),
+    ).toBe('我们使用了<g0>通义千问</g0>&<t0>读<g1>Sonnet</g1></t0>。\n下一行');
+    expect(fromHtml('a <br/> b<br />c', 'a\nb\nc')).toBe('a\nb\nc');
+  });
+
+  it.each([
+    [
+      'a mark sent back as a link',
+      '<a id="g0">x</a><a id="t0">y<span translate="no" id="g1">z</span></a>',
+    ],
+    [
+      'a link sent back as a span',
+      '<span id="g0">x</span><span id="t0">y<span id="g1">z</span></span>',
+    ],
+    ['a mark dropped', '<span id="g0">x</span><a id="t0">y</a>'],
+    ['a closing br', '<span id="g0">x</span></br><a id="t0">y<span id="g1">z</span></a>'],
+  ])('rejects a reply with %s', (_name, html) => {
+    expect(fromHtml(html, TERMS)).toBeUndefined();
+  });
+
+  it('round-trips multi-line text without tags', () => {
+    const source = 'line one\nline two\n\nline four';
+    const html = toHtml(source) ?? '';
+    expect(html).toBe('line one<br>line two<br><br>line four');
+    expect(fromHtml(html.replace(/<br>/g, '<br> '), source)).toBe(source);
+  });
+});

@@ -158,7 +158,60 @@ async function repairTags(batch: string[], texts: string[], ctx: ProviderContext
   return result;
 }
 
+/** Term marks of the service (M4-C); a failed item comes back with them removed. */
+const TERM_MARK = /<\/?g\d{1,3}>/g;
+
+/**
+ * A batch with glossary term marks goes straight to HTML mode (spans Google keeps), never to
+ * the plain endpoint, retryEchoed, repairTags or /single, which would send the marks as text.
+ * Requests are cut by HTML length. An item whose HTML alone is over the limit, whose reply
+ * does not convert back, or whose request failed in a way plain mode falls back from (network,
+ * 403, 404, 5xx, unreadable body) is answered with its source without marks: the service's term
+ * check refuses it and asks again without the glossary, which may then use /single. Any other
+ * failure (429, 400…) throws, so the scheduler retries and cools down as usual.
+ */
+async function* translateTerms(batch: string[], ctx: ProviderContext) {
+  const texts = batch.map((source) => source.replace(TERM_MARK, ''));
+  let group: { index: number; html: string }[] = [];
+  let chars = 0;
+  const send = async () => {
+    if (group.length === 0) return;
+    const picks = group;
+    group = [];
+    chars = 0;
+    const attempt = await primary(
+      picks.map((pick) => pick.html),
+      ctx,
+      true,
+    );
+    if (!attempt.ok) {
+      if (!attempt.fallback || ctx.signal.aborted) throw attempt.error;
+      return;
+    }
+    for (const [position, { index }] of picks.entries()) {
+      const source = batch[index];
+      const reply = attempt.texts[position];
+      if (source === undefined || reply === undefined) continue;
+      const restored = fromHtml(reply, source);
+      if (restored !== undefined) texts[index] = restored;
+    }
+  };
+  for (const [index, source] of batch.entries()) {
+    const html = toHtml(source);
+    if (html === undefined || html.length > LIMITS.maxChars) continue;
+    if (chars + html.length > LIMITS.maxChars) await send();
+    group.push({ index, html });
+    chars += html.length;
+  }
+  await send();
+  for (const [index, text] of texts.entries()) yield { type: 'item' as const, index, text };
+}
+
 async function* translate(batch: string[], ctx: ProviderContext): AsyncGenerator<ProviderEvent> {
+  if (ctx.terms) {
+    yield* translateTerms(batch, ctx);
+    return;
+  }
   const attempt = await primary(batch, ctx);
   if (attempt.ok) {
     const texts = await repairTags(batch, await retryEchoed(batch, attempt.texts, ctx), ctx);

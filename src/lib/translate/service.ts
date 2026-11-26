@@ -1,5 +1,7 @@
 import { type ConfigV1, type Engine, engineFamily, isEngineId } from '@/lib/config/types';
 import { type AppError, appError, type Result } from '@/lib/errors';
+import { findTerms, type TermHit } from '@/lib/glossary/match';
+import type { GlossaryEntry } from '@/lib/glossary/types';
 import { isLanguageCode, type LanguageCode } from '@/lib/languages';
 import {
   TRANSLATE_PAYLOAD_LIMITS,
@@ -13,6 +15,7 @@ import type { LookupPhonetic } from '@/lib/phonetic/lookup';
 import { phoneticKey } from '@/lib/phonetic/word';
 import type { TranslationCache } from './cache';
 import { makeCacheKey, sha256Hex, stableStringify } from './cache-key';
+import type { ItemOutcome } from './codec';
 import { createSameLanguageCheck, type DetectLanguage, detectWithBrowser } from './language';
 import { checkEngineEndpoint } from './permissions';
 import { buildPrompt, promptDigest } from './prompt';
@@ -21,6 +24,16 @@ import { getAdapter as registryAdapter, resolveProviderSettings } from './provid
 import { createScheduler, type Scheduler } from './scheduler';
 import type { SecretStore } from './secrets';
 import { resolveStyle } from './styles';
+import {
+  glossaryDigest,
+  glossaryPairs,
+  hasTermLikeText,
+  isOnlyTerms,
+  localTerms,
+  markTerms,
+  restoreTerms,
+  termsIntact,
+} from './terms';
 import type { ProviderAdapter } from './types';
 
 export interface TranslateServiceDeps {
@@ -40,6 +53,11 @@ export interface TranslateServiceDeps {
   scheduler?: Scheduler;
   /** British / American IPA for `phonetic` requests; without it they get no phonetic chunk. */
   lookupPhonetic?: LookupPhonetic;
+  /**
+   * The glossary entries (M4-C): the background passes the repository's snapshot, the same
+   * array until the glossary changes (terms are compiled per array). Omitted: no glossary.
+   */
+  getGlossary?: () => Promise<readonly GlossaryEntry[]>;
 }
 
 export interface TranslateContext {
@@ -177,6 +195,11 @@ interface Pending {
   text: string;
 }
 
+/** A pending item with the glossary terms found in it. */
+interface Termed extends Pending {
+  terms: TermHit[];
+}
+
 /**
  * Port `et-translate` handler logic: preprocess, same-language skip (unless
  * `force`), cache lookup, then one scheduler submission; emits one final chunk
@@ -290,41 +313,81 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
       if (candidates.length === 0) return done();
     }
 
-    // 3. Cache lookup.
+    // 3. Glossary terms (M4-C): segments with terms go in their own submission, so a request
+    // without terms (and its cache key) stays exactly as before; a segment that is nothing but
+    // terms is answered here. Machine translation never marks a segment that already reads like
+    // a mark.
+    const glossary = deps.getGlossary ? await deps.getGlossary() : [];
+    throwIfAborted(signal);
+    const mt = adapter.kind === 'mt';
+    const plain: Pending[] = [];
+    const termed: Termed[] = [];
+    for (const item of candidates) {
+      const terms =
+        glossary.length > 0 && !(mt && hasTermLikeText(item.text))
+          ? findTerms(glossary, target, item.text)
+          : [];
+      const local = isOnlyTerms(item.text, terms)
+        ? localTerms(item.text, terms, target)
+        : undefined;
+      if (local !== undefined) {
+        emit({
+          id: item.id,
+          text: local,
+          disposition: classifyTranslation(item.text, local),
+          cached: false,
+        });
+      } else if (terms.length === 0) {
+        plain.push(item);
+      } else {
+        termed.push({ ...item, terms });
+      }
+    }
+    if (plain.length === 0 && termed.length === 0) return done();
+
+    // 4. Cache lookup.
     // Stream requests use the plain-text prompt; its digest keeps their cache apart. The
     // style is read per request and only by AI engines; its line is part of the digest.
+    const format = request.stream ? 'text' : 'batch';
+    const style = adapter.kind === 'llm' ? resolveStyle(config) : undefined;
     const prompt =
-      adapter.kind === 'llm'
-        ? buildPrompt({
-            source,
-            target,
-            format: request.stream ? 'text' : 'batch',
-            style: resolveStyle(config),
-          })
-        : undefined;
+      adapter.kind === 'llm' ? buildPrompt({ source, target, format, style }) : undefined;
     const digest = prompt ? await promptDigest(prompt) : '';
     // '' by default, as before M4-A: only params that change the request key it apart.
     const params = settings.cacheParams
       ? await sha256Hex(stableStringify(settings.cacheParams))
       : '';
+    const keyOf = (text: string, glossaryKey?: string) =>
+      makeCacheKey({
+        // Family, not id: re-adding the same endpoint and model reuses the cache.
+        engine: engineFamily(engine),
+        endpoint: settings.baseURL,
+        model: settings.model,
+        source,
+        target,
+        promptDigest: digest,
+        paramsDigest: params,
+        text,
+        glossary: glossaryKey,
+      });
     const keyed = await Promise.all(
-      candidates.map(async (item) => ({
+      plain.map(async (item) => ({ ...item, key: await keyOf(item.text) })),
+    );
+    // The key holds the text without marks and the terms found in it.
+    const keyedTerms = await Promise.all(
+      termed.map(async (item) => ({
         ...item,
-        key: await makeCacheKey({
-          // Family, not id: re-adding the same endpoint and model reuses the cache.
-          engine: engineFamily(engine),
-          endpoint: settings.baseURL,
-          model: settings.model,
-          source,
-          target,
-          promptDigest: digest,
-          paramsDigest: params,
-          text: item.text,
-        }),
+        key: await keyOf(item.text, await glossaryDigest(item.terms)),
       })),
     );
-    const hits = await cache.getMany([...new Set(keyed.map((item) => item.key))]);
+    const hits = await cache.getMany([
+      ...new Set([...keyed, ...keyedTerms].map((item) => item.key)),
+    ]);
     throwIfAborted(signal);
+    const touched = new Set(hits.keys());
+    /** A machine reply with its terms filled in; undefined when its marks did not survive. */
+    const restore = (item: (typeof keyedTerms)[number], text: string) =>
+      mt ? restoreTerms(text, item.text, item.terms, target) : text;
     const misses: typeof keyed = [];
     for (const item of keyed) {
       const hit = hits.get(item.key);
@@ -338,23 +401,39 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
         });
       }
     }
+    const termMisses: typeof keyedTerms = [];
+    for (const item of keyedTerms) {
+      const hit = hits.get(item.key);
+      const text = hit === undefined ? undefined : restore(item, hit);
+      if (text === undefined) termMisses.push(item);
+      else {
+        emit({
+          id: item.id,
+          text,
+          disposition: classifyTranslation(item.text, text),
+          cached: true,
+        });
+      }
+    }
 
     try {
-      if (misses.length === 0) return done();
+      if (misses.length === 0 && termMisses.length === 0) return done();
 
-      // 4. Preconditions shared by every remaining item.
+      // 5. Preconditions shared by every remaining item.
       const permission = await checkPermission(engine, settings.baseURL);
       throwIfAborted(signal);
       if (!permission.ok) {
-        for (const item of misses) emit({ id: item.id, error: permission.error });
+        for (const item of [...misses, ...termMisses]) {
+          emit({ id: item.id, error: permission.error });
+        }
         return done();
       }
       const apiKey = engine === 'google' ? undefined : await deps.secrets.get(engine);
       throwIfAborted(signal);
 
-      // 5. Schedule; chunks are emitted as segments finish. Stream requests also get
+      // 6. Schedule; chunks are emitted as segments finish. Stream requests also get
       // reset / delta chunks (Google never produces deltas).
-      const idOf = new Map(misses.map((item) => [item.key, item.id]));
+      const idOf = new Map([...misses, ...termMisses].map((item) => [item.key, item.id]));
       const streamCallbacks = request.stream
         ? {
             onReset: (key: string) => {
@@ -371,44 +450,135 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
       const left = new Promise<boolean>((resolve) => {
         signal.addEventListener('abort', () => resolve(true), { once: true });
       });
-      const outcomes = scheduler.submit({
+      const shared = {
         caller,
         signal,
         engine,
         cooldownKey: cooldownKeyFor(engine, settings.baseURL),
         adapter,
-        context: { source, target, settings, apiKey, prompt },
-        segments: misses.map((item) => ({ key: item.key, text: item.text })),
-        persist: (entries) => cache.put(entries),
-        ...streamCallbacks,
-      });
-      await Promise.all(
-        outcomes.map(async (pendingOutcome, index) => {
-          const outcome = await pendingOutcome;
-          const item = misses[index];
-          if (!item) return;
-          if (outcome.ok) {
-            const disposition = classifyTranslation(item.text, outcome.text);
-            emit({ id: item.id, text: outcome.text, disposition, cached: false });
-            // Delivered before its AI batch was checked: the item ends only once the batch
-            // has, so a revocation always comes before `done`.
-            if (
-              outcome.verdict &&
-              disposition === 'translated' &&
-              !(await Promise.race([outcome.verdict, left]))
-            ) {
-              emit({ id: item.id, revoked: outcome.text });
+      };
+      const context = { source, target, settings, apiKey, prompt };
+
+      /**
+       * Emits each outcome as it settles. `fill` turns a translation into what is shown;
+       * the items it refuses (undefined) are returned instead of being emitted.
+       */
+      const deliver = async <T extends { id: string; text: string }>(
+        items: readonly T[],
+        outcomes: Promise<ItemOutcome>[],
+        fill: (item: T, text: string) => string | undefined = (_item, text) => text,
+      ): Promise<T[]> => {
+        const refused: T[] = [];
+        await Promise.all(
+          outcomes.map(async (pendingOutcome, index) => {
+            const outcome = await pendingOutcome;
+            const item = items[index];
+            if (!item) return;
+            if (outcome.ok) {
+              const text = fill(item, outcome.text);
+              if (text === undefined) {
+                refused.push(item);
+                return;
+              }
+              const disposition = classifyTranslation(item.text, text);
+              emit({ id: item.id, text, disposition, cached: false });
+              // Delivered before its AI batch was checked: the item ends only once the batch
+              // has, so a revocation always comes before `done`.
+              if (
+                outcome.verdict &&
+                disposition === 'translated' &&
+                !(await Promise.race([outcome.verdict, left]))
+              ) {
+                emit({ id: item.id, revoked: text });
+              }
+            } else {
+              emit({ id: item.id, error: outcome.error });
             }
-          } else {
-            emit({ id: item.id, error: outcome.error });
+          }),
+        );
+        return refused;
+      };
+
+      /** Segments without terms: exactly the submission there was before the glossary. */
+      const submitPlain = (items: readonly { key: string; text: string }[]) =>
+        scheduler.submit({
+          ...shared,
+          context,
+          segments: items.map((item) => ({ key: item.key, text: item.text })),
+          persist: (entries) => cache.put(entries),
+          ...streamCallbacks,
+        });
+
+      /**
+       * Machine segments whose marks did not come back: their cache without terms first, then
+       * one submission without terms for the rest. The terms are lost this time, never the words.
+       */
+      const fallBack = async (items: readonly Termed[]) => {
+        if (items.length === 0) return;
+        const plainKeyed = await Promise.all(
+          items.map(async (item) => ({ ...item, key: await keyOf(item.text) })),
+        );
+        const found = await cache.getMany([...new Set(plainKeyed.map((item) => item.key))]);
+        throwIfAborted(signal);
+        const rest: typeof plainKeyed = [];
+        for (const item of plainKeyed) {
+          const hit = found.get(item.key);
+          if (hit === undefined) rest.push(item);
+          else {
+            touched.add(item.key);
+            emit({
+              id: item.id,
+              text: hit,
+              disposition: classifyTranslation(item.text, hit),
+              cached: true,
+            });
           }
-        }),
-      );
+        }
+        if (rest.length > 0) await deliver(rest, submitPlain(rest));
+      };
+
+      const runs: Promise<unknown>[] = [];
+      if (misses.length > 0) runs.push(deliver(misses, submitPlain(misses)));
+      if (termMisses.length > 0) {
+        const byKey = new Map(termMisses.map((item) => [item.key, item]));
+        const termPrompt =
+          adapter.kind === 'llm'
+            ? buildPrompt({
+                source,
+                target,
+                format,
+                style,
+                // Only the terms of this submission's own segments are sent.
+                glossary: glossaryPairs(termMisses.map((item) => item.terms)),
+              })
+            : undefined;
+        const outcomes = scheduler.submit({
+          ...shared,
+          context: mt ? { ...context, terms: true } : { ...context, prompt: termPrompt },
+          segments: termMisses.map((item) => ({
+            key: item.key,
+            text: mt ? markTerms(item.text, item.terms) : item.text,
+          })),
+          // A machine reply whose marks were lost is never cached under the key with terms.
+          persist: (entries) => {
+            const kept = mt
+              ? entries.filter((entry) => {
+                  const item = byKey.get(entry.key);
+                  return item !== undefined && termsIntact(entry.text, item.text, item.terms);
+                })
+              : entries;
+            return kept.length > 0 ? cache.put(kept) : undefined;
+          },
+          ...streamCallbacks,
+        });
+        runs.push(deliver(termMisses, outcomes, restore).then(fallBack));
+      }
+      await Promise.all(runs);
       throwIfAborted(signal);
       return done();
     } finally {
       // One batched lastUsedAt refresh per request; best effort.
-      if (hits.size > 0) void cache.touch([...hits.keys()]);
+      if (touched.size > 0) void cache.touch([...touched]);
     }
   }
 

@@ -48,6 +48,12 @@ export interface ProviderContext {
   /** Required by LLM adapters. */
   prompt?: BuiltPrompt;
   /**
+   * Machine translation (M4-C): the segments carry glossary term marks (`<gN>…</gN>`). Google
+   * then sends them as HTML only and answers an item it cannot bring back intact with its
+   * source, marks removed (see providers/google.ts).
+   */
+  terms?: boolean;
+  /**
    * Injectable fetch (defaults to globalThis.fetch). The scheduler passes a wrapper
    * that stops its response-header timer once the response arrives.
    */
