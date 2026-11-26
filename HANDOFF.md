@@ -17,7 +17,7 @@
 ## 2. 当前状态
 - 分支 / HEAD：`main`（已合入 M3c 全部 PR #70–#79、验收补丁 #80、设置页入口 #81、发版 #82、小批 PR① #83、PR② #87、依赖升级 #84–#86、DeepSeek 思考开关 #88、发版 v0.6.0 #89、路线图 #90、M4 总方案 #91、M4-A #92；v0.6.0 已发布）；本文随 M4-B 修改。
 - 未提交改动：无。
-- 验证状态：截至 M4-B `npm run check` 通过，单测 2503 个（96 个文件），e2e 82 通过 2 跳过；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
+- 验证状态：截至 M4-B `npm run check` 通过，单测 2503 个（96 个文件），e2e 87 通过 2 跳过（含 OpenAI 模拟服务下的 M4-A/B 用例）；CI 必过：**check、dependency-review、analyze、e2e**（`main protection` 规则集：禁强推、禁删除、必须走 PR；需要强推时先临时停用规则集）。
 - 体积预算（gzip，`npm run check:size`，已用 / 预算，KB）：content 7.67 / 7.75（余约 0.08，M4-B 只多两个默认值 +13 B；M4-E1 输入翻译时按已批预算提到 8.0；**改引导层或常驻监听前必须先评估**）、page-runtime 27.14 / 28（余约 0.86）、selection-runtime 18.20 / 19、palette-runtime 17.80 / 18（用户 2026-11-24 批准由 15 提到 18 KB，随 PR4 生效；余约 0.2）、background 61.67 / 66（M4-B 翻译风格 +1.30；之后 C 约 2–2.5、E2 约 0.3、F 约 0.1，M3e 新增 provider 前大概率要单独报批）、popup 83.48 / 90、options 92.67 / 150；音标分片英 1.41 MB、美 0.80 MB（各 2 MB，单片 40 KB）。
 - 已发布版本：v0.2.0（#53）、v0.3.0（#60）、v0.4.0（#68）、v0.5.0（#82）、v0.6.0（#89），仅 GitHub Release，暂不上架应用商店；打 `v*` 标签由 `.github/workflows/release.yml` 发布，**打 tag 前先问用户**。
 - 路线图：**M3c 已完成并随 v0.5.0 发布（方案 `docs/plans/m3c.md`）→ 体验债小批必做项已随 v0.6.0 发布（可选项待定）→ M4（术语库、`TranslateOptions`、专有名词保护）→ M3e Chrome 内置本地引擎（2026-11-25 用户决定延后到 M4 之后）→ M5（字幕、生词本与词典态）→ M6 → M7 → M8**。小批（用户 2026-11-24 同意，见核实文档第 6、7 节）：必做「LLM 批量逐段提交 + 增量解析」（新增 provider 的前置，已完成，先用 think 写方案过审，两条硬约束：顺序前缀规则、缓存延后写）；可选 Shadow DOM 测量 spike、浮层协调器重构（PR5 合并后）、边扫边注册。批次细节与验收见 `docs/reviews/2026-11-13-final-plan.md`。M3d 已完成（用户决定的拆分见 `docs/plans/m3d.md`），M3b 已完成并含从 M3d 移入的装饰符号剥离、版面安全，手动「不翻译此区域」已移到 M3c。
