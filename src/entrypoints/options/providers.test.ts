@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { i18n } from '#i18n';
+import { CUSTOM_STYLE_ID_PATTERN } from '@/lib/config/types';
 import { createGetMessage, loadLocales } from '../../../scripts/i18n-messages.mjs';
 import {
   defaultProviderName,
   KEY_LINKS,
   newCustomId,
+  newStyleId,
   PRESETS,
   TEST_BLOCKED_TEXT,
 } from './providers';
@@ -15,6 +17,17 @@ async function useEnglish() {
   const getMessage = createGetMessage(await loadLocales(), 'en');
   fakeBrowser.i18n.getMessage = getMessage as typeof fakeBrowser.i18n.getMessage;
 }
+
+describe('newStyleId', () => {
+  it('makes a valid custom style id the same way, and skips taken ones', () => {
+    const fixed = (value: number) => (bytes: Uint8Array<ArrayBuffer>) => bytes.fill(value);
+    expect(newStyleId([], fixed(0))).toBe('style-aaaaaaaa');
+    let calls = 0;
+    const random = (bytes: Uint8Array<ArrayBuffer>) => bytes.fill(calls++ === 0 ? 0 : 1);
+    expect(newStyleId(['style-aaaaaaaa'], random)).toBe('style-bbbbbbbb');
+    expect(newStyleId([])).toMatch(CUSTOM_STYLE_ID_PATTERN);
+  });
+});
 
 describe('newCustomId', () => {
   it('makes a valid id and skips taken ones', () => {

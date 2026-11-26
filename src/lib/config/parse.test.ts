@@ -25,11 +25,12 @@ describe('parseStoredConfig', () => {
     const data = {
       ui: { theme: 'dark' },
       language: { target: 'ko', source: 'ja' },
-      translation: { engine: 'openai' },
+      translation: { engine: 'openai', style: 'style-aaaaaaaa' },
       page: { style: 'highlight', mode: 'translation', isleDock: 'left', holdKey: 'alt' },
       selection: { showDot: false },
       providers: { ...EXTRA_DEFAULTS.providers, gemini: { model: 'm', thinking: false } },
       customProviders: {},
+      customStyles: { 'style-aaaaaaaa': { name: 'Short', description: 'Use short sentences.' } },
     };
     const result = parse(stored(data));
     expect(result.snapshot.data).toEqual(data);
@@ -98,6 +99,73 @@ describe('parseStoredConfig', () => {
     const result = parse(stored({ ...defaults, customProviders }));
     expect(Object.keys(result.snapshot.data.customProviders)).toHaveLength(11);
     expect(result.repaired).toBe(false);
+  });
+
+  describe('translation styles (M4-B)', () => {
+    const custom = { name: 'Short', description: 'Use short sentences.' };
+
+    it('fills the style and the custom styles into an older config', () => {
+      const { style: _style, ...translation } = defaults.translation;
+      const { customStyles: _customStyles, ...older } = defaults;
+      const result = parse(stored({ ...older, ui: { theme: 'dark' }, translation }));
+      expect(result.snapshot.data.translation.style).toBe('general');
+      expect(result.snapshot.data.customStyles).toEqual({});
+      expect(result.snapshot.data.ui.theme).toBe('dark');
+      expect(result.repaired).toBe(true);
+      expect(result.resetPaths).toEqual([]);
+    });
+
+    it.each([
+      ['a missing custom style', 'style-zzzzzzzz'],
+      ['an unknown id', 'formal'],
+      ['a malformed custom id', 'style-ABC'],
+    ])('repairs %s to general, leaving everything else', (_label, style) => {
+      const result = parse(
+        stored({
+          ...defaults,
+          ui: { theme: 'dark' },
+          translation: { engine: 'google', style },
+          customStyles: { 'style-aaaaaaaa': custom },
+        }),
+      );
+      expect(result.fallback).toBe(false);
+      expect(result.snapshot.data.translation).toEqual({ engine: 'google', style: 'general' });
+      expect(result.snapshot.data.ui.theme).toBe('dark');
+      expect(result.snapshot.data.customStyles).toEqual({ 'style-aaaaaaaa': custom });
+      expect(result.resetPaths).toEqual(['translation.style']);
+    });
+
+    it('drops an overlong custom style, then the choice of it, in two rounds', () => {
+      const result = parse(
+        stored({
+          ...defaults,
+          ui: { theme: 'dark' },
+          translation: { engine: 'google', style: 'style-bbbbbbbb' },
+          customStyles: {
+            'style-aaaaaaaa': custom,
+            'style-bbbbbbbb': { name: 'x'.repeat(21), description: 'd' },
+          },
+        }),
+      );
+      expect(result.fallback).toBe(false);
+      expect(result.snapshot.data.customStyles).toEqual({ 'style-aaaaaaaa': custom });
+      expect(result.snapshot.data.translation.style).toBe('general');
+      expect(result.snapshot.data.ui.theme).toBe('dark');
+      expect(result.resetPaths).toEqual(['customStyles.style-bbbbbbbb', 'translation.style']);
+    });
+
+    it('keeps a blank stored description (skipped at request time)', () => {
+      const blank = { name: 'Blank', description: '  ' };
+      const result = parse(
+        stored({
+          ...defaults,
+          translation: { engine: 'google', style: 'style-aaaaaaaa' },
+          customStyles: { 'style-aaaaaaaa': blank },
+        }),
+      );
+      expect(result.repaired).toBe(false);
+      expect(result.snapshot.data.customStyles['style-aaaaaaaa']).toEqual(blank);
+    });
   });
 
   it('repairs an unknown isle dock to the default and fills it when missing', () => {

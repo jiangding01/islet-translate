@@ -7,7 +7,7 @@ export function createDefaultConfig(uiLanguage: string): ConfigV1 {
   return {
     ui: { theme: 'system' },
     language: { target: defaultTargetLanguage(uiLanguage), source: 'auto' },
-    translation: { engine: 'google' },
+    translation: { engine: 'google', style: 'general' },
     page: { style: 'faded', mode: 'bilingual', isleDock: 'right', holdKey: 'ctrl' },
     selection: { showDot: true },
     providers: {
@@ -21,6 +21,7 @@ export function createDefaultConfig(uiLanguage: string): ConfigV1 {
       gemini: { model: '', thinking: false },
     },
     customProviders: {},
+    customStyles: {},
   };
 }
 

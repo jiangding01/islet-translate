@@ -1201,3 +1201,99 @@ fieldset.chips {
     }
   }
 }
+
+/* ---------------------------------------------------------- 翻译风格 */
+
+.styleNote {
+  margin: 0;
+}
+.styleCards {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+/* The card is the frame; the label inside it is the radio, the buttons sit beside it. */
+.styleCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--et-color-border);
+  border-radius: var(--et-radius-lg);
+  background: var(--et-color-elevated);
+  transition:
+    border-color var(--et-dur-fast) var(--et-ease-out),
+    background-color var(--et-dur-base) var(--et-ease-out);
+}
+.styleCard:hover {
+  border-color: var(--et-color-border-strong);
+}
+.styleCard:has(input:checked) {
+  border-color: var(--et-color-accent-ink);
+  background: color-mix(in oklch, var(--et-color-accent-soft) 45%, var(--et-color-elevated));
+}
+.styleCard:has(input:focus-visible) {
+  outline: 2px solid var(--et-color-focus);
+  outline-offset: 2px;
+}
+.styleCardLabel {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 12px 14px;
+  cursor: pointer;
+}
+.styleCardName {
+  font-size: var(--et-fs-page-sm);
+  font-weight: var(--et-fw-medium);
+  overflow-wrap: anywhere;
+}
+.styleCardCustom .styleCardName {
+  padding-right: 60px;
+}
+.styleCardNote {
+  font-size: var(--et-fs-caption);
+  line-height: var(--et-lh-caption);
+  color: var(--et-color-muted);
+  overflow-wrap: anywhere;
+}
+.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.styleCardActions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+}
+.styleCardActions .iconButton {
+  width: 28px;
+}
+.styleConfirm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.styleTextarea {
+  min-height: calc(var(--et-h-control-lg) * 3);
+}
+.counter {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .styleCards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

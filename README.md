@@ -57,6 +57,7 @@ Islet Translate is at version `0.1.0`. M0 (foundation), M1 (translation core), M
 | Toolbar panel | Shows the current site and page language, and switches the target language and default engine.<br>Quiet hints for pages already in your language, browser pages, and pages that need a reload. On a page that already declares your language, **Translate anyway** and the target language stay available. | <sub>Coming soon</sub> |
 | Settings: General | Target and source language, appearance, translation style with a live preview, how a page is shown when translation starts, control bar position, and the selection dot. | <img src="docs/assets/readme/en-options-general.png" width="240" alt="Settings, General page"> |
 | Settings: Translation services | Default engine, keys and models, up to 10 custom OpenAI-compatible services (local models included), **Test connection**, and the translation cache. | <img src="docs/assets/readme/en-options-services.png" width="240" alt="Settings, Translation services page"> |
+| Settings: Translation styles | Styles for translating with an AI engine: General, Technical docs, Academic papers, Casual and Literary, plus up to 10 styles of your own (a name and a style description). One default style for every site; with General the prompt is the same as before and existing cached translations still apply, and after switching styles a paragraph is translated again in the new style. Google Translate is not affected. | <sub>Coming soon</sub> |
 | Interface language | Follows the browser language: English, Simplified Chinese and Traditional Chinese, with English as the default. Chinese text uses the right Simplified or Traditional font forms. | <sub>Coming soon</sub> |
 | Privacy and keys | API keys stay on your computer, and pages only ever see the last 4 characters of a key.<br>There are no accounts and no analytics or tracking code. Page text is sent only to the translation engine you choose.<br>Translations are cached on your computer, and entries older than 7 days are removed every day. | |
 
@@ -361,7 +362,8 @@ Unit tests sit next to the source they cover and are named `*.test.ts`.
 | ✅ Done | v0.5.0 as a GitHub Release |
 | ✅ Done | A small batch of polish: AI batch translations shown paragraph by paragraph, with misaligned ones taken back |
 | ✅ Done | v0.6.0 as a GitHub Release |
-| Next | M4 expert styles, glossary, input translation, multi-engine comparison on the card |
+| ✅ Done | M4-B translation styles (5 presets and custom styles) |
+| Next | The rest of M4: glossary, input translation, multi-engine comparison on the card |
 | Later | M3e Chrome's built-in local engine (moved after M4) |
 | Later | M5 YouTube subtitles, article refinement, vocabulary list, bilingual export |
 | Later | M6 TikTok and subtitle files |

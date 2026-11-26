@@ -13,8 +13,11 @@ import {
   type ConfigSnapshot,
   type ConfigV1,
   type CustomProviderChange,
+  type CustomStyleChange,
   isCustomProviderId,
+  isCustomStyleId,
   MAX_CUSTOM_PROVIDERS,
+  MAX_CUSTOM_STYLES,
 } from './types';
 
 export interface KeyValueStore {
@@ -124,20 +127,31 @@ export function createConfigRepository(deps: ConfigRepositoryDeps): ConfigReposi
       enqueue(async () => {
         let data: unknown = await readWritable();
         let engineSet = false;
+        let styleSet = false;
         for (const change of changes) {
           if (isCustomProviderChange(change)) {
             data = applyCustomProviderChange(data, change);
             continue;
           }
-          // The record itself is never replaced wholesale through a patch.
-          if (!isConfigPath(change.path) || (change.path as string) === 'customProviders') {
+          if (isCustomStyleChange(change)) {
+            data = applyCustomStyleChange(data, change);
+            continue;
+          }
+          // The records themselves are never replaced wholesale through a patch.
+          if (
+            !isConfigPath(change.path) ||
+            (change.path as string) === 'customProviders' ||
+            (change.path as string) === 'customStyles'
+          ) {
             throw appError('config', 'config/unknown-path', `Unknown config path: ${change.path}`);
           }
           if (change.path === 'translation.engine') engineSet = true;
+          if (change.path === 'translation.style') styleSet = true;
           if (change.path === 'providers.openai.extraBody') checkExtraBody(change.value);
           data = setPath(data, change.path, change.value);
         }
-        return write(fallBackFromMissingEngine(data, { explicit: engineSet }));
+        data = fallBackFromMissingEngine(data, { explicit: engineSet });
+        return write(fallBackFromMissingStyle(data, { explicit: styleSet }));
       }),
 
     reset: (paths) =>
@@ -150,7 +164,8 @@ export function createConfigRepository(deps: ConfigRepositoryDeps): ConfigReposi
           }
           data = setPath(data, path, structuredClone(getPath(defaults, path)));
         }
-        return write(fallBackFromMissingEngine(data, { explicit: false }));
+        data = fallBackFromMissingEngine(data, { explicit: false });
+        return write(fallBackFromMissingStyle(data, { explicit: false }));
       }),
   };
 }
@@ -208,6 +223,78 @@ function applyCustomProviderChange(data: unknown, change: CustomProviderChange):
     providers[change.key] = { ...existing, ...fields };
   }
   return setPath(data, 'customProviders', providers);
+}
+
+function isCustomStyleChange(change: ConfigChange): change is CustomStyleChange {
+  return change.path === 'customStyles' && 'key' in change;
+}
+
+// The only fields a custom style keeps: anything else in a change is dropped.
+const STYLE_FIELDS = ['name', 'description'] as const;
+
+/**
+ * The given fields of a custom style, trimmed. A blank (or non-text) field is refused; the
+ * schema caps the length, so an overlong one is refused too, never cut.
+ */
+function styleFields(source: unknown, options: { all: boolean }): Record<string, string> {
+  const given = isPlainObject(source) ? source : {};
+  const fields: Record<string, string> = {};
+  for (const field of STYLE_FIELDS) {
+    if (!options.all && !Object.hasOwn(given, field)) continue;
+    const value = given[field];
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (text === '') {
+      throw appError('config', 'config/invalid-value', `Custom style ${field} is empty`);
+    }
+    fields[field] = text;
+  }
+  return fields;
+}
+
+/**
+ * Written on its own rather than shared with applyCustomProviderChange, so the custom
+ * provider codes and messages stay exactly as they are.
+ */
+function applyCustomStyleChange(data: unknown, change: CustomStyleChange): unknown {
+  if (!isCustomStyleId(change.key)) {
+    throw appError('config', 'config/invalid-value', 'Invalid custom style id');
+  }
+  const current = getPath(data, 'customStyles');
+  const records: Record<string, unknown> = isPlainObject(current) ? { ...current } : {};
+  const exists = Object.hasOwn(records, change.key);
+
+  if ('remove' in change) {
+    delete records[change.key];
+  } else if ('add' in change) {
+    if (exists) throw appError('config', 'config/invalid-value', 'Custom style id is taken');
+    if (Object.keys(records).length >= MAX_CUSTOM_STYLES) {
+      throw appError('config', 'config/style-limit', `At most ${MAX_CUSTOM_STYLES} custom styles`);
+    }
+    records[change.key] = styleFields(change.add, { all: true });
+  } else {
+    // Updating a style another page just removed must not bring it back.
+    const existing = records[change.key];
+    if (!exists || !isPlainObject(existing)) {
+      throw appError('config', 'config/style-missing', 'Custom style not found');
+    }
+    records[change.key] = { ...existing, ...styleFields(change.update, { all: false }) };
+  }
+  return setPath(data, 'customStyles', records);
+}
+
+/**
+ * Like fallBackFromMissingEngine: a chosen style that went away (removed, reset) falls back
+ * to `general` in the same write; choosing a missing style is an error.
+ */
+function fallBackFromMissingStyle(data: unknown, options: { explicit: boolean }): unknown {
+  const style = getPath(data, 'translation.style');
+  const records = getPath(data, 'customStyles');
+  if (!isCustomStyleId(style)) return data;
+  if (isPlainObject(records) && Object.hasOwn(records, style)) return data;
+  if (options.explicit) {
+    throw appError('config', 'config/style-missing', 'Custom style not found');
+  }
+  return setPath(data, 'translation.style', 'general');
 }
 
 /**

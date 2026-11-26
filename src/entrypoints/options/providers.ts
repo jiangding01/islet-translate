@@ -1,5 +1,5 @@
 import { i18n } from '#i18n';
-import type { BuiltinEngine, CustomProviderId } from '@/lib/config/types';
+import type { BuiltinEngine, CustomProviderId, CustomStyleId } from '@/lib/config/types';
 import { normalizeBaseURL } from '@/lib/endpoint';
 import { hostName, type NotReady } from '@/lib/engine-view';
 
@@ -65,12 +65,15 @@ export const PRESETS: readonly Preset[] = [
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-/** `custom-` + 8 random lowercase letters or digits, unique among `existing`. */
-export function newCustomId(
+type RandomBytes = (bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>;
+const randomBytes: RandomBytes = (bytes) => crypto.getRandomValues(bytes);
+
+/** `prefix-` + 8 random lowercase letters or digits, unique among `existing`. */
+function newId<P extends string>(
+  prefix: P,
   existing: Iterable<string>,
-  random: (bytes: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer> = (bytes) =>
-    crypto.getRandomValues(bytes),
-): CustomProviderId {
+  random: RandomBytes,
+): `${P}-${string}` {
   const taken = new Set(existing);
   // Bytes from `limit` up would wrap onto the first letters: skip them, so every
   // character is equally likely.
@@ -82,9 +85,25 @@ export function newCustomId(
         if (byte < limit && suffix.length < 8) suffix += ID_ALPHABET[byte % ID_ALPHABET.length];
       }
     }
-    const id: CustomProviderId = `custom-${suffix}`;
+    const id: `${P}-${string}` = `${prefix}-${suffix}`;
     if (!taken.has(id)) return id;
   }
+}
+
+/** `custom-` + 8 random lowercase letters or digits, unique among `existing`. */
+export function newCustomId(
+  existing: Iterable<string>,
+  random: RandomBytes = randomBytes,
+): CustomProviderId {
+  return newId('custom', existing, random);
+}
+
+/** `style-` + 8 random lowercase letters or digits (as newCustomId), unique among `existing`. */
+export function newStyleId(
+  existing: Iterable<string>,
+  random: RandomBytes = randomBytes,
+): CustomStyleId {
+  return newId('style', existing, random);
 }
 
 /** A preset keeps its label while its address is untouched; otherwise the host names it. */
