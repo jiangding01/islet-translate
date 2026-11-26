@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,8 +11,10 @@ import {
   readGlossaryEntries,
 } from '@/lib/glossary/types';
 import { GlossaryPage } from './GlossaryPage';
+import styles from './options.module.css';
 
-// The glossary page (M4-C), with storage and the background stubbed.
+// The glossary page (M4-C, redesigned in M4: rows on a shared grid, a dialog to add and edit),
+// with storage and the background stubbed.
 
 const client = vi.hoisted(() => ({
   stored: undefined as unknown,
@@ -62,13 +66,27 @@ const buttons = (text: string) =>
   [...host.querySelectorAll('button')].filter((item) => item.textContent === text);
 const button = (text: string) => buttons(text)[0];
 const byLabel = (label: string) => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
-const form = () => host.querySelector('form');
-const inputs = () => [...(form()?.querySelectorAll<HTMLInputElement>('input') ?? [])];
+const dialog = () => host.querySelector('dialog') as HTMLDialogElement;
+const isOpen = () => dialog().open;
+const inputs = () => [...dialog().querySelectorAll<HTMLInputElement>('input')];
 const sourceInput = () => inputs()[0] as HTMLInputElement;
 const targetInput = () => inputs()[1] as HTMLInputElement;
-const checkbox = () => form()?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-const save = () =>
-  [...(form()?.querySelectorAll('button') ?? [])].find((b) => b.textContent === '保存');
+const checkbox = () => dialog().querySelector<HTMLInputElement>('input[type="checkbox"]');
+const inDialog = (text: string) =>
+  [...dialog().querySelectorAll('button')].find((b) => b.textContent === text);
+const save = () => inDialog('保存');
+const rows = () => [...host.querySelectorAll('li')];
+const row = (index: number) => rows()[index] as HTMLLIElement;
+const many = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    ...SONNET,
+    id: `term-${String(index).padStart(8, '0')}`,
+    source: `w${index}`,
+  }));
+/** Storage reports a new list, as watchGlossary does after a change. */
+async function stored(entries: unknown[]) {
+  await act(async () => client.listener?.(readGlossaryEntries({ entries })));
+}
 
 async function click(element: Element | null | undefined) {
   await act(async () => {
@@ -105,56 +123,115 @@ afterEach(() => {
 });
 
 describe('GlossaryPage: list', () => {
-  it('shows the empty state with its own add button', async () => {
+  it('shows the empty state in the card, with the header button as the only add button', async () => {
     await render();
     expect(host.textContent).toContain('还没有术语。添加后，翻译时会按你的译法处理这些词');
-    expect(buttons('添加术语')).toHaveLength(2);
-    await click(buttons('添加术语')[1]);
-    expect(form()).not.toBeNull();
-    expect(host.textContent).not.toContain('还没有术语');
+    expect(buttons('添加术语')).toHaveLength(1);
+    expect(host.querySelector('ul')).toBeNull();
+    // No count on an empty glossary.
+    expect(host.textContent).not.toContain('/ 500');
+    await click(button('添加术语'));
+    expect(isOpen()).toBe(true);
+    expect(dialog().querySelector('h2')?.textContent).toBe('添加术语');
   });
 
   it('shows each entry with its translation or the keep tag, language and case', async () => {
     await render([PR, SONNET]);
-    const rows = [...host.querySelectorAll('li')].map((row) => row.textContent);
-    expect(rows[0]).toContain('pull request→拉取请求简体中文');
-    expect(rows[1]).toContain('Sonnet→保持原样Aa');
+    expect(host.querySelector('h2')?.textContent).toBe('术语');
+    expect(host.textContent).toContain('2 / 500');
+    // The count stays visible in narrow windows, unlike plain head hints.
+    const count = [...host.querySelectorAll('span')].find((item) => item.textContent === '2 / 500');
+    expect(count?.className).toBe(styles.headHintKeep);
+    expect(rows().map((row) => row.textContent)).toEqual([
+      'pull request拉取请求简体中文',
+      // "Aa" is hidden from screen readers, which read the words instead.
+      'Sonnet保持原样Aa区分大小写',
+    ]);
+    const aa = [...row(1).querySelectorAll('span')].find((span) => span.textContent === 'Aa');
+    expect(aa?.getAttribute('aria-hidden')).toBe('true');
+    expect(aa?.nextElementSibling?.className).toBe(styles.visuallyHidden);
+    // Edit and delete are always there (not only on hover), named after the entry.
     expect(byLabel('编辑「pull request」')).not.toBeNull();
     expect(byLabel('删除「Sonnet」')).not.toBeNull();
   });
 
+  it('lays every row on the list grid as a subgrid, so the columns line up', async () => {
+    await render([PR, SONNET]);
+    const list = host.querySelector('ul');
+    expect(list?.className).toBe(styles.glossaryList);
+    for (const row of rows()) {
+      expect(row.className.split(' ')).toContain(styles.glossaryRow);
+      // Source, arrow, translation, language and case, actions: five cells, one per column.
+      expect(row.children).toHaveLength(5);
+    }
+    const css = readFileSync(
+      resolve(process.cwd(), 'src/entrypoints/options/options.module.css'),
+      'utf8',
+    );
+    const rule = (name: string) => css.match(new RegExp(`\\.${name} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('glossaryList')).toContain(
+      'grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) auto auto;',
+    );
+    expect(rule('glossaryRow')).toContain('grid-column: 1 / -1;');
+    expect(rule('glossaryRow')).toContain('grid-template-columns: subgrid;');
+    // Long text wraps onto two lines at most, and breaks even without spaces.
+    expect(rule('glossaryText')).toContain('-webkit-line-clamp: 2;');
+    expect(rule('glossaryText')).toContain('overflow-wrap: anywhere;');
+  });
+
+  it('keeps long text whole in the DOM', async () => {
+    const long = { ...PR, source: 'a'.repeat(200), target: 'b'.repeat(200) };
+    await render([long]);
+    expect(row(0).textContent).toContain('a'.repeat(200));
+    expect(row(0).textContent).toContain('b'.repeat(200));
+  });
+
   it('skips malformed entries and follows storage changes', async () => {
     await render([PR, { ...SONNET, id: 'bad' }, { id: 'term-cccccccc', source: 'x' }, 'text']);
-    expect(host.querySelectorAll('li')).toHaveLength(1);
-    await act(async () => client.listener?.(readGlossaryEntries({ entries: [PR, SONNET] })));
-    expect(host.querySelectorAll('li')).toHaveLength(2);
+    expect(rows()).toHaveLength(1);
+    await stored([PR, SONNET]);
+    expect(rows()).toHaveLength(2);
   });
 
   it(`disables adding at ${MAX_GLOSSARY_ENTRIES} entries and says why`, async () => {
-    const many = Array.from({ length: MAX_GLOSSARY_ENTRIES }, (_, index) => ({
-      ...SONNET,
-      id: `term-${String(index).padStart(8, '0')}`,
-      source: `w${index}`,
-    }));
-    await render(many);
+    await render(many(MAX_GLOSSARY_ENTRIES));
     expect(button('添加术语')?.disabled).toBe(true);
-    expect(host.textContent).toContain('最多 500 条术语');
+    expect(host.textContent).toContain('500 / 500');
+    expect(host.textContent).toContain('最多 500 条术语。');
   });
 
-  it('asks before deleting and removes on confirmation', async () => {
+  it('asks before deleting, in place under the row, and removes on confirmation', async () => {
     await render([PR]);
     await click(byLabel('删除「pull request」'));
     expect(client.change).not.toHaveBeenCalled();
-    expect(host.textContent).toContain('删除后无法恢复');
+    expect(byLabel('删除「pull request」')?.getAttribute('aria-expanded')).toBe('true');
+    expect(row(0).textContent).toContain('删除后无法恢复');
     await click(button('取消'));
     expect(host.textContent).not.toContain('删除后无法恢复');
     await click(byLabel('删除「pull request」'));
     await click(button('确认删除'));
     expect(client.change).toHaveBeenCalledWith({ type: 'remove', id: 'term-aaaaaaaa' });
   });
+
+  it('adds the new entry at the end and flashes its row once', async () => {
+    await render([PR]);
+    const added = { ...SONNET, id: 'term-cccccccc' };
+    client.change.mockResolvedValueOnce({ ok: true, data: [PR, added] });
+    await click(button('添加术语'));
+    await type(sourceInput(), 'Sonnet');
+    await click(save());
+    await stored([PR, added]);
+    expect(rows().map((row) => row.textContent?.slice(0, 6))).toEqual(['pull r', 'Sonnet']);
+    expect(row(1).className.split(' ')).toContain(styles.rowFlash);
+    expect(row(0).className.split(' ')).not.toContain(styles.rowFlash);
+    await act(async () => {
+      row(1).dispatchEvent(new Event('animationend', { bubbles: true }));
+    });
+    expect(row(1).className.split(' ')).not.toContain(styles.rowFlash);
+  });
 });
 
-describe('GlossaryPage: the form', () => {
+describe('GlossaryPage: the dialog', () => {
   it('shows no empty hint when the source is only left, so one click on Cancel closes', async () => {
     await render();
     await click(button('添加术语'));
@@ -164,10 +241,10 @@ describe('GlossaryPage: the form', () => {
       sourceInput().focus();
       sourceInput().blur();
     });
-    expect(form()?.textContent).not.toContain('请填写原文');
+    expect(dialog().textContent).not.toContain('请填写原文');
     expect(sourceInput().getAttribute('aria-invalid')).toBe('false');
-    await click(button('取消'));
-    expect(form()).toBeNull();
+    await click(inDialog('取消'));
+    expect(isOpen()).toBe(false);
   });
 
   it('adds a keep-as-is entry: no language without a translation', async () => {
@@ -176,14 +253,14 @@ describe('GlossaryPage: the form', () => {
     expect(save()?.disabled).toBe(true);
     expect(targetInput().placeholder).toBe('留空则保持原样');
     await type(sourceInput(), '  Sonnet ');
-    expect(form()?.textContent).not.toContain('目标语言');
+    expect(dialog().textContent).not.toContain('目标语言');
     await click(checkbox());
     await click(save());
     expect(client.change).toHaveBeenCalledWith({
       type: 'add',
       entry: { source: 'Sonnet', target: '', lang: '', caseSensitive: true },
     });
-    expect(form()).toBeNull();
+    expect(isOpen()).toBe(false);
   });
 
   it('shows the language once there is a translation, set to the target language', async () => {
@@ -191,8 +268,8 @@ describe('GlossaryPage: the form', () => {
     await click(button('添加术语'));
     await type(sourceInput(), 'pull request');
     await type(targetInput(), '拉取请求');
-    expect(form()?.textContent).toContain('目标语言');
-    const select = form()?.querySelector('[aria-labelledby$="-lang-label"]');
+    expect(dialog().textContent).toContain('目标语言');
+    const select = dialog().querySelector('[aria-labelledby$="-lang-label"]');
     expect(select?.textContent).toContain('简体中文');
     await click(save());
     expect(client.change).toHaveBeenCalledWith({
@@ -201,9 +278,10 @@ describe('GlossaryPage: the form', () => {
     });
   });
 
-  it('edits an entry in place of a new one', async () => {
+  it('edits an entry in place of a new one, and starts afresh when adding next', async () => {
     await render([PR]);
     await click(byLabel('编辑「pull request」'));
+    expect(dialog().querySelector('h2')?.textContent).toBe('编辑术语');
     expect(sourceInput().value).toBe('pull request');
     expect(targetInput().value).toBe('拉取请求');
     await type(targetInput(), '合并请求');
@@ -213,6 +291,14 @@ describe('GlossaryPage: the form', () => {
       id: 'term-aaaaaaaa',
       entry: { source: 'pull request', target: '合并请求', lang: 'zh-CN', caseSensitive: false },
     });
+    expect(isOpen()).toBe(false);
+    // The closing dialog keeps its title while it fades out.
+    expect(dialog().querySelector('h2')?.textContent).toBe('编辑术语');
+
+    await click(button('添加术语'));
+    expect(dialog().querySelector('h2')?.textContent).toBe('添加术语');
+    expect(sourceInput().value).toBe('');
+    expect(targetInput().value).toBe('');
   });
 
   it('ties field errors to their fields', async () => {
@@ -231,47 +317,55 @@ describe('GlossaryPage: the form', () => {
     expect(save()?.disabled).toBe(true);
   });
 
-  it('shows a duplicate under the source field and other refusals as an alert', async () => {
+  it('shows a duplicate under the source field after saving, and other refusals as an alert', async () => {
     await render([SONNET]);
     await click(button('添加术语'));
     await type(sourceInput(), 'sonnet');
+    // Nothing is checked before saving: the background decides.
+    expect(sourceInput().getAttribute('aria-describedby')).toBeNull();
     client.change.mockResolvedValueOnce({
       ok: false,
       error: { kind: 'config', code: 'config/glossary-duplicate', message: 'm', retryable: false },
     } as never);
     await click(save());
     expect(describedError(sourceInput())).toBe('已有相同原文的术语。');
-    expect(form()).not.toBeNull();
+    expect(sourceInput().getAttribute('aria-invalid')).toBe('true');
+    expect(isOpen()).toBe(true);
+    // Editing the source clears it.
+    await type(sourceInput(), 'Opus');
+    expect(sourceInput().getAttribute('aria-describedby')).toBeNull();
 
     client.change.mockResolvedValueOnce({
       ok: false,
       error: { kind: 'config', code: 'config/glossary-missing', message: 'm', retryable: false },
     } as never);
-    await type(sourceInput(), 'Opus');
     await click(save());
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe('这条术语已被删除。');
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toBe('这条术语已被删除。');
+    expect(isOpen()).toBe(true);
   });
 });
 
 describe('GlossaryPage: focus', () => {
   const addButton = () => button('添加术语') as HTMLButtonElement;
 
-  it('gives the focus back to the add button after saving, cancelling and deleting', async () => {
+  it('gives the focus back to the button that opened the dialog', async () => {
     await render([PR]);
     await click(addButton());
     expect(document.activeElement).toBe(sourceInput());
     await type(sourceInput(), 'Sonnet');
     await click(save());
-    expect(form()).toBeNull();
+    expect(isOpen()).toBe(false);
     expect(document.activeElement).toBe(addButton());
 
     await click(byLabel('编辑「pull request」'));
-    await click(
-      [...(form()?.querySelectorAll('button') ?? [])].find((b) => b.textContent === '取消'),
-    );
-    expect(form()).toBeNull();
-    expect(document.activeElement).toBe(addButton());
+    expect(document.activeElement).toBe(sourceInput());
+    await click(inDialog('取消'));
+    expect(isOpen()).toBe(false);
+    expect(document.activeElement).toBe(byLabel('编辑「pull request」'));
+  });
 
+  it('gives it to the add button after deleting', async () => {
+    await render([PR, SONNET]);
     await click(byLabel('删除「pull request」'));
     await click(button('确认删除'));
     expect(document.activeElement).toBe(addButton());
@@ -284,17 +378,22 @@ describe('GlossaryPage: focus', () => {
     expect(document.activeElement).toBe(byLabel('删除「pull request」'));
   });
 
-  it('gives it to the section when the add button is disabled', async () => {
-    const many = Array.from({ length: MAX_GLOSSARY_ENTRIES }, (_, index) => ({
-      ...SONNET,
-      id: `term-${String(index).padStart(8, '0')}`,
-      source: `w${index}`,
-    }));
-    await render(many);
-    await click(byLabel('编辑「w0」'));
+  it('gives it to the section when the opening button is gone or disabled', async () => {
+    // The 500th entry disables the add button that opened the dialog.
+    await render(many(MAX_GLOSSARY_ENTRIES - 1));
+    await click(addButton());
+    await type(sourceInput(), 'last');
     await click(save());
+    await stored(many(MAX_GLOSSARY_ENTRIES));
     const section = host.querySelector('section');
     expect(section?.getAttribute('tabindex')).toBe('-1');
+    expect(addButton().disabled).toBe(true);
+    expect(document.activeElement).toBe(section);
+
+    // An entry deleted elsewhere while its dialog was open.
+    await click(byLabel('编辑「w0」'));
+    await stored(many(MAX_GLOSSARY_ENTRIES).slice(1));
+    await click(inDialog('取消'));
     expect(document.activeElement).toBe(section);
   });
 });

@@ -8,6 +8,7 @@ import {
 } from '@/lib/config/types';
 import { useConfig } from '@/lib/config/use-config';
 import { describeError } from '@/lib/error-messages';
+import { CloseIcon } from './icons';
 import { useNotice } from './notice';
 import styles from './options.module.css';
 import { newStyleId } from './providers';
@@ -129,22 +130,12 @@ export function StyleDialog({ open, origin, editing, existingIds, onClose }: Pro
             onClick={onClose}
             disabled={busy}
           >
-            <svg
-              aria-hidden="true"
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <path d="M3 3l6 6M9 3l-6 6" />
-            </svg>
+            <CloseIcon />
           </button>
         </header>
 
-        <div className={styles.dialogBody}>
-          <div className={styles.dialogField}>
+        <div className={styles.formGrid}>
+          <div className={styles.formRow}>
             <label className={styles.label} htmlFor={`${titleId}-name`}>
               {i18n.t('options.styles.name')}
             </label>
@@ -175,7 +166,7 @@ export function StyleDialog({ open, origin, editing, existingIds, onClose }: Pro
               )}
             </div>
           </div>
-          <div className={styles.dialogField}>
+          <div className={styles.formRow}>
             <label className={styles.label} htmlFor={`${titleId}-description`}>
               {i18n.t('options.styles.description')}
             </label>

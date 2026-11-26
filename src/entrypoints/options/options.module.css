@@ -184,6 +184,12 @@
   font-size: var(--et-fs-caption);
   color: var(--et-color-muted);
 }
+/* A head hint that carries meaning (the styles scope, the glossary count): never hidden. */
+.headHintKeep {
+  font-size: var(--et-fs-caption);
+  color: var(--et-color-muted);
+  min-width: 0;
+}
 .addButton {
   height: var(--et-h-control-md);
   padding: 0 12px 0 10px;
@@ -1204,9 +1210,11 @@ fieldset.chips {
 
 /* ---------------------------------------------------------- 翻译风格 */
 
-.styleNote {
-  margin: 0;
+/* A section that takes the focus back (tabIndex -1) when its add button is disabled: no ring. */
+.quietFocus:focus {
+  outline: none;
 }
+
 .styleCards {
   margin: 0;
   padding: 0;
@@ -1219,6 +1227,7 @@ fieldset.chips {
 /* The card is the frame; the label inside it is the radio, the buttons sit beside it. */
 .styleCard {
   position: relative;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--et-color-border);
@@ -1241,48 +1250,102 @@ fieldset.chips {
 }
 .styleCardLabel {
   flex-grow: 1;
+  min-width: 0;
+  min-height: 112px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 12px 12px 14px;
+  padding: 14px 14px 16px;
   cursor: pointer;
 }
-.styleCardName {
-  font-size: var(--et-fs-page-sm);
+.styleCardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--et-fs-control);
   font-weight: var(--et-fw-medium);
-  overflow-wrap: anywhere;
 }
-.styleCardCustom .styleCardName {
-  padding-right: 60px;
+/* Room for the edit and delete buttons in the top right corner. */
+.styleCardCustom .styleCardHead {
+  padding-right: 56px;
+}
+/* The radio as drawn: the native one stays (.radioInput) for focus and arrow keys. */
+.styleDot {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: var(--et-radius-full);
+  border: 1.5px solid var(--et-color-border-strong);
+  transition: border-color var(--et-dur-base) var(--et-ease-out);
+}
+.styleDot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--et-radius-full);
+  background: var(--et-color-accent-ink);
+  transform: scale(0);
+  transition: transform 280ms var(--et-ease-spring);
+}
+.styleCard:has(input:checked) .styleDot {
+  border-color: var(--et-color-accent-ink);
+}
+.styleCard:has(input:checked) .styleDot::after {
+  transform: scale(1);
+}
+.styleCardName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .styleCardNote {
-  font-size: var(--et-fs-caption);
-  line-height: var(--et-lh-caption);
-  color: var(--et-color-muted);
   overflow-wrap: anywhere;
+  font-size: var(--et-fs-caption);
+  line-height: 19px;
+  color: var(--et-color-muted);
 }
-.clamp {
+/* A description of up to 500 characters: three lines on the card, the whole text in the
+   dialog. The presets are short and shown whole (longer in English than in Chinese). */
+.styleCardCustom .styleCardNote {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   overflow: hidden;
 }
 .styleCardActions {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 8px;
+  right: 8px;
   display: flex;
+  gap: 2px;
 }
 .styleCardActions .iconButton {
-  width: 28px;
+  width: var(--et-h-control-xs);
+  height: var(--et-h-control-xs);
 }
 .styleConfirm {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: 8px;
-  padding: 0 12px 12px;
+  margin: 0 10px 10px;
+  padding: 10px;
+  border-radius: var(--et-radius-md);
+  background: var(--et-color-surface);
+  font-size: var(--et-fs-caption);
+  line-height: var(--et-lh-caption);
+  color: var(--et-color-muted);
+}
+.styleConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .styleTextarea {
   min-height: calc(var(--et-h-control-lg) * 3);
@@ -1298,101 +1361,157 @@ fieldset.chips {
   }
 }
 
-/* ---------------------------------------------------------- 术语库 */
+/* ---------------------------------------------------------- 风格与术语对话框 */
 
-/* Takes the focus back (tabIndex -1) when the add button is disabled: no ring for that. */
-.glossarySection:focus {
-  outline: none;
+/* The fields share one grid: the label column fits the longest label in every interface
+   language, and every input starts on the same line. */
+.formGrid {
+  padding: 14px 24px 0;
+  display: grid;
+  grid-template-columns: minmax(76px, max-content) minmax(0, 1fr);
+  gap: 14px 12px;
 }
-
-.glossaryEmpty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 18px;
-}
-.glossaryEmpty p {
-  margin: 0;
-  font-size: var(--et-fs-page-sm);
-  line-height: 1.6;
-  color: var(--et-color-muted);
-}
-.glossaryList {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.glossaryRow {
-  border-top: 1px solid var(--et-color-border);
-}
-.glossaryRow:first-child {
-  border-top: 0;
-}
-.glossaryLine {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 6px 8px 6px 18px;
-}
-.glossaryTerm {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  font-size: var(--et-fs-page-sm);
-  overflow-wrap: anywhere;
-}
-.glossaryArrow {
-  color: var(--et-color-faint);
-}
-.glossaryTag {
-  flex-shrink: 0;
-  font-size: 11px;
-  line-height: var(--et-lh-caption);
-  padding: 0 7px;
-  border-radius: var(--et-radius-full);
-  border: 1px solid var(--et-color-border);
-  color: var(--et-color-muted);
-}
-.glossaryActions {
-  display: flex;
-  flex-shrink: 0;
-}
-.glossaryConfirm {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 18px 12px;
-}
-.glossaryForm {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px 18px;
-}
-.glossaryFormFooter {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.glossaryFormFooter > :first-child {
-  margin-right: auto;
+.formRow {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: start;
 }
 .checkbox {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  justify-self: start;
   font-size: var(--et-fs-page-sm);
   color: var(--et-color-text);
   cursor: pointer;
 }
 .checkbox input {
+  width: 16px;
+  height: 16px;
   margin: 0;
-  accent-color: var(--et-color-accent);
+  accent-color: var(--et-color-accent-ink);
+}
+
+/* ---------------------------------------------------------- 术语库 */
+
+.glossaryEmpty {
+  padding: 40px 48px 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.glossaryEmptyIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--et-radius-lg);
+  background: var(--et-color-accent-soft);
+  color: var(--et-color-accent-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.glossaryEmpty p {
+  margin: 0;
+  max-width: 420px;
+  font-size: var(--et-fs-page-sm);
+  line-height: 21px;
+  color: var(--et-color-muted);
+}
+/* One grid for the whole list, each row a subgrid of it: the columns are sized once for
+   every row, so a long language name or a wrapped term never pushes one row out of line. */
+.glossaryList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) auto auto;
+  column-gap: 10px;
+}
+/* Cells sit at the top, nudged so their first line centres on the 30px buttons. */
+.glossaryRow {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: start;
+  row-gap: 12px;
+  padding: 12px 10px 12px 18px;
+  transition: background-color var(--et-dur-base) var(--et-ease-out);
+}
+.glossaryRow:hover {
+  background: var(--et-color-surface);
+}
+.glossaryRow + .glossaryRow {
+  border-top: 1px solid var(--et-color-border);
+}
+.glossaryCell {
+  min-width: 0;
+  margin-top: 4px;
+}
+/* Up to 200 characters: two lines at most, and a run without spaces still breaks. The whole
+   text stays in the DOM for screen readers. */
+.glossaryText {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.glossarySource {
+  font-weight: var(--et-fw-medium);
+}
+.glossaryArrow {
+  margin-top: 7px;
+  color: var(--et-color-faint);
+}
+.glossaryKeep {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+  margin-top: 2px;
+}
+.glossaryMeta {
+  min-width: 0;
+  margin-top: 5px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.glossaryTag {
+  position: relative;
+  max-width: 128px;
+  padding: 0 7px;
+  border-radius: var(--et-radius-sm);
+  /* A tint of the text colour, not --et-color-surface: that one is close to the card in dark
+     mode and the same as a hovered row in light mode. */
+  background: color-mix(in oklch, var(--et-color-text) 6%, transparent);
+  color: var(--et-color-muted);
+  font-size: var(--et-fs-page-xs);
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.glossaryCase {
+  font-family: var(--et-font-mono);
+}
+.glossaryActions {
+  display: flex;
+  gap: 2px;
+}
+.glossaryConfirm {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--et-fs-caption);
+  color: var(--et-color-muted);
 }
