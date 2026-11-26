@@ -21,7 +21,10 @@ interface Props {
   error?: string;
   hint?: string;
   cancelLabel: string;
-  submitLabel: string;
+  /** The cancel button's action, when it is not closing (the import's "choose again"). */
+  onCancel?(): void;
+  /** Without one, the footer has no submit button (a step that waits for a file). */
+  submitLabel?: string;
   submitDisabled: boolean;
   /** The fields, laid out on `.formGrid`. */
   children?: ReactNode;
@@ -48,6 +51,7 @@ export function DialogShell({
   error,
   hint,
   cancelLabel,
+  onCancel = onClose,
   submitLabel,
   submitDisabled,
   children,
@@ -153,12 +157,14 @@ export function DialogShell({
             </span>
             {!error && hint ? <span className={styles.hint}>{hint}</span> : null}
           </span>
-          <button type="button" className={styles.ghost} onClick={onClose} disabled={busy}>
+          <button type="button" className={styles.ghost} onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </button>
-          <button type="submit" className={styles.primary} disabled={submitDisabled}>
-            {submitLabel}
-          </button>
+          {submitLabel !== undefined && (
+            <button type="submit" className={styles.primary} disabled={submitDisabled}>
+              {submitLabel}
+            </button>
+          )}
         </footer>
       </form>
     </dialog>

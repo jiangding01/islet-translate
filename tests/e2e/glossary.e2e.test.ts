@@ -180,8 +180,11 @@ describe('settings page', () => {
   })()`;
   const clickButton = (text: string) =>
     `[...document.querySelectorAll('button')].find((b) => b.textContent === ${JSON.stringify(text)}).click()`;
+  // The glossary rows only: the import dialog (always mounted) has list items of its own.
   const rows = (page: Awaited<ReturnType<Harness['extPage']>>) =>
-    page.evaluate<string[]>(`[...document.querySelectorAll('li')].map((li) => li.textContent)`);
+    page.evaluate<string[]>(
+      `[...document.querySelectorAll('li')].filter((li) => !li.closest('dialog')).map((li) => li.textContent)`,
+    );
 
   it('adds an entry that is still there after a reload, and deletes it', async () => {
     let page = await h.extPage('options.html#glossary');
@@ -249,6 +252,123 @@ describe('settings page', () => {
       `chrome.storage.local.get('glossary').then((value) => value.glossary)`,
     );
     expect(stored.entries).toEqual([]);
+    await page.close();
+    h.assertNoErrors();
+  });
+
+  it('imports a CSV after a preview, filters, and exports CSV and JSON with the four fields only', async () => {
+    await addTerms(KEEPER, VISITORS);
+    const page = await h.extPage('options.html#glossary');
+    await waitFor(async () => (await rows(page)).length === 2, { message: 'the two terms' });
+
+    // Import: a file put into the dialog's file input, as a pick would.
+    await page.evaluate(clickButton('Import'));
+    await waitFor(
+      () => page.evaluate(`!!document.querySelector('dialog[open] input[type="file"]')`),
+      {
+        message: 'the import dialog',
+      },
+    );
+    const csv = [
+      'source,target,lang,caseSensitive',
+      'lighthouse keeper,灯塔守护者,zh-CN,',
+      'Visitors,,,yes',
+      'harbour,港口,zh-CN,',
+      ',orphan,zh-CN,',
+    ].join('\r\n');
+    await page.evaluate(`(() => {
+      const input = document.querySelector('dialog[open] input[type="file"]');
+      const data = new DataTransfer();
+      data.items.add(new File([${JSON.stringify(csv)}], 'terms.csv', { type: 'text/csv' }));
+      input.files = data.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    const counts = await waitFor(
+      async () => {
+        const text = await page.evaluate<string>(
+          `[...document.querySelectorAll('dialog[open] span')].filter((s) => s.querySelector(':scope > b')).map((s) => s.textContent).join('|')`,
+        );
+        return text || undefined;
+      },
+      { message: 'the preview counts' },
+    );
+    expect(counts).toBe('1New|1Overwrite|1Unchanged|1Invalid');
+    expect(
+      await page.evaluate<string>(`document.querySelector('dialog[open]').textContent`),
+    ).toContain('Line 5: The source is empty');
+    await page.evaluate(clickButton('Import 2 terms'));
+    await waitFor(() => page.evaluate(`!document.querySelector('dialog[open]')`), {
+      message: 'the dialog to close after the import',
+    });
+    await waitFor(async () => (await rows(page)).length === 3, { message: 'the imported row' });
+    const list = await rows(page);
+    expect(list[0]).toContain('灯塔守护者');
+    expect(list[2]).toContain('harbour');
+    const stored = await page.evaluate<{ entries: { id: string; source: string }[] }>(
+      `chrome.storage.local.get('glossary').then((value) => value.glossary)`,
+    );
+    expect(stored.entries.map((entry) => entry.source)).toEqual([
+      'lighthouse keeper',
+      'Visitors',
+      'harbour',
+    ]);
+
+    // Filter.
+    await page.evaluate(typeInto('input[type="search"]', 'HARB'));
+    expect(await rows(page)).toEqual([expect.stringContaining('harbour')]);
+    await page.evaluate(typeInto('input[type="search"]', ''));
+
+    // Export: the download is caught in the page (and downloads are denied browser-wide).
+    await page.evaluate(`(() => {
+      window.__exports = [];
+      URL.createObjectURL = (blob) => {
+        window.__exports.push({ blob });
+        return 'blob:e2e';
+      };
+      HTMLAnchorElement.prototype.click = function () {
+        window.__exports.at(-1).name = this.download;
+      };
+    })()`);
+    const exportAs = async (label: string) => {
+      await page.evaluate(clickButton('Export'));
+      await waitFor(() => page.evaluate(`!!document.querySelector('[role="menu"]')`), {
+        message: 'the export menu',
+      });
+      await page.evaluate(
+        `[...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.startsWith(${JSON.stringify(label)})).click()`,
+      );
+    };
+    await exportAs('Export as CSV');
+    await exportAs('Export as JSON');
+    // `text()` decodes as UTF-8 and drops the BOM: the first bytes are read as they are.
+    const files = await page.evaluate<{ name: string; text: string; head: number[] }[]>(
+      `Promise.all(window.__exports.map(async (item) => ({
+        name: item.name,
+        text: await item.blob.text(),
+        head: [...new Uint8Array(await item.blob.slice(0, 3).arrayBuffer())],
+      })))`,
+    );
+    expect(files.map((file) => file.name)).toEqual([
+      expect.stringMatching(/^islet-glossary-\d{4}-\d{2}-\d{2}\.csv$/),
+      expect.stringMatching(/^islet-glossary-\d{4}-\d{2}-\d{2}\.json$/),
+    ]);
+    const [csvFile, jsonFile] = files;
+    expect(csvFile?.head).toEqual([0xef, 0xbb, 0xbf]);
+    expect(csvFile?.text.split('\r\n').slice(0, 2)).toEqual([
+      '"source","target","lang","caseSensitive"',
+      '"lighthouse keeper","灯塔守护者","zh-CN","false"',
+    ]);
+    expect(csvFile?.text).not.toContain('term-');
+    const json = JSON.parse(jsonFile?.text ?? '{}');
+    expect(json).toMatchObject({ format: 'islet-translate.glossary', version: 1 });
+    for (const entry of json.entries) {
+      expect(Object.keys(entry)).toEqual(['source', 'target', 'lang', 'caseSensitive']);
+    }
+    expect(json.entries.map((entry: { source: string }) => entry.source)).toEqual([
+      'lighthouse keeper',
+      'Visitors',
+      'harbour',
+    ]);
     await page.close();
     h.assertNoErrors();
   });

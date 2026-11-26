@@ -7,8 +7,10 @@ import {
   type GlossaryChange,
   type GlossaryDraft,
   type GlossaryEntry,
+  glossaryBase,
   isDuplicateEntry,
   isGlossaryEntry,
+  isReadOnlyGlossary,
   MAX_GLOSSARY_ENTRIES,
   readGlossaryEntries,
 } from './types';
@@ -56,8 +58,8 @@ const EMPTY: GlossarySnapshot = Object.freeze({ entries: Object.freeze([]), read
  */
 export function parseStoredGlossary(raw: unknown): Parsed {
   if (!isPlainObject(raw)) return { snapshot: EMPTY, stored: {} };
-  const readOnly = !(typeof raw.version === 'number' && raw.version <= GLOSSARY_VERSION);
-  return { snapshot: { entries: readGlossaryEntries(raw), readOnly }, stored: raw };
+  const snapshot = { entries: readGlossaryEntries(raw), readOnly: isReadOnlyGlossary(raw) };
+  return { snapshot, stored: raw };
 }
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -85,6 +87,10 @@ function cleanDraft(draft: unknown): GlossaryDraft {
     lang: entry.lang,
     caseSensitive: entry.caseSensitive,
   };
+}
+
+function limit(): AppError {
+  return appError('config', 'config/glossary-limit', 'Too many entries');
 }
 
 function checkDuplicate(entries: readonly GlossaryEntry[], draft: GlossaryDraft, self?: string) {
@@ -138,9 +144,7 @@ export function createGlossaryRepository(deps: GlossaryRepositoryDeps): Glossary
     if (typeof change !== 'object' || change === null) throw invalid();
     if (change.type === 'remove') return entries.filter((entry) => entry.id !== change.id);
     if (change.type === 'add') {
-      if (entries.length >= MAX_GLOSSARY_ENTRIES) {
-        throw appError('config', 'config/glossary-limit', 'Too many entries');
-      }
+      if (entries.length >= MAX_GLOSSARY_ENTRIES) throw limit();
       const draft = cleanDraft(change.entry);
       checkDuplicate(entries, draft);
       return [...entries, { id: newId(new Set(entries.map((entry) => entry.id))), ...draft }];
@@ -155,6 +159,40 @@ export function createGlossaryRepository(deps: GlossaryRepositoryDeps): Glossary
       const next = [...entries];
       // Unknown fields of the stored entry (a newer build's) survive the edit.
       next[index] = { ...existing, ...draft };
+      return next;
+    }
+    if (change.type === 'import') {
+      // Anything changed since the preview (an edit, a removal, an addition elsewhere): the
+      // settings page previews again. Its copy stays out of the background's error table.
+      if (change.base !== glossaryBase(entries)) {
+        throw appError('config', 'config/glossary-stale', 'Stale');
+      }
+      if (!Array.isArray(change.entries)) throw invalid();
+      if (change.entries.length > MAX_GLOSSARY_ENTRIES) throw limit();
+      // Checked as the final list: every id exists once, every entry is valid and unique.
+      const byId = new Map(entries.map((entry) => [entry.id, entry]));
+      const taken = new Set(byId.keys());
+      const next: GlossaryEntry[] = [];
+      for (const item of change.entries) {
+        const draft = cleanDraft(item);
+        const id: unknown = isPlainObject(item) ? item.id : undefined;
+        let entry: GlossaryEntry;
+        if (id === undefined) {
+          entry = { id: newId(taken), ...draft };
+          taken.add(entry.id);
+        } else {
+          const existing = byId.get(id as string);
+          // Gone, or claimed by an earlier entry of the list.
+          if (!existing) throw invalid();
+          byId.delete(existing.id);
+          // As an update: unknown fields of the stored entry survive.
+          entry = { ...existing, ...draft };
+        }
+        checkDuplicate(next, draft);
+        next.push(entry);
+      }
+      // An import never removes terms: every stored entry is in the list.
+      if (byId.size) throw invalid();
       return next;
     }
     throw invalid();

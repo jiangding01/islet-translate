@@ -18,9 +18,18 @@ interface Options {
   busy?: boolean;
   error?: string;
   hint?: string;
+  submitLabel?: string | null;
+  onCancel?: () => void;
 }
 
-function render({ open = true, busy = false, error, hint }: Options = {}) {
+function render({
+  open = true,
+  busy = false,
+  error,
+  hint,
+  submitLabel = '保存',
+  onCancel,
+}: Options = {}) {
   act(() =>
     root?.render(
       createElement(
@@ -37,7 +46,8 @@ function render({ open = true, busy = false, error, hint }: Options = {}) {
           error,
           hint,
           cancelLabel: '取消',
-          submitLabel: '保存',
+          onCancel,
+          submitLabel: submitLabel ?? undefined,
           submitDisabled: false,
         },
         createElement('input', { ref: field, required: true, defaultValue: '' }),
@@ -187,5 +197,21 @@ describe('DialogShell: submitting', () => {
     expect(dialog().querySelector('form')?.noValidate).toBe(true);
     act(() => button('保存')?.click());
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DialogShell: footer variants (M4-D)', () => {
+  it('has no submit button without a submit label', () => {
+    render({ submitLabel: null });
+    expect(dialog().querySelector('button[type="submit"]')).toBeNull();
+    expect(button('取消')).toBeDefined();
+  });
+
+  it('runs its own cancel action instead of closing when given one', () => {
+    const back = vi.fn();
+    render({ onCancel: back });
+    act(() => button('取消')?.click());
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

@@ -353,6 +353,94 @@ options:
     sourceRequired: 请填写原文
     sourceTooLong: 原文最多 200 个字符
     targetTooLong: 译文最多 200 个字符
+    import: 导入
+    export: 导出
+    exportCsv: 导出为 CSV
+    exportCsvSub: 可用 Excel、Numbers 打开编辑
+    exportJson: 导出为 JSON
+    exportJsonSub: 适合备份或换设备导入
+    filterLabel: 筛选术语
+    filterPlaceholder: 筛选原文或译文
+    noMatch: 没有匹配的术语
+    exported: 已导出
+    # $1：导入的条数；$2：新增的条数；$3：覆盖的条数。
+    imported:
+      1: 已导入 $1 条（新增 $2，覆盖 $3）
+      n: 已导入 $1 条（新增 $2，覆盖 $3）
+  glossaryImport:
+    title: 导入术语
+    sub: 支持 CSV、JSON。导入前会先预览，确认后才写入。
+    drop: 把文件拖到这里，或
+    choose: 选择文件
+    reading: 正在读取…
+    rechoose: 重新选择
+    # $1：要导入的条数。
+    submit:
+      1: 导入 $1 条
+      n: 导入 $1 条
+    note1: 第一行写表头：原文、译文、目标语言、区分大小写（也认英文 source、target、lang、caseSensitive）。没有表头时，前两列当作原文和译文。
+    # $1：当前目标语言的名称。
+    note2: 译文留空表示保持原样；填了译文但没写目标语言的，按当前目标语言（$1）导入。
+    note3: 与已有术语重复的（原文相同且目标语言重叠），用文件里的译法覆盖。
+    note4: 用 Excel 编辑时，请另存为「CSV UTF-8」；文件不超过 1 MB。
+    # $1：文件名；$2：行数；$3：编码。
+    meta:
+      1: $1 · $2 行 · $3
+      n: $1 · $2 行 · $3
+    encoding: 文件编码
+    header: 第 1 行作为表头
+    statNew: 新增
+    statUpdate: 覆盖
+    statSame: 不变
+    statInvalid: 无效
+    # $1：无效的处数。
+    invalidTitle:
+      1: $1 处无效，不会导入：
+      n: $1 处无效，不会导入：
+    # $1：行号；$2：原因。
+    lineIssue: 第 $1 行：$2
+    # $1：JSON 里的条目序号；$2：原因。
+    itemIssue: 第 $1 条：$2
+    # $1：未显示的行数。
+    moreRows:
+      1: 还有 $1 行未显示
+      n: 还有 $1 行未显示
+    # $1：未列出的处数。
+    moreIssues:
+      1: 等 $1 处
+      n: 等 $1 处
+    # $1：列名。
+    unknownColumns: 忽略了未识别的列：$1
+    # $1：列的序号。
+    ignoredColumn: 忽略了第 $1 列
+    sourceEmpty: 原文为空
+    sourceTooLong: 原文超过 200 个字符
+    targetTooLong: 译文超过 200 个字符
+    # $1：文件里写的目标语言。
+    badLang: 不支持的目标语言「$1」
+    badCase: 「区分大小写」只能填是或否
+    extraColumn: 比表头多出了列
+    # $1：行号。
+    duplicate: 与第 $1 行重复
+    # $1：行号。
+    sameEntry: 与第 $1 行覆盖的是同一条术语
+    many: 与已有的多条术语重复
+    multiple: 一次只能导入一个文件
+    tooLarge: 文件超过 1 MB
+    tooManyRows: 文件超过 2000 行
+    xlsx: 不支持 Excel 文件，请另存为 CSV
+    unreadable: 无法读取这个文件，请另存为「CSV UTF-8」后再试
+    # $1：行号。
+    quote: CSV 第 $1 行引号不完整
+    json: JSON 格式不正确
+    newerVersion: 这个文件由更新版本的扩展导出，请先升级扩展
+    # $1：列名。
+    duplicateColumn: 表头里有重复的列：$1
+    empty: 文件里没有可导入的术语
+    # $1：导入后的条数；$2：条数上限。
+    limit: 导入后共 $1 条，超过 $2 条上限。请先从文件或术语库里删掉一些，再重新导入。
+    allSame: 术语库已包含文件里的全部术语
+    stale: 术语库刚被修改过，已按最新内容重新预览。
   cache:
     title: 翻译缓存
     counting: 正在统计…

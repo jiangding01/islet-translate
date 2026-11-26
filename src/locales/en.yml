@@ -360,6 +360,94 @@ options:
     sourceRequired: Enter the source text
     sourceTooLong: The source can be up to 200 characters
     targetTooLong: The translation can be up to 200 characters
+    import: Import
+    export: Export
+    exportCsv: Export as CSV
+    exportCsvSub: Opens in Excel or Numbers for editing
+    exportJson: Export as JSON
+    exportJsonSub: For backups or moving to another device
+    filterLabel: Filter terms
+    filterPlaceholder: Filter by source or translation
+    noMatch: No matching terms
+    exported: Exported
+    # $1: the number of terms imported; $2: how many are new; $3: how many were overwritten.
+    imported:
+      1: Imported $1 term ($2 new, $3 overwritten)
+      n: Imported $1 terms ($2 new, $3 overwritten)
+  glossaryImport:
+    title: Import terms
+    sub: CSV or JSON. You'll see a preview first; nothing is saved until you confirm.
+    drop: Drop a file here, or
+    choose: Choose file
+    reading: Reading…
+    rechoose: Choose again
+    # $1: the number of terms to import.
+    submit:
+      1: Import $1 term
+      n: Import $1 terms
+    note1: "Put a header in the first row: source, target, lang, caseSensitive (the Chinese names 原文, 译文, 目标语言 and 区分大小写 work too). Without a header, the first two columns are the source and the translation."
+    # $1: the name of the current target language.
+    note2: Leave the translation empty to keep a term as it is. A translation with no target language is imported for the current target language ($1).
+    note3: A term that matches an existing one (same source and an overlapping target language) overwrites it with the translation in the file.
+    note4: When editing in Excel, save as "CSV UTF-8". Files can be up to 1 MB.
+    # $1: the file name; $2: the number of lines; $3: the encoding.
+    meta:
+      1: $1 · $2 line · $3
+      n: $1 · $2 lines · $3
+    encoding: File encoding
+    header: Line 1 read as the header
+    statNew: New
+    statUpdate: Overwrite
+    statSame: Unchanged
+    statInvalid: Invalid
+    # $1: the number of invalid rows.
+    invalidTitle:
+      1: "$1 invalid row won't be imported:"
+      n: "$1 invalid rows won't be imported:"
+    # $1: the line number; $2: the reason.
+    lineIssue: "Line $1: $2"
+    # $1: the item number in a JSON file; $2: the reason.
+    itemIssue: "Item $1: $2"
+    # $1: the number of rows not shown.
+    moreRows:
+      1: $1 more row not shown
+      n: $1 more rows not shown
+    # $1: the number of problems not listed.
+    moreIssues:
+      1: and $1 more
+      n: and $1 more
+    # $1: the column names.
+    unknownColumns: "Ignored unrecognized columns: $1"
+    # $1: the column number.
+    ignoredColumn: Ignored column $1
+    sourceEmpty: The source is empty
+    sourceTooLong: The source is over 200 characters
+    targetTooLong: The translation is over 200 characters
+    # $1: the target language as written in the file.
+    badLang: Unsupported target language "$1"
+    badCase: '"Match case" can only be yes or no'
+    extraColumn: More columns than the header
+    # $1: a line number.
+    duplicate: Same as line $1
+    # $1: a line number.
+    sameEntry: Overwrites the same term as line $1
+    many: Matches more than one existing term
+    multiple: You can import one file at a time
+    tooLarge: The file is over 1 MB
+    tooManyRows: The file has more than 2000 lines
+    xlsx: Excel files aren't supported. Save the file as CSV first
+    unreadable: Couldn't read this file. Save it as "CSV UTF-8" and try again
+    # $1: a line number.
+    quote: Unclosed quote on line $1 of the CSV
+    json: The JSON isn't in a format the extension reads
+    newerVersion: This file was exported by a newer version of the extension. Update the extension first
+    # $1: the column name.
+    duplicateColumn: "The header repeats a column: $1"
+    empty: The file has no terms to import
+    # $1: the number of terms after the import; $2: the limit.
+    limit: That would make $1 terms, over the limit of $2. Remove some from the file or the glossary, then import again.
+    allSame: The glossary already has every term in this file
+    stale: The glossary just changed, so the preview was made again from the latest terms.
   cache:
     title: Translation cache
     counting: Counting…

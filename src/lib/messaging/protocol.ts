@@ -116,7 +116,10 @@ export interface ProtocolMap {
   'app.getStatus'(): Result<{ version: string }>;
   'config.patch'(changes: ConfigChange[]): Result<ConfigSnapshot>;
   'config.reset'(paths?: ConfigPath[]): Result<ConfigSnapshot>;
-  /** Settings page only (`validation/forbidden-sender` otherwise): one glossary entry (M4-C). */
+  /**
+   * Settings page only (`validation/forbidden-sender` otherwise): one glossary entry (M4-C),
+   * or a whole imported list (M4-D).
+   */
   'glossary.change'(change: GlossaryChange): Result<GlossaryEntry[]>;
   /** Settings page only (`validation/forbidden-sender` otherwise). */
   'secrets.set'(args: { provider: SecretProviderId; key: string | null }): Result<SecretStatusInfo>;
