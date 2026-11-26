@@ -71,6 +71,7 @@ type Json = Record<string, any>;
  * (src/lib/translate/prompt.ts): `batch` when the user message carries the JSON array of
  * `{ i, t }` (page translation), `text` for the plain-text prompt between the BEGIN / END
  * marker lines (stream requests: the selection card). `texts` are the source texts.
+ * `glossary` is the term array the user message starts with (M4-C), when it has one.
  */
 export interface LlmRequest {
   body: Json;
@@ -78,6 +79,7 @@ export interface LlmRequest {
   user: string;
   format: 'batch' | 'text';
   texts: string[];
+  glossary?: Json[];
 }
 
 /**
@@ -215,21 +217,31 @@ function postBody(request: Json): string {
 /**
  * Reads a chat request the way the extension builds it (src/lib/translate/codec.ts,
  * renderMessages): a `text` user message is the source between the BEGIN and END marker
- * lines; a `batch` one is a lead-in line, then the JSON array of `{ i, t }`.
+ * lines; a `batch` one is a lead-in line, then the JSON array of `{ i, t }`. Either may start
+ * with two glossary lines (src/lib/translate/prompt.ts): a lead-in, then the term array.
  */
 function readLlmRequest(body: Json): LlmRequest {
   const messages: Json[] = Array.isArray(body.messages) ? body.messages : [];
   const content = (role: string) => String(messages.find((m) => m.role === role)?.content ?? '');
   const system = content('system');
   const user = content('user');
-  const text = /^-----BEGIN [^\n]*-----\n([\s\S]*)\n-----END [^\n]*-----$/.exec(user);
-  if (text) return { body, system, user, format: 'text', texts: [text[1] ?? ''] };
+  let rest = user;
+  let glossary: Json[] | undefined;
+  if (user.startsWith('Glossary for this request')) {
+    const lines = user.split('\n');
+    try {
+      glossary = JSON.parse(lines[1] ?? '');
+    } catch {}
+    rest = lines.slice(2).join('\n');
+  }
+  const text = /^-----BEGIN [^\n]*-----\n([\s\S]*)\n-----END [^\n]*-----$/.exec(rest);
+  if (text) return { body, system, user, format: 'text', texts: [text[1] ?? ''], glossary };
   let items: unknown = [];
   try {
-    items = JSON.parse(user.slice(user.indexOf('\n') + 1));
+    items = JSON.parse(rest.slice(rest.indexOf('\n') + 1));
   } catch {}
   const texts = Array.isArray(items) ? items.map((item: Json) => String(item?.t ?? '')) : [];
-  return { body, system, user, format: 'batch', texts };
+  return { body, system, user, format: 'batch', texts, glossary };
 }
 
 /** The default reply: every text through mockTranslate, in the format the prompt asks for. */

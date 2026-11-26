@@ -7,6 +7,8 @@ import { CONFIG_STORAGE_KEY, type ConfigSnapshot } from '@/lib/config/types';
 import { createMenuHandlers, rebuildContextMenus } from '@/lib/context-menu';
 import { withUserMessage } from '@/lib/error-messages';
 import { appError, fail, toAppError } from '@/lib/errors';
+import { createGlossaryRepository } from '@/lib/glossary/repository';
+import { GLOSSARY_STORAGE_KEY } from '@/lib/glossary/types';
 import { handle } from '@/lib/messaging/handle';
 import { createPaletteHandlers } from '@/lib/messaging/palette-handlers';
 import {
@@ -17,6 +19,7 @@ import {
 } from '@/lib/messaging/protocol';
 import {
   createConfigHandlers,
+  createGlossaryHandlers,
   forbiddenSenderError,
   isExtensionPageSender,
 } from '@/lib/messaging/sender';
@@ -34,13 +37,20 @@ export default defineBackground(() => {
   const repo = createConfigRepository({ store, uiLanguage: browser.i18n.getUILanguage() });
   const secrets = createSecretStore(store);
   const cache = createTranslationCache();
+  // The glossary's only writer (M4-C); translations read its in-memory snapshot.
+  const glossary = createGlossaryRepository({ store });
   const service = createTranslateService({
     getConfig: async () => (await repo.load()).data,
     secrets,
     cache,
     lookupPhonetic: createPhoneticLookup(),
+    getGlossary: async () => (await glossary.snapshot()).entries,
   });
   const config = createConfigHandlers({ repo, extensionRoot: browser.runtime.getURL('/') });
+  const glossaryHandlers = createGlossaryHandlers({
+    repo: glossary,
+    extensionRoot: browser.runtime.getURL('/'),
+  });
   const admin = createAdminHandlers({
     getConfig: async () => (await repo.load()).data,
     secrets,
@@ -58,6 +68,9 @@ export default defineBackground(() => {
   // Config writes are accepted from extension pages only, never from content scripts.
   onMessage('config.patch', ({ data, sender }) => config['config.patch'](sender, data));
   onMessage('config.reset', ({ data, sender }) => config['config.reset'](sender, data));
+  onMessage('glossary.change', ({ data, sender }) =>
+    glossaryHandlers['glossary.change'](sender, data),
+  );
   onMessage('secrets.set', ({ data, sender }) => admin['secrets.set'](sender, data));
   onMessage('secrets.status', ({ sender }) => admin['secrets.status'](sender));
   onMessage('provider.test', ({ data, sender }) => admin['provider.test'](sender, data));
@@ -181,6 +194,10 @@ export default defineBackground(() => {
   };
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && CONFIG_STORAGE_KEY in changes) load();
+    // Every write, this worker's own included: the snapshot always follows storage.
+    if (area === 'local' && GLOSSARY_STORAGE_KEY in changes) {
+      glossary.replace(changes[GLOSSARY_STORAGE_KEY]?.newValue);
+    }
   });
   browser.runtime.onInstalled.addListener(load);
   load();

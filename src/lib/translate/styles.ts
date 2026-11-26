@@ -1,4 +1,5 @@
 import { type ConfigV1, isCustomStyleId, type TranslationStyle } from '@/lib/config/types';
+import { escapeForPrompt } from './quote';
 
 // Background-only (src/lib/translate/types.ts): the settings page imports the style ids from
 // src/lib/config/types.ts, never these lines.
@@ -23,12 +24,7 @@ const CUSTOM_LEAD =
  * `<<NONCE>>` nor an inline tag such as `</t0>`.
  */
 export function quoteStyle(text: string): string {
-  // JSON.stringify leaves U+2028 and U+2029 as they are; escape them so the line stays one line.
-  return JSON.stringify(text)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
+  return escapeForPrompt(JSON.stringify(text));
 }
 
 /**

@@ -12,6 +12,11 @@ export interface CacheKeyParts {
   /** '' by default; the digest of `ProviderSettings.cacheParams` when there are any (M4-A). */
   paramsDigest: string;
   text: string;
+  /**
+   * The digest of the glossary terms found in this segment (M4-C); only present when there are
+   * any. stableStringify skips undefined, so every key without terms stays as before.
+   */
+  glossary?: string;
 }
 
 /** JSON with object keys sorted, so key order never changes the digest. */

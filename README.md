@@ -58,6 +58,7 @@ Islet Translate is at version `0.1.0`. M0 (foundation), M1 (translation core), M
 | Settings: General | Target and source language, appearance, translation style with a live preview, how a page is shown when translation starts, control bar position, and the selection dot. | <img src="docs/assets/readme/en-options-general.png" width="240" alt="Settings, General page"> |
 | Settings: Translation services | Default engine, keys and models, up to 10 custom OpenAI-compatible services (local models included), **Test connection**, and the translation cache. | <img src="docs/assets/readme/en-options-services.png" width="240" alt="Settings, Translation services page"> |
 | Settings: Translation styles | Styles for translating with an AI engine: General, Technical docs, Academic papers, Casual and Literary, plus up to 10 styles of your own (a name and a style description). One default style for every site; with General the prompt is the same as before and existing cached translations still apply, and after switching styles a paragraph is translated again in the new style. Google Translate is not affected. | <sub>Coming soon</sub> |
+| Settings: Glossary | Up to 500 terms, each a source and a translation: every engine translates the term your way, and a term with an empty translation is kept as it is (so a product name such as "Sonnet" is no longer translated as an ordinary word). A translation applies to one target language; matching ignores case unless you tick **Match case**. AI engines get the terms of the paragraphs they translate; Google Translate keeps each term in place and falls back to a translation without terms if it loses one, so no word ever disappears. A paragraph that is nothing but terms (a "GitHub" link in a menu) is answered on your computer, without a request. Paragraphs without a term are requested and cached exactly as before. | <sub>Coming soon</sub> |
 | Interface language | Follows the browser language: English, Simplified Chinese and Traditional Chinese, with English as the default. Chinese text uses the right Simplified or Traditional font forms. | <sub>Coming soon</sub> |
 | Privacy and keys | API keys stay on your computer, and pages only ever see the last 4 characters of a key.<br>There are no accounts and no analytics or tracking code. Page text is sent only to the translation engine you choose.<br>Translations are cached on your computer, and entries older than 7 days are removed every day. | |
 
@@ -363,7 +364,8 @@ Unit tests sit next to the source they cover and are named `*.test.ts`.
 | ✅ Done | A small batch of polish: AI batch translations shown paragraph by paragraph, with misaligned ones taken back |
 | ✅ Done | v0.6.0 as a GitHub Release |
 | ✅ Done | M4-B translation styles (5 presets and custom styles) |
-| Next | The rest of M4: glossary, input translation, multi-engine comparison on the card |
+| ✅ Done | M4-C glossary and proper-noun protection |
+| Next | The rest of M4: glossary import and export, input translation, polishing what you type |
 | Later | M3e Chrome's built-in local engine (moved after M4) |
 | Later | M5 YouTube subtitles, article refinement, vocabulary list, bilingual export |
 | Later | M6 TikTok and subtitle files |

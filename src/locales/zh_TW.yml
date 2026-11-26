@@ -30,6 +30,10 @@ errors:
     styleMissing: 這個風格已被刪除
     invalidValue: 設定值不正確，未儲存。請檢查後重試。
     invalidExtraBody: '需要是一個 JSON 物件，例如 {"key": "value"}。'
+    glossaryLimit: 最多 500 筆術語
+    glossaryDuplicate: 已有相同原文的術語
+    glossaryMissing: 這筆術語已被刪除
+    glossaryNewerVersion: 術語庫由較新版本的擴充功能寫入，目前版本無法修改
   network:
     extensionUnreachable: 無法連線到擴充功能背景程式，請重新載入擴充功能後重試。
     pageUnreachable: 無法連線到頁面，請重新整理網頁後重試。Chrome 線上應用程式商店等受限頁面無法使用。
@@ -160,6 +164,8 @@ options:
     servicesSub: Google 可免費使用；AI 引擎和自訂服務需要你自己的金鑰。
     styles: 翻譯風格
     stylesSub: 選擇 AI 翻譯的風格，也可以新增自己的風格
+    glossary: 術語庫
+    glossarySub: 指定詞語的譯法，或讓專有名詞保持原樣；對所有翻譯引擎生效
     loading: 正在載入設定…
   notice:
     saved: 已儲存
@@ -321,6 +327,26 @@ options:
     nameRequired: 請填寫名稱
     descriptionRequired: 請填寫風格說明
     save: 儲存
+  glossary:
+    add: 新增術語
+    save: 儲存
+    cancel: 取消
+    confirmDelete: 確認刪除
+    source: 原文
+    target: 譯文
+    lang: 目標語言
+    caseSensitive: 區分大小寫
+    targetPlaceholder: 留空則保持原樣
+    keep: 保持原樣
+    # $1：術語原文。
+    editAria: 編輯「$1」
+    # $1：術語原文。
+    deleteAria: 刪除「$1」
+    deleteNote: 刪除後無法復原
+    empty: 還沒有術語。新增後，翻譯時會依你的譯法處理這些詞；譯文留空則保持原樣，適合產品名、人名等專有名詞。
+    sourceRequired: 請填寫原文
+    sourceTooLong: 原文最多 200 個字元
+    targetTooLong: 譯文最多 200 個字元
   cache:
     title: 翻譯快取
     counting: 正在統計…

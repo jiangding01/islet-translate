@@ -8,6 +8,7 @@ import type {
   PageMode,
 } from '@/lib/config/types';
 import type { AppError, Result } from '@/lib/errors';
+import type { GlossaryChange, GlossaryEntry } from '@/lib/glossary/types';
 import type { LanguageCode } from '@/lib/languages';
 import type { ProviderIcon } from '@/lib/provider-icons';
 import type { SiteMemory } from '@/lib/site-memory';
@@ -115,6 +116,8 @@ export interface ProtocolMap {
   'app.getStatus'(): Result<{ version: string }>;
   'config.patch'(changes: ConfigChange[]): Result<ConfigSnapshot>;
   'config.reset'(paths?: ConfigPath[]): Result<ConfigSnapshot>;
+  /** Settings page only (`validation/forbidden-sender` otherwise): one glossary entry (M4-C). */
+  'glossary.change'(change: GlossaryChange): Result<GlossaryEntry[]>;
   /** Settings page only (`validation/forbidden-sender` otherwise). */
   'secrets.set'(args: { provider: SecretProviderId; key: string | null }): Result<SecretStatusInfo>;
   /** Every built-in provider, plus each custom provider that has a key. */

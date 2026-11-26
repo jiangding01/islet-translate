@@ -5,28 +5,31 @@ import { useConfig } from '@/lib/config/use-config';
 import { describeError } from '@/lib/error-messages';
 import { useTheme } from '@/styles/theme';
 import { GeneralPage } from './GeneralPage';
+import { GlossaryPage } from './GlossaryPage';
 import { NoticeLine, NoticeProvider, useNoticeState } from './notice';
 import styles from './options.module.css';
 import { ServicesPage } from './ServicesPage';
 import { StylesPage } from './StylesPage';
 
-type Page = 'general' | 'services' | 'styles';
+type Page = 'general' | 'services' | 'styles' | 'glossary';
 
 // Key table only: the copy is looked up at render (tests switch the UI language per case).
 const PAGES = [
   { id: 'general', title: 'options.nav.general', sub: 'options.nav.generalSub' },
   { id: 'services', title: 'options.nav.services', sub: 'options.nav.servicesSub' },
   { id: 'styles', title: 'options.nav.styles', sub: 'options.nav.stylesSub' },
+  { id: 'glossary', title: 'options.nav.glossary', sub: 'options.nav.glossarySub' },
 ] as const satisfies { id: Page; title: string; sub: string }[];
 
 /**
  * Opens on the general page; `#services` when the caller came for the engines (the popup's
- * "去设置" next to an engine problem), `#styles` for the translation styles (the sidebar
- * links switch pages through the hash too). Exported for tests.
+ * "去设置" next to an engine problem), `#styles` for the translation styles, `#glossary` for the
+ * glossary (the sidebar links switch pages through the hash too). Exported for tests.
  */
 export function pageFromHash(hash = location.hash): Page {
   if (hash === '#services') return 'services';
   if (hash === '#styles') return 'styles';
+  if (hash === '#glossary') return 'glossary';
   return 'general';
 }
 
@@ -34,6 +37,7 @@ const NAV_ICONS = {
   general: GearIcon,
   services: TranslateIcon,
   styles: PaletteIcon,
+  glossary: BookIcon,
 } as const satisfies Record<Page, () => React.JSX.Element>;
 
 export function App() {
@@ -108,6 +112,9 @@ export function App() {
             {state.status === 'ready' && page === 'styles' && (
               <StylesPage config={state.snapshot.data} />
             )}
+            {state.status === 'ready' && page === 'glossary' && (
+              <GlossaryPage config={state.snapshot.data} />
+            )}
           </div>
         </main>
       </div>
@@ -164,6 +171,23 @@ function PaletteIcon() {
       <circle cx="4.9" cy="7.4" r=".8" />
       <circle cx="7" cy="4.7" r=".8" />
       <circle cx="10.3" cy="5" r=".8" />
+    </svg>
+  );
+}
+
+function BookIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
+      <path d="M2.5 3.2c1.9-.7 3.8-.6 5.5.6v9.6c-1.7-1.2-3.6-1.3-5.5-.6z" />
+      <path d="M13.5 3.2c-1.9-.7-3.8-.6-5.5.6v9.6c1.7-1.2 3.6-1.3 5.5-.6z" />
     </svg>
   );
 }

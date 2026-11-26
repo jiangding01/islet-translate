@@ -313,7 +313,8 @@ function fallBackFromMissingEngine(data: unknown, options: { explicit: boolean }
   return setPath(data, 'translation.engine', 'google');
 }
 
-function describe(error: unknown): string {
+/** A storage failure's message for an AppError (also used by the glossary repository). */
+export function describe(error: unknown): string {
   if (isAppError(error) || error instanceof Error) return error.message;
   return 'Unknown storage error';
 }

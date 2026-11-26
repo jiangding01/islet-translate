@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '@/lib/config/defaults';
 import type { ConfigV1 } from '@/lib/config/types';
 import { appError, fail, ok } from '@/lib/errors';
+import type { GlossaryEntry } from '@/lib/glossary/types';
 import { createPortClient, type PortLike, servePort } from '@/lib/messaging/port';
 import type { TranslateChunk, TranslateDone, TranslateRequest } from '@/lib/messaging/protocol';
 import type { PhoneticHit } from '@/lib/phonetic/lookup';
@@ -92,8 +93,11 @@ const openaiOk: Handler = (texts) => openaiReply(texts.map((text, i) => ({ i, t:
 /** Text-format reply in two increments: "流:" then the source. */
 const openaiTextOk: TextHandler = (text) =>
   sseResponse([openaiDelta('流:'), openaiDelta(text), 'data: [DONE]\n\n']);
-/** The text between a text prompt's nonce markers, or undefined for a batch prompt. */
-const TEXT_MARKERS = /^-----BEGIN ([0-9a-f]+)-----\n([\s\S]*)\n-----END \1-----$/;
+/**
+ * The text between a text prompt's nonce markers, or undefined for a batch prompt. Not anchored
+ * at the start: glossary lines may come first (M4-C).
+ */
+const TEXT_MARKERS = /-----BEGIN ([0-9a-f]+)-----\n([\s\S]*)\n-----END \1-----$/;
 
 /** Never answers; rejects like real fetch once aborted. */
 const hang: Handler = (_texts, call) =>
@@ -137,7 +141,11 @@ function createProviders() {
         sent.push(marked);
         return handlers.openaiText(marked, call);
       }
-      const items = JSON.parse(content.slice(content.indexOf('['))) as { i: number; t: string }[];
+      // The batch is the last line (glossary lines may come first, M4-C).
+      const items = JSON.parse(content.slice(content.lastIndexOf('\n') + 1)) as {
+        i: number;
+        t: string;
+      }[];
       sent.push(...items.map((item) => item.t));
       return handlers.openai(
         items.map((item) => item.t),
@@ -1357,5 +1365,322 @@ describe('translate service: revoked translations', () => {
     expect(providers.calls).toHaveLength(5);
     expect(providers.sent.slice(-2)).toEqual(['one', 'two']);
     await cached(cache, 4);
+  });
+});
+
+// ------------------------------------------------------------ glossary (M4-C)
+
+describe('translate service: glossary (M4-C)', () => {
+  const GLOSSARY_LEAD = 'Glossary for this request, given as a JSON array';
+  let termSeq = 0;
+  const term = (source: string, fields: Partial<GlossaryEntry> = {}): GlossaryEntry => {
+    termSeq += 1;
+    return {
+      id: `term-${String(termSeq).padStart(8, '0')}`,
+      source,
+      target: '',
+      lang: '',
+      caseSensitive: false,
+      ...fields,
+    };
+  };
+  const SONNET = term('Sonnet', { caseSensitive: true });
+  const PR = term('pull request', { target: '拉取请求', lang: 'zh-CN' });
+  const QWEN = term('通义千问', { target: 'Qwen', lang: 'en' });
+  const HAIKU = term('Haiku');
+
+  /** A service whose glossary is `glossary.entries` (replace the array to change it). */
+  function withGlossary(entries: GlossaryEntry[]) {
+    const glossary = { entries };
+    const harness = setup({ getGlossary: async () => glossary.entries });
+    return { ...harness, glossary };
+  }
+
+  /** Request bodies sent to the fake providers, in order. */
+  const bodies = (providers: ReturnType<typeof createProviders>) =>
+    (providers.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls.map(
+      ([url, init]) => ({ url, body: init?.body }),
+    );
+  const userMessages = (providers: ReturnType<typeof createProviders>) =>
+    bodies(providers)
+      .filter(({ url }) => url.endsWith('/chat/completions'))
+      .map(
+        ({ body }) =>
+          (JSON.parse(String(body)) as { messages: { content: string }[] }).messages[1]?.content ??
+          '',
+      );
+
+  /** The cache keys one request looks up; nothing is fetched. */
+  async function keysFor(
+    config: ConfigV1,
+    entries: GlossaryEntry[],
+    texts: string[],
+    payload: Partial<TranslateRequest> = {},
+  ) {
+    const keys: string[] = [];
+    const service = createTranslateService({
+      getConfig: async () => structuredClone(config),
+      secrets: { get: async () => 'k' },
+      cache: {
+        ...createTranslationCache({ open: () => openCacheDb(`service-${dbSeq++}`) }),
+        getMany: async (wanted) => {
+          keys.push(...wanted);
+          throw new Error('stop after the lookup');
+        },
+      },
+      fetch: (async () => {
+        throw new Error('no fetch');
+      }) as unknown as typeof fetch,
+      detectLanguage: async () => ({ isReliable: false, languages: [] }),
+      checkPermission: async () => ok(undefined),
+      getGlossary: async () => entries,
+    });
+    await service
+      .translate(
+        {
+          items: texts.map((text, index) => ({ id: `k${index}`, text })),
+          ...payload,
+        } as TranslateRequest,
+        { signal: new AbortController().signal, emit: () => undefined, caller: 'c' } as never,
+      )
+      .catch(() => undefined);
+    return keys;
+  }
+
+  describe('cache keys', () => {
+    // The keys locked in the M4-A block: a glossary that finds nothing changes none of them.
+    const BEFORE = {
+      openai: 'v1:be11acccab02adc2b3f02f060c4d3c886836805a6e732b1dc2cd2329f6475877',
+      openaiStream: 'v1:43bf751643cd851f04ccf27221de11344419495d7348bb4f58a59e5d202e547d',
+      custom: 'v1:ffc1e58c8041a2a21301b5b8fc0890a9a2405597ec5e8363066db6cde0ff0f31',
+    };
+
+    it('keeps every locked key when no term is found', async () => {
+      const entries = [SONNET, PR, HAIKU];
+      expect(await keysFor(keyConfig('openai'), entries, ['Hello'])).toEqual([BEFORE.openai]);
+      expect(await keysFor(keyConfig('openai'), entries, ['Hello'], { stream: true })).toEqual([
+        BEFORE.openaiStream,
+      ]);
+      expect(await keysFor(keyConfig('custom-aaaaaaaa'), entries, ['Hello'])).toEqual([
+        BEFORE.custom,
+      ]);
+      const google = await keysFor(keyConfig('google'), [], ['Hello']);
+      expect(await keysFor(keyConfig('google'), entries, ['Hello'])).toEqual(google);
+    });
+
+    it('keys a segment with terms apart, by the terms found in it only', async () => {
+      for (const engine of ['openai', 'google'] as const) {
+        const config = keyConfig(engine);
+        const text = 'Sonnet opened a pull request';
+        const [plain] = await keysFor(config, [], [text]);
+        const [keyed] = await keysFor(config, [SONNET, PR, HAIKU], [text]);
+        expect(keyed).not.toBe(plain);
+        // Stable, and blind to entries the segment does not hold or to their order.
+        expect(await keysFor(config, [HAIKU, PR, SONNET], [text])).toEqual([keyed]);
+        expect(
+          await keysFor(config, [SONNET, PR, { ...HAIKU, target: 'x', lang: 'zh-CN' }], [text]),
+        ).toEqual([keyed]);
+        // Changing a term the segment holds changes its key.
+        expect(await keysFor(config, [SONNET, { ...PR, target: '合并请求' }], [text])).not.toEqual([
+          keyed,
+        ]);
+      }
+    });
+  });
+
+  describe('AI engines', () => {
+    it('sends segments without terms in their own request, exactly as before', async () => {
+      const { providers, config, run } = withGlossary([SONNET, PR, HAIKU]);
+      config.translation.engine = 'openai';
+      const result = await run({ items: items('Hello', 'Sonnet opened a pull request') });
+      expect(result.outcome).toEqual({ status: 'done', data: { total: 2, failed: 0 } });
+      expect(result.byId.i0).toMatchObject({ text: 'O:Hello' });
+      expect(result.byId.i1).toMatchObject({ text: 'O:Sonnet opened a pull request' });
+      const users = userMessages(providers);
+      expect(users).toHaveLength(2);
+      expect(users).toContain('Translate this JSON array:\n[{"i":0,"t":"Hello"}]');
+      const withTerms = users.find((user) => user.startsWith(GLOSSARY_LEAD)) ?? '';
+      const lines = withTerms.split('\n');
+      // Only the terms of this group, sorted by source: no Haiku.
+      expect(JSON.parse(lines[1] ?? '')).toEqual([
+        { source: 'Sonnet', target: '' },
+        { source: 'pull request', target: '拉取请求' },
+      ]);
+      expect(lines.slice(2).join('\n')).toBe(
+        'Translate this JSON array:\n[{"i":0,"t":"Sonnet opened a pull request"}]',
+      );
+    });
+
+    it('sends the union of the terms of every segment of the group', async () => {
+      const { providers, config, run } = withGlossary([SONNET, PR, HAIKU]);
+      config.translation.engine = 'openai';
+      await run({ items: items('Sonnet is here', 'a pull request too') });
+      const users = userMessages(providers);
+      expect(users).toHaveLength(1);
+      expect(JSON.parse(users[0]?.split('\n')[1] ?? '')).toEqual([
+        { source: 'Sonnet', target: '' },
+        { source: 'pull request', target: '拉取请求' },
+      ]);
+    });
+
+    it('puts the terms before the markers of a stream request', async () => {
+      const { providers, config, run } = withGlossary([SONNET]);
+      config.translation.engine = 'openai';
+      const result = await run({ items: items('Sonnet streams'), stream: true });
+      expect(result.byId.i0).toMatchObject({ text: '流:Sonnet streams' });
+      const [user] = userMessages(providers);
+      expect(user?.split('\n')[0]).toMatch(/^Glossary for this request/);
+      expect(user?.split('\n')[2]).toMatch(/^-----BEGIN [0-9a-f]+-----$/);
+    });
+  });
+
+  describe('Google', () => {
+    it('sends terms as untranslated spans in HTML mode and fills them in', async () => {
+      const { providers, run } = withGlossary([SONNET, PR]);
+      const result = await run({ items: items('Sonnet opened a pull request') });
+      expect(result.byId.i0).toEqual({
+        id: 'i0',
+        text: 'G:Sonnet opened a 拉取请求',
+        disposition: 'translated',
+        cached: false,
+      });
+      expect(providers.calls).toHaveLength(1);
+      expect(providers.calls[0]?.url).toContain('&format=html');
+      expect(providers.sent).toEqual([
+        '<span translate="no" id="g0">Sonnet</span> opened a <span translate="no" id="g1">pull request</span>',
+      ]);
+    });
+
+    it('adds the missing spaces for a spaced target, and keeps line breaks', async () => {
+      const { providers, run } = withGlossary([QWEN, SONNET]);
+      providers.handlers.google = (texts) =>
+        jsonResponse(
+          texts.map((text) => [
+            text.includes('g0') && text.includes('通义千问')
+              ? 'We used<span translate="no" id="g0">X</span>and it worked'
+              : `G:${text.replace(/<br>/g, '<br> ')}`,
+            'zh-CN',
+          ]),
+        );
+      const english = await run({ items: items('我们用了通义千问，效果很好'), target: 'en' });
+      expect(english.byId.i0).toMatchObject({ text: 'We used Qwen and it worked' });
+      const lines = await run({ items: items('Sonnet\nsecond line') });
+      expect(lines.byId.i0).toMatchObject({ text: 'G:Sonnet\nsecond line' });
+      expect(providers.sent.at(-1)).toBe(
+        '<span translate="no" id="g0">Sonnet</span><br>second line',
+      );
+    });
+
+    it('caches the marked reply and fills it in again on a cache hit', async () => {
+      const { providers, cache, run } = withGlossary([SONNET, PR]);
+      // Short enough not to count as an echo of the source (echo.ts): the fake answers G:<source>.
+      await run({ items: items('Sonnet: a pull request') });
+      await cached(cache, 1);
+      const second = await run({ items: items('Sonnet: a pull request') });
+      expect(second.byId.i0).toEqual({
+        id: 'i0',
+        text: 'G:Sonnet: a 拉取请求',
+        disposition: 'translated',
+        cached: true,
+      });
+      expect(providers.calls).toHaveLength(1);
+    });
+
+    it('falls back without terms when the marks are lost: one request, not cached with terms', async () => {
+      const { providers, cache, run } = withGlossary([SONNET]);
+      // HTML mode drops every span; the plain endpoint answers as usual.
+      providers.handlers.google = (texts, call) =>
+        call.url.includes('format=html')
+          ? jsonResponse(texts.map((text) => [`H:${text.replace(/<[^>]+>/g, '')}`, 'en']))
+          : googleOk(texts, call);
+      const result = await run({ items: items('Sonnet is good', 'Hello', 'Sonnet is fine') });
+      expect(result.outcome).toEqual({ status: 'done', data: { total: 3, failed: 0 } });
+      expect(result.byId.i0).toMatchObject({ text: 'G:Sonnet is good', cached: false });
+      expect(result.byId.i2).toMatchObject({ text: 'G:Sonnet is fine', cached: false });
+      expect(result.byId.i1).toMatchObject({ text: 'G:Hello' });
+      // [Hello] and the marked pair go out together; the two fallbacks share one request.
+      expect(providers.calls.map((call) => call.url.includes('format=html'))).toEqual([
+        false,
+        true,
+        false,
+      ]);
+      expect(providers.sent.slice(-2)).toEqual(['Sonnet is good', 'Sonnet is fine']);
+      // Hello and the two fallbacks, under keys without terms; nothing under a key with terms.
+      await cached(cache, 3);
+      await flush();
+      expect((await cache.stats()).count).toBe(3);
+    });
+
+    it('asks again without terms when the HTML request fails over (403), so the words stay', async () => {
+      const { providers, run } = withGlossary([SONNET]);
+      // Every POST /t answers 403: plain mode then falls back to /single.
+      providers.handlers.google = () => new Response('', { status: 403 });
+      const result = await run({ items: items('Sonnet is good') });
+      expect(result.outcome).toEqual({ status: 'done', data: { total: 1, failed: 0 } });
+      expect(result.byId.i0).toMatchObject({ text: 'S:Sonnet is good', disposition: 'translated' });
+      expect(providers.calls.map((call) => call.url.includes('format=html'))).toEqual([
+        true,
+        false,
+        false,
+      ]);
+      expect(providers.calls[2]?.url).toContain('/translate_a/single?');
+    });
+
+    it('takes a fallback from the cache without terms first', async () => {
+      const { providers, cache, glossary, run } = withGlossary([]);
+      await run({ items: items('Sonnet is good') });
+      await cached(cache, 1);
+      glossary.entries = [SONNET];
+      providers.handlers.google = (texts) =>
+        jsonResponse(texts.map((text) => [`H:${text.replace(/<[^>]+>/g, '')}`, 'en']));
+      const result = await run({ items: items('Sonnet is good') });
+      expect(result.byId.i0).toMatchObject({ text: 'G:Sonnet is good', cached: true });
+      expect(providers.calls).toHaveLength(2);
+    });
+
+    it('ends a request cancelled during the fallback as cancelled', async () => {
+      const { providers, request } = withGlossary([SONNET]);
+      providers.handlers.google = (texts, call) =>
+        call.url.includes('format=html')
+          ? jsonResponse(texts.map((text) => [`H:${text.replace(/<[^>]+>/g, '')}`, 'en']))
+          : hang(texts, call);
+      const handle = request({ items: items('Sonnet is good') });
+      await vi.waitFor(() => expect(providers.calls).toHaveLength(2));
+      handle.cancel();
+      expect(await handle.outcome).toEqual({ status: 'cancelled' });
+      await vi.waitFor(() => expect(providers.aborts()).toBe(1));
+    });
+
+    it('never marks a segment that already reads like a mark', async () => {
+      const { providers, run } = withGlossary([SONNET]);
+      const result = await run({ items: items('Sonnet uses <g0> tags') });
+      expect(result.byId.i0).toMatchObject({ text: 'G:Sonnet uses <g0> tags' });
+      expect(providers.calls[0]?.url).not.toContain('format=html');
+    });
+  });
+
+  describe('segments that are only terms', () => {
+    it.each(['google', 'openai'] as const)('answers them locally (%s)', async (engine) => {
+      const { providers, config, cache, run } = withGlossary([SONNET, PR]);
+      config.translation.engine = engine;
+      const result = await run({ items: items('Sonnet', '<t0>pull request</t0>!', ' Sonnet · ') });
+      expect(result.outcome).toEqual({ status: 'done', data: { total: 3, failed: 0 } });
+      expect(result.byId.i0).toEqual({
+        id: 'i0',
+        text: 'Sonnet',
+        disposition: 'unchanged',
+        cached: false,
+      });
+      expect(result.byId.i1).toEqual({
+        id: 'i1',
+        text: '<t0>拉取请求</t0>!',
+        disposition: 'translated',
+        cached: false,
+      });
+      expect(result.byId.i2).toMatchObject({ text: 'Sonnet ·', disposition: 'unchanged' });
+      expect(providers.calls).toHaveLength(0);
+      await flush();
+      expect((await cache.stats()).count).toBe(0);
+    });
   });
 });
