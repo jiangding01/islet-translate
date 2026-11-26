@@ -654,6 +654,139 @@ describe('translate service: preprocessing and results', () => {
   });
 });
 
+// ------------------------------------------------------------ cache keys and request params
+
+/** The cache keys a request looks up, for a config; nothing is fetched. */
+async function lookedUpKeys(config: ConfigV1, payload: Partial<TranslateRequest> = {}) {
+  const keys: string[] = [];
+  const service = createTranslateService({
+    getConfig: async () => structuredClone(config),
+    secrets: { get: async () => 'k' },
+    cache: {
+      ...createTranslationCache({ open: () => openCacheDb(`service-${dbSeq++}`) }),
+      getMany: async (wanted) => {
+        keys.push(...wanted);
+        throw new Error('stop after the lookup');
+      },
+    },
+    fetch: (async () => {
+      throw new Error('no fetch');
+    }) as unknown as typeof fetch,
+    detectLanguage: async () => ({ isReliable: false, languages: [] }),
+    checkPermission: async () => ok(undefined),
+  });
+  await service
+    .translate(
+      { items: [{ id: 'a', text: 'Hello' }], ...payload } as TranslateRequest,
+      {
+        signal: new AbortController().signal,
+        emit: () => undefined,
+        caller: 'c',
+      } as never,
+    )
+    .catch(() => undefined);
+  expect(keys).toHaveLength(1);
+  return keys[0];
+}
+
+function keyConfig(engine: ConfigV1['translation']['engine']): ConfigV1 {
+  const config = createDefaultConfig('zh-CN');
+  config.translation.engine = engine;
+  config.providers.gemini.model = 'gemini-2.5-flash';
+  config.customProviders['custom-aaaaaaaa'] = {
+    name: 'A',
+    baseURL: 'http://localhost:11434/v1',
+    model: 'q',
+  };
+  return config;
+}
+
+describe('translate service: cache keys of request params (M4-A)', () => {
+  // Captured from the code before M4-A (main 1712d02), same config and request: the
+  // defaults (now lowest thinking for OpenAI and Gemini) must keep every existing key.
+  const BEFORE = {
+    openai: 'v1:be11acccab02adc2b3f02f060c4d3c886836805a6e732b1dc2cd2329f6475877',
+    openaiStream: 'v1:43bf751643cd851f04ccf27221de11344419495d7348bb4f58a59e5d202e547d',
+    deepseek: 'v1:db626260440bcbe1bd6bd4d2f56436ff0bf53ac695e8cf772bd0187932bd8af8',
+    gemini: 'v1:829ced55fd7e638bc2991e538466ba238ba005e0e09fbaad3da39880bfbacaae',
+    custom: 'v1:ffc1e58c8041a2a21301b5b8fc0890a9a2405597ec5e8363066db6cde0ff0f31',
+  };
+
+  it('keeps the exact cache key of every default request', async () => {
+    expect(await lookedUpKeys(keyConfig('openai'))).toBe(BEFORE.openai);
+    expect(await lookedUpKeys(keyConfig('openai'), { stream: true })).toBe(BEFORE.openaiStream);
+    expect(await lookedUpKeys(keyConfig('deepseek'))).toBe(BEFORE.deepseek);
+    expect(await lookedUpKeys(keyConfig('gemini'))).toBe(BEFORE.gemini);
+    expect(await lookedUpKeys(keyConfig('custom-aaaaaaaa'))).toBe(BEFORE.custom);
+  });
+
+  it('keys thinking apart only when it changes the request', async () => {
+    for (const engine of ['openai', 'deepseek', 'gemini'] as const) {
+      const config = keyConfig(engine);
+      config.providers[engine].thinking = true;
+      const on = await lookedUpKeys(config);
+      expect(on).not.toBe(BEFORE[engine]);
+    }
+    // Not in the rule table, or a proxy: the request is the same either way.
+    const unknown = keyConfig('openai');
+    unknown.providers.openai.model = 'gpt-4o';
+    const off = await lookedUpKeys(unknown);
+    unknown.providers.openai.thinking = true;
+    expect(await lookedUpKeys(unknown)).toBe(off);
+    const proxy = keyConfig('openai');
+    proxy.providers.openai.baseURL = 'https://proxy.example.com/v1';
+    const proxyOff = await lookedUpKeys(proxy);
+    proxy.providers.openai.thinking = true;
+    expect(await lookedUpKeys(proxy)).toBe(proxyOff);
+    const old = keyConfig('gemini');
+    old.providers.gemini.model = 'gemini-2.0-flash';
+    const oldOff = await lookedUpKeys(old);
+    old.providers.gemini.thinking = true;
+    expect(await lookedUpKeys(old)).toBe(oldOff);
+  });
+
+  it('keys extra fields by their parsed value, and ignores empty or invalid ones', async () => {
+    const withExtra = (text: string) => {
+      const config = keyConfig('custom-aaaaaaaa');
+      config.customProviders['custom-aaaaaaaa'] = {
+        name: 'A',
+        baseURL: 'http://localhost:11434/v1',
+        model: 'q',
+        extraBody: text,
+      };
+      return lookedUpKeys(config);
+    };
+    for (const text of ['', '  ', '{}', '{ }', '[1]', '{oops']) {
+      expect(await withExtra(text)).toBe(BEFORE.custom);
+    }
+    const compact = await withExtra('{"think":false,"top_k":5}');
+    expect(compact).not.toBe(BEFORE.custom);
+    expect(await withExtra('{\n  "top_k": 5,\n  "think": false\n}')).toBe(compact);
+    expect(await withExtra('{"think":true,"top_k":5}')).not.toBe(compact);
+
+    const openai = keyConfig('openai');
+    openai.providers.openai.extraBody = '{"service_tier": "flex"}';
+    expect(await lookedUpKeys(openai)).not.toBe(BEFORE.openai);
+  });
+
+  it('sends the lowest thinking and the extra fields with the request', async () => {
+    const { providers, config, run } = setup();
+    config.translation.engine = 'openai';
+    config.providers.openai.model = 'gpt-5-mini';
+    config.providers.openai.extraBody = '{"service_tier": "flex"}';
+    await run({ items: items('Hello') });
+    const init = (providers.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+      .calls[0]?.[1];
+    const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({
+      reasoning_effort: 'minimal',
+      service_tier: 'flex',
+      model: 'gpt-5-mini',
+      stream: true,
+    });
+  });
+});
+
 describe('cooldownKeyFor', () => {
   it('scopes by engine family and origin, so custom providers on one server share it', () => {
     expect(cooldownKeyFor('google', '')).toBe('google');

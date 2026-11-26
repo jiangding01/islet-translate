@@ -5,20 +5,27 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { createDefaultConfig } from '@/lib/config/defaults';
+import type { ThinkingKind } from '@/lib/config/thinking-rules';
 import type { ConfigChange } from '@/lib/config/types';
 import { createGetMessage, loadLocales } from '../../../scripts/i18n-messages.mjs';
-import { ThinkingRow } from './EngineItem';
+import { type ThinkingPath, ThinkingRow } from './EngineItem';
 
-// The DeepSeek "thinking mode" switch in the engine panel (only DeepSeek has the field:
-// see engine-fields.test.ts).
+// The "thinking mode" switch in the engine panel. When it is shown is decided by the rule
+// table (engine-item.test.ts); this file covers the row itself.
 
 async function useEnglish() {
   const getMessage = createGetMessage(await loadLocales(), 'en');
   fakeBrowser.i18n.getMessage = getMessage as typeof fakeBrowser.i18n.getMessage;
 }
 
-const row = (thinking: boolean, change = vi.fn()) =>
-  createElement(ThinkingRow, { thinking, change });
+const row = (
+  thinking: boolean,
+  change = vi.fn(),
+  path: ThinkingPath = 'providers.deepseek.thinking',
+  kind: ThinkingKind = 'off',
+) => createElement(ThinkingRow, { path, kind, thinking, change });
+
+const HINT = '开启后模型会先推理再翻译，译文可能更准确，但明显更慢，也更费 token。';
 
 function parse(html: string) {
   const host = new DOMParser().parseFromString(html, 'text/html').body;
@@ -52,7 +59,24 @@ describe('ThinkingRow', () => {
     expect(view.name).toBe('思考模式');
     expect(view.labels).toEqual(['开', '关']);
     expect(view.checked).toEqual([false, true]);
-    expect(view.hint).toBe('开启后模型会先推理再翻译，译文可能更准确，但明显更慢，也更费 token。');
+    expect(view.hint).toBe(HINT);
+  });
+
+  it('adds that the model cannot stop thinking completely, keeping the cost note', () => {
+    const view = parse(
+      renderToStaticMarkup(row(false, vi.fn(), 'providers.openai.thinking', 'minimum')),
+    );
+    expect(view.hint).toBe(`${HINT}该模型无法完全关闭思考，关闭时使用最低档。`);
+  });
+
+  it('has English copy for a model that cannot stop thinking', async () => {
+    await useEnglish();
+    const view = parse(
+      renderToStaticMarkup(row(false, vi.fn(), 'providers.gemini.thinking', 'minimum')),
+    );
+    expect(view.hint).toBe(
+      "When on, the model reasons before it translates. Translations may be more accurate, but are noticeably slower and use more tokens. This model can't turn thinking off completely, so Off uses its lowest level.",
+    );
   });
 
   it('has English copy', async () => {
@@ -75,5 +99,17 @@ describe('ThinkingRow', () => {
     act(() => root?.render(row(true, change)));
     act(() => inputs[1]?.click());
     expect(change).toHaveBeenLastCalledWith({ path: 'providers.deepseek.thinking', value: false });
+  });
+
+  it('writes the path it is given', () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const change = vi.fn<(next: ConfigChange) => void>();
+    const host = document.body.appendChild(document.createElement('div'));
+    root = createRoot(host);
+    for (const path of ['providers.openai.thinking', 'providers.gemini.thinking'] as const) {
+      act(() => root?.render(row(false, change, path, 'minimum')));
+      act(() => host.querySelectorAll('input')[0]?.click());
+      expect(change).toHaveBeenLastCalledWith({ path, value: true });
+    }
   });
 });

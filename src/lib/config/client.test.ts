@@ -133,7 +133,12 @@ describe('readConfig', () => {
       config: { schemaVersion: 1, data: { providers: { openai: { model: 'x' } } } },
     });
     const { data } = await readConfig();
-    expect(data.providers.openai).toEqual({ baseURL: 'https://api.openai.com/v1', model: 'x' });
+    expect(data.providers.openai).toEqual({
+      baseURL: 'https://api.openai.com/v1',
+      model: 'x',
+      thinking: false,
+      extraBody: '',
+    });
     expect(data.customProviders).toEqual({});
   });
 

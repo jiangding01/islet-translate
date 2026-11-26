@@ -472,6 +472,14 @@
 .input[aria-invalid="true"] {
   border-color: var(--et-color-warn);
 }
+/* Multi-line JSON (extra request body): grows by hand, never sideways. */
+.textarea {
+  height: auto;
+  min-height: calc(var(--et-h-control-lg) * 2);
+  padding: 8px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
 .mono {
   font-family: var(--et-font-mono);
   font-size: var(--et-fs-page-sm);

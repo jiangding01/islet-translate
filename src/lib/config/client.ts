@@ -21,17 +21,12 @@ import {
   PAGE_MODES,
   PAGE_STYLES,
   THEMES,
-  type Theme,
 } from './types';
 
 // Config access for extension pages and content scripts. Deliberately zod-free:
 // the background is the only writer and validates everything it stores, so
 // this layer only guards against version skew. It reads through the native
 // storage API (not `wxt/utils/storage`) to keep the content script small.
-
-function isTheme(value: unknown): value is Theme {
-  return typeof value === 'string' && (THEMES as readonly string[]).includes(value);
-}
 
 function oneOf<T extends string>(values: readonly T[], value: unknown): T | undefined {
   return (values as readonly unknown[]).includes(value) ? (value as T) : undefined;
@@ -61,7 +56,9 @@ export function normalizeConfig(raw: unknown, uiLanguage: string): ConfigSnapsho
   const defaults = createDefaultSnapshot(uiLanguage);
   if (!isPlainObject(raw) || raw.schemaVersion !== CONFIG_SCHEMA_VERSION) return defaults;
 
-  const merged = mergeDefaults(defaults.data, raw.data);
+  // `providers` is kept as merged (defaults filled), unchecked: the background validates it.
+  const merged = mergeDefaults(defaults.data, raw.data) as Record<string, unknown> &
+    Pick<ConfigV1, 'providers'>;
   if (!isPlainObject(merged)) return defaults;
   const ui = isPlainObject(merged.ui) ? merged.ui : {};
   const language = isPlainObject(merged.language) ? merged.language : {};
@@ -77,7 +74,7 @@ export function normalizeConfig(raw: unknown, uiLanguage: string): ConfigSnapsho
     schemaVersion: CONFIG_SCHEMA_VERSION,
     data: {
       ...merged,
-      ui: { ...ui, theme: isTheme(ui.theme) ? ui.theme : defaults.data.ui.theme },
+      ui: { ...ui, theme: oneOf(THEMES, ui.theme) ?? defaults.data.ui.theme },
       language: {
         ...language,
         target: isLanguageCode(language.target) ? language.target : defaults.data.language.target,
@@ -86,7 +83,6 @@ export function normalizeConfig(raw: unknown, uiLanguage: string): ConfigSnapsho
             ? language.source
             : defaults.data.language.source,
       },
-      providers: merged.providers as ConfigV1['providers'],
       customProviders,
       page: {
         ...page,

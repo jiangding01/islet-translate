@@ -20,6 +20,10 @@ const customProviderSchema = z.looseObject({
   name: z.string().max(LIMITS.name),
   baseURL: z.string().max(LIMITS.baseURL),
   model: z.string().max(LIMITS.model),
+  // Only the length here: a stored value that is not a JSON object is ignored at request
+  // time (an invalid field here would drop the whole provider); writes are checked in the
+  // repository.
+  extraBody: z.string().max(LIMITS.extraBody).optional(),
 });
 
 // Background-only: the client never imports zod.
@@ -49,12 +53,14 @@ export const configSchema = z
       openai: z.looseObject({
         baseURL: z.string().max(LIMITS.baseURL),
         model: z.string().max(LIMITS.model),
+        thinking: z.boolean(),
+        extraBody: z.string().max(LIMITS.extraBody),
       }),
       deepseek: z.looseObject({
         model: z.string().max(LIMITS.model),
         thinking: z.boolean(),
       }),
-      gemini: z.looseObject({ model: z.string().max(LIMITS.model) }),
+      gemini: z.looseObject({ model: z.string().max(LIMITS.model), thinking: z.boolean() }),
     }),
     // The 10-entry limit is enforced when adding (repository), not here: a stored
     // record over the limit (a newer build) must not lose every entry on repair.

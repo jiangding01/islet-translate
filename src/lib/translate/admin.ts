@@ -1,3 +1,4 @@
+import { isExtraBodyValid } from '@/lib/config/extra-body';
 import { type ConfigV1, CUSTOM_PROVIDER_LIMITS, type Engine, isEngineId } from '@/lib/config/types';
 import { type AppError, appError, type Result } from '@/lib/errors';
 import { handle } from '@/lib/messaging/handle';
@@ -62,7 +63,7 @@ export function isOptionsSender(sender: AdminSender | undefined, optionsUrl: str
 
 function parseDraft(raw: unknown): ProviderTestDraft {
   if (!isRecord(raw)) throw invalidPayload();
-  const { engine, baseURL, model, apiKey, thinking } = raw;
+  const { engine, baseURL, model, apiKey, thinking, extraBody } = raw;
   if (
     !isEngineId(engine) ||
     typeof baseURL !== 'string' ||
@@ -70,11 +71,13 @@ function parseDraft(raw: unknown): ProviderTestDraft {
     typeof model !== 'string' ||
     model.length > CUSTOM_PROVIDER_LIMITS.model ||
     (apiKey !== undefined && typeof apiKey !== 'string') ||
-    (thinking !== undefined && typeof thinking !== 'boolean')
+    (thinking !== undefined && typeof thinking !== 'boolean') ||
+    (extraBody !== undefined &&
+      (typeof extraBody !== 'string' || extraBody.length > CUSTOM_PROVIDER_LIMITS.extraBody))
   ) {
     throw invalidPayload();
   }
-  return { engine, baseURL, model, apiKey, thinking };
+  return { engine, baseURL, model, apiKey, thinking, extraBody };
 }
 
 export function createAdminHandlers(deps: AdminDeps) {
@@ -99,11 +102,15 @@ export function createAdminHandlers(deps: AdminDeps) {
     if (engine !== 'google' && model === '') {
       throw appError('config', 'config/model-required', 'Model is required');
     }
+    if (draft.extraBody !== undefined && !isExtraBodyValid(draft.extraBody)) {
+      throw appError('config', 'config/invalid-extra-body', 'Extra body is not a JSON object');
+    }
     // Only the draft's own fields are used: nothing is read from or written to the config.
     const settings = settingsFor(engine, {
       baseURL: draft.baseURL,
       model,
       thinking: draft.thinking,
+      extraBody: draft.extraBody,
     });
     const permission = await checkPermission(engine, settings.baseURL);
     if (!permission.ok) throw permission.error;

@@ -28,7 +28,7 @@ describe('parseStoredConfig', () => {
       translation: { engine: 'openai' },
       page: { style: 'highlight', mode: 'translation', isleDock: 'left', holdKey: 'alt' },
       selection: { showDot: false },
-      providers: { ...EXTRA_DEFAULTS.providers, gemini: { model: 'm' } },
+      providers: { ...EXTRA_DEFAULTS.providers, gemini: { model: 'm', thinking: false } },
       customProviders: {},
     };
     const result = parse(stored(data));
@@ -144,6 +144,67 @@ describe('parseStoredConfig', () => {
     expect(broken.snapshot.data.providers.deepseek).toEqual({ model: 'd', thinking: false });
   });
 
+  it('fills OpenAI and Gemini thinking (off) and the OpenAI extra body for an older config', () => {
+    const older = parse(
+      stored({
+        ...defaults,
+        providers: {
+          openai: { baseURL: 'https://api.openai.com/v1', model: 'gpt-5-mini' },
+          deepseek: { model: 'deepseek-chat', thinking: true },
+          gemini: { model: 'gemini-2.5-flash' },
+        },
+        customProviders: {
+          'custom-aaaaaaaa': { name: 'A', baseURL: 'http://localhost:11434/v1', model: 'q' },
+        },
+      }),
+    );
+    expect(older.resetPaths).toEqual([]);
+    expect(older.snapshot.data.providers).toEqual({
+      openai: {
+        baseURL: 'https://api.openai.com/v1',
+        model: 'gpt-5-mini',
+        thinking: false,
+        extraBody: '',
+      },
+      deepseek: { model: 'deepseek-chat', thinking: true },
+      gemini: { model: 'gemini-2.5-flash', thinking: false },
+    });
+    // A custom provider without the optional field keeps working as it was.
+    expect(older.snapshot.data.customProviders['custom-aaaaaaaa']).toEqual({
+      name: 'A',
+      baseURL: 'http://localhost:11434/v1',
+      model: 'q',
+    });
+  });
+
+  it('keeps a hand-edited invalid extra body (ignored at request time), and caps its length', () => {
+    const custom = { name: 'A', baseURL: 'http://localhost:11434/v1', model: 'q' };
+    const invalid = parse(
+      stored({
+        ...defaults,
+        providers: {
+          ...defaults.providers,
+          openai: { ...defaults.providers.openai, extraBody: '[' },
+        },
+        customProviders: { 'custom-aaaaaaaa': { ...custom, extraBody: '[' } },
+      }),
+    );
+    expect(invalid.resetPaths).toEqual([]);
+    expect(invalid.snapshot.data.providers.openai.extraBody).toBe('[');
+    expect(invalid.snapshot.data.customProviders['custom-aaaaaaaa']?.extraBody).toBe('[');
+    const long = parse(
+      stored({
+        ...defaults,
+        providers: {
+          ...defaults.providers,
+          openai: { ...defaults.providers.openai, extraBody: 'x'.repeat(2001) },
+        },
+      }),
+    );
+    expect(long.resetPaths).toContain('providers.openai.extraBody');
+    expect(long.snapshot.data.providers.openai.extraBody).toBe('');
+  });
+
   it('resets a default engine that points at a missing custom provider to Google', () => {
     const result = parse(stored({ ...defaults, translation: { engine: 'custom-zzzzzzzz' } }));
     expect(result.snapshot.data.translation.engine).toBe('google');
@@ -193,7 +254,12 @@ describe('parseStoredConfig', () => {
       language: { target: 'ko', source: 'auto' },
       providers: {
         ...defaults.providers,
-        openai: { baseURL: 'https://api.openai.com/v1', model: 'm' },
+        openai: {
+          baseURL: 'https://api.openai.com/v1',
+          model: 'm',
+          thinking: false,
+          extraBody: '',
+        },
       },
     });
     expect(result.resetPaths.sort()).toEqual([

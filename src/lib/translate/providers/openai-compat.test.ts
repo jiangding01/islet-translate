@@ -58,6 +58,32 @@ describe('openai-compat adapter', () => {
     expect(body.messages).toHaveLength(2);
   });
 
+  it('puts the extra fields first, so messages and the model always win', async () => {
+    const fn = mockFetch(sseResponse([delta(OUTPUT), 'data: [DONE]\n\n']));
+    await run(fn, {
+      settings: {
+        baseURL: 'https://api.example.com/v1',
+        model: 'm',
+        extraBody: { reasoning_effort: 'high', messages: [], temperature: 0.2 },
+      },
+    });
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(Object.keys(body)).toEqual([
+      'reasoning_effort',
+      'messages',
+      'temperature',
+      'model',
+      'stream',
+    ]);
+    expect(body.reasoning_effort).toBe('high');
+    expect(body.temperature).toBe(0.2);
+    expect(body.messages.map((message: { role: string }) => message.role)).toEqual([
+      'system',
+      'user',
+    ]);
+  });
+
   it('sends no extra body fields when the engine has none', async () => {
     const fn = mockFetch(sseResponse([delta(OUTPUT), 'data: [DONE]\n\n']));
     await run(fn);

@@ -324,6 +324,54 @@ describe('provider.test', () => {
     ]);
   });
 
+  it('tests OpenAI and Gemini with thinking as the draft sets it', async () => {
+    const { handlers, contexts } = setup();
+    await handlers['provider.test'](options, draft({ model: 'gpt-5-mini' }));
+    await handlers['provider.test'](options, draft({ model: 'gpt-5-mini', thinking: true }));
+    const gemini = { engine: 'gemini', baseURL: '', model: 'gemini-2.5-pro' };
+    await handlers['provider.test'](options, draft(gemini));
+    await handlers['provider.test'](options, draft({ ...gemini, thinking: true }));
+    expect(contexts.map((ctx) => ctx.settings.extraBody)).toEqual([
+      { reasoning_effort: 'minimal' },
+      undefined,
+      { generationConfig: { thinkingConfig: { thinkingBudget: 128 } } },
+      undefined,
+    ]);
+  });
+
+  it('tests with the extra body draft, after thinking, and only where it is offered', async () => {
+    const { handlers, contexts } = setup();
+    await handlers['provider.test'](
+      options,
+      draft({ model: 'gpt-5-mini', extraBody: '{"reasoning_effort": "low", "a": 1}' }),
+    );
+    await handlers['provider.test'](
+      options,
+      draft({ engine: 'custom-aaaaaaaa', baseURL: 'http://localhost:11434/v1', extraBody: ' {} ' }),
+    );
+    await handlers['provider.test'](
+      options,
+      draft({ engine: 'gemini', baseURL: '', model: 'gemini-2.0-flash', extraBody: '{"a": 1}' }),
+    );
+    expect(contexts.map((ctx) => ctx.settings.extraBody)).toEqual([
+      { reasoning_effort: 'low', a: 1 },
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('refuses an extra body draft that is not a JSON object, with its own error', async () => {
+    const { handlers, submit } = setup();
+    for (const extraBody of ['[1]', '{oops', 'null']) {
+      const result = await handlers['provider.test'](options, draft({ extraBody }));
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'config/invalid-extra-body' },
+      });
+    }
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it('rejects a malformed draft', async () => {
     const { handlers } = setup();
     for (const bad of [
@@ -331,6 +379,9 @@ describe('provider.test', () => {
       { engine: 'nope', baseURL: '', model: '' },
       draft({ model: 1 }),
       draft({ thinking: 'yes' }),
+      draft({ extraBody: 1 }),
+      draft({ extraBody: { a: 1 } }),
+      draft({ extraBody: `{"a":"${'x'.repeat(2000)}"}` }),
     ]) {
       expect(await handlers['provider.test'](options, bad)).toMatchObject({
         ok: false,

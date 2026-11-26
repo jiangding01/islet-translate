@@ -1,4 +1,6 @@
-import { type EngineFields, engineFields } from '@/lib/config/engine-fields';
+import { type EngineFields, engineFields, hasEditableBaseURL } from '@/lib/config/engine-fields';
+import { parseExtraBody } from '@/lib/config/extra-body';
+import { thinkingRule } from '@/lib/config/thinking-rules';
 import type { ConfigV1, Engine } from '@/lib/config/types';
 import { normalizeBaseURL } from '@/lib/endpoint';
 import { appError } from '@/lib/errors';
@@ -9,8 +11,6 @@ import { createOpenAICompatAdapter } from './openai-compat';
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
-// DeepSeek thinks (at high effort) unless told not to: slow and costly for translation.
-const DEEPSEEK_NO_THINKING = { thinking: { type: 'disabled' } };
 
 const google = createGoogleAdapter();
 const openaiCompat = createOpenAICompatAdapter();
@@ -23,19 +23,37 @@ export function getAdapter(engine: Engine): ProviderAdapter {
 }
 
 /**
- * Effective settings from raw field values: `baseURL` is normalized; engines
- * with a fixed endpoint ignore it, and Google needs neither. DeepSeek thinking
- * stays off unless `thinking` is true.
+ * Effective settings from raw field values: `baseURL` is normalized; engines with a fixed
+ * endpoint ignore it, and Google needs neither. While thinking is off, a model the rule table
+ * knows gets its lowest thinking level; the user's extra fields (OpenAI and custom providers)
+ * come after, so they may change it. `cacheParams` holds only what makes the request differ
+ * from the default one, so default requests keep their cache keys.
  */
 export function settingsFor(engine: Engine, fields: EngineFields): ProviderSettings {
   if (engine === 'google') return { baseURL: '', model: '' };
-  if (engine === 'deepseek') {
-    const settings: ProviderSettings = { baseURL: DEEPSEEK_BASE_URL, model: fields.model };
-    if (!fields.thinking) settings.extraBody = DEEPSEEK_NO_THINKING;
-    return settings;
+  const baseURL =
+    engine === 'deepseek'
+      ? DEEPSEEK_BASE_URL
+      : engine === 'gemini'
+        ? GEMINI_BASE_URL
+        : normalizeBaseURL(fields.baseURL);
+  const settings: ProviderSettings = { baseURL, model: fields.model };
+  const rule = thinkingRule(engine, fields.model, baseURL);
+  // Invalid text (only from hand-edited storage) is ignored: it never reaches the request.
+  const extra = hasEditableBaseURL(engine) ? parseExtraBody(fields.extraBody) : undefined;
+  const body: Record<string, unknown> = {};
+  const cacheParams: Record<string, unknown> = {};
+  if (rule) {
+    if (fields.thinking) cacheParams.thinking = true;
+    else Object.assign(body, rule.body);
   }
-  if (engine === 'gemini') return { baseURL: GEMINI_BASE_URL, model: fields.model };
-  return { baseURL: normalizeBaseURL(fields.baseURL), model: fields.model };
+  if (extra) {
+    Object.assign(body, extra);
+    cacheParams.extraBody = extra;
+  }
+  if (Object.keys(body).length > 0) settings.extraBody = body;
+  if (Object.keys(cacheParams).length > 0) settings.cacheParams = cacheParams;
+  return settings;
 }
 
 /** Resolves the configured settings of an engine; a missing custom provider is a config error. */

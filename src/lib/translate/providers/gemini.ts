@@ -58,6 +58,8 @@ async function* translate(batch: string[], ctx: ProviderContext): AsyncGenerator
       method: 'POST',
       headers,
       body: JSON.stringify({
+        // Thinking config (generationConfig) first: it never replaces the prompt.
+        ...settings.extraBody,
         systemInstruction: { parts: [{ text: messages.system }] },
         contents: [{ role: 'user', parts: [{ text: messages.user }] }],
       }),

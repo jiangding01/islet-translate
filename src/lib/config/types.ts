@@ -28,7 +28,12 @@ export type BuiltinEngine = (typeof BUILTIN_ENGINES)[number];
 export type CustomProviderId = `custom-${string}`;
 export const CUSTOM_PROVIDER_ID_PATTERN = /^custom-[a-z0-9]{8}$/;
 export const MAX_CUSTOM_PROVIDERS = 10;
-export const CUSTOM_PROVIDER_LIMITS = { name: 40, baseURL: 2048, model: 200 } as const;
+export const CUSTOM_PROVIDER_LIMITS = {
+  name: 40,
+  baseURL: 2048,
+  model: 200,
+  extraBody: 2000,
+} as const;
 
 /** A built-in engine, or the id of a custom OpenAI-compatible provider. */
 export type Engine = BuiltinEngine | CustomProviderId;
@@ -40,6 +45,8 @@ export interface CustomProvider {
   name: string;
   baseURL: string;
   model: string;
+  /** Extra request body fields: JSON object text as typed (src/lib/config/extra-body.ts). */
+  extraBody?: string;
 }
 
 export function isBuiltinEngine(value: unknown): value is BuiltinEngine {
@@ -69,11 +76,15 @@ export interface ConfigV1 {
   page: { style: PageStyle; mode: PageMode; isleDock: IsleDock; holdKey: HoldKey };
   /** Selection translation (M3a): the dot shown after selecting foreign text. */
   selection: { showDot: boolean };
+  /**
+   * `thinking`: the thinking mode, off by default to keep translations fast; it only takes
+   * effect where the rule table knows the model (src/lib/config/thinking-rules.ts).
+   * `extraBody`: extra request body fields, as for custom providers.
+   */
   providers: {
-    openai: { baseURL: string; model: string };
-    /** `thinking`: DeepSeek's thinking mode, off by default to keep translations fast. */
+    openai: { baseURL: string; model: string; thinking: boolean; extraBody: string };
     deepseek: { model: string; thinking: boolean };
-    gemini: { model: string };
+    gemini: { model: string; thinking: boolean };
   };
   /** Insertion order is display order. Keys are CustomProviderId (validated at runtime). */
   customProviders: Record<string, CustomProvider>;
