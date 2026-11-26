@@ -787,6 +787,88 @@ describe('translate service: cache keys of request params (M4-A)', () => {
   });
 });
 
+describe('translate service: translation styles (M4-B)', () => {
+  // The same keys as before M4-B (locked in the M4-A block above): general adds nothing.
+  const GENERAL = {
+    openai: 'v1:be11acccab02adc2b3f02f060c4d3c886836805a6e732b1dc2cd2329f6475877',
+    openaiStream: 'v1:43bf751643cd851f04ccf27221de11344419495d7348bb4f58a59e5d202e547d',
+    custom: 'v1:ffc1e58c8041a2a21301b5b8fc0890a9a2405597ec5e8363066db6cde0ff0f31',
+  };
+  const styled = (
+    engine: ConfigV1['translation']['engine'],
+    style: ConfigV1['translation']['style'],
+  ) => {
+    const config = keyConfig(engine);
+    config.translation.style = style;
+    config.customStyles['style-aaaaaaaa'] = { name: 'Short', description: 'Use short sentences.' };
+    return config;
+  };
+
+  it('keeps every key of the general style', async () => {
+    expect(await lookedUpKeys(styled('openai', 'general'))).toBe(GENERAL.openai);
+    expect(await lookedUpKeys(styled('openai', 'general'), { stream: true })).toBe(
+      GENERAL.openaiStream,
+    );
+    expect(await lookedUpKeys(styled('custom-aaaaaaaa', 'general'))).toBe(GENERAL.custom);
+  });
+
+  it('keys each style apart, for page and stream requests', async () => {
+    for (const stream of [false, true]) {
+      const payload = stream ? { stream: true as const } : {};
+      const general = await lookedUpKeys(styled('openai', 'general'), payload);
+      const tech = await lookedUpKeys(styled('openai', 'tech'), payload);
+      const literary = await lookedUpKeys(styled('openai', 'literary'), payload);
+      const custom = await lookedUpKeys(styled('openai', 'style-aaaaaaaa'), payload);
+      expect(new Set([general, tech, literary, custom]).size).toBe(4);
+      // The same style keeps its key.
+      expect(await lookedUpKeys(styled('openai', 'tech'), payload)).toBe(tech);
+    }
+  });
+
+  it('changes the key of a custom style when its description changes', async () => {
+    const before = await lookedUpKeys(styled('openai', 'style-aaaaaaaa'));
+    const edited = styled('openai', 'style-aaaaaaaa');
+    edited.customStyles['style-aaaaaaaa'] = { name: 'Short', description: 'Be terse.' };
+    expect(await lookedUpKeys(edited)).not.toBe(before);
+    // The name is never sent, so renaming keeps the key.
+    const renamed = styled('openai', 'style-aaaaaaaa');
+    renamed.customStyles['style-aaaaaaaa'] = { name: 'Other', description: 'Use short sentences.' };
+    expect(await lookedUpKeys(renamed)).toBe(before);
+  });
+
+  it('falls back to the general prompt when the chosen custom style is gone', async () => {
+    const config = styled('openai', 'style-aaaaaaaa');
+    config.customStyles = {};
+    expect(await lookedUpKeys(config)).toBe(GENERAL.openai);
+    const blank = styled('openai', 'style-aaaaaaaa');
+    blank.customStyles['style-aaaaaaaa'] = { name: 'Blank', description: '  ' };
+    expect(await lookedUpKeys(blank)).toBe(GENERAL.openai);
+  });
+
+  it('leaves Google alone: same key, and the style is never read', async () => {
+    const general = await lookedUpKeys(styled('google', 'general'));
+    expect(await lookedUpKeys(styled('google', 'tech'))).toBe(general);
+    expect(await lookedUpKeys(styled('google', 'style-aaaaaaaa'))).toBe(general);
+    // A record resolveStyle would throw on (Object.hasOwn(null)): Google never resolves it.
+    const unreadable = styled('google', 'style-aaaaaaaa');
+    unreadable.customStyles = null as never;
+    expect(await lookedUpKeys(unreadable)).toBe(general);
+  });
+
+  it('sends the style line right after the task line', async () => {
+    const { providers, config, run } = setup();
+    config.translation.engine = 'openai';
+    config.translation.style = 'tech';
+    await run({ items: items('Hello') });
+    const init = (providers.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+      .calls[0]?.[1];
+    const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+    const lines = body.messages[0]?.content.split('\n') ?? [];
+    expect(lines[0]).toContain('You are a professional translation engine.');
+    expect(lines[1]).toMatch(/^Style: technical documentation\./);
+  });
+});
+
 describe('cooldownKeyFor', () => {
   it('scopes by engine family and origin, so custom providers on one server share it', () => {
     expect(cooldownKeyFor('google', '')).toBe('google');

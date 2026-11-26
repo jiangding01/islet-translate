@@ -26,6 +26,8 @@ errors:
     permissionMissing: 尚未授权访问该接口地址。请在设置页点击「授权访问」后重试。
     providerLimit: 自定义服务已达 10 个上限。请先删除不用的服务。
     providerMissing: 找不到这个自定义服务，可能已被删除。请在设置页重新选择默认引擎。
+    styleLimit: 最多只能添加 10 个风格
+    styleMissing: 这个风格已被删除
     invalidValue: 设置值不正确，没有保存。请检查后重试。
     invalidExtraBody: '需要是一个 JSON 对象，例如 {"key": "value"}。'
   network:
@@ -156,6 +158,8 @@ options:
     generalSub: 语言、外观与译文样式，改动会立即生效。
     services: 翻译服务
     servicesSub: Google 免费可用；AI 引擎和自定义服务需要你自己的密钥。
+    styles: 翻译风格
+    stylesSub: 选择 AI 翻译的风格，也可以添加自己的风格
     loading: 正在加载设置…
   notice:
     saved: 已保存
@@ -283,6 +287,40 @@ options:
     submit: 添加
     adding: 添加中…
     keyNotSaved: 服务已添加，但密钥没有保存，请在详情里重新粘贴。
+  # 翻译风格页（M4-B）。
+  styles:
+    # $1：Google 引擎的名称（engine.googleName）。
+    googleNote: 当前默认引擎是 $1，风格只在使用 AI 引擎时生效
+    general: 通用
+    generalNote: 准确与通顺兼顾，适合大多数网页。
+    tech: 技术文档
+    techNote: 术语准确；代码、命令、变量名、路径原样保留，界面文字用通行译法。
+    academic: 学术论文
+    academicNote: 用词严谨；公式、数据、引用原样保留，不改变原文语气的强弱。
+    casual: 口语化
+    casualNote: 自然随和，像母语者说话，适合论坛、社交媒体和评论区。
+    literary: 文学意译
+    literaryNote: 传达语气、情感和言外之意，不拘泥字面，适合小说、散文和随笔。
+    add: 添加风格
+    # $1：自定义风格的数量上限。
+    limitReached: 最多 $1 个自定义风格
+    # $1：风格名称。
+    editAria: 编辑「$1」
+    # $1：风格名称。
+    deleteAria: 删除「$1」
+    # $1：「通用」风格的名称（options.styles.general）。删除说明的另一种复用 options.engine.deleteNote。
+    deleteNoteCurrent: 这是当前使用的风格，删除后改用「$1」
+    cancel: 取消
+    confirmDelete: 确认删除
+    addTitle: 添加风格
+    editTitle: 编辑风格
+    name: 名称
+    namePlaceholder: 例如：简洁短句
+    description: 风格说明
+    descriptionPlaceholder: 例如：译文简洁，多用短句；保留英文缩写
+    nameRequired: 请填写名称
+    descriptionRequired: 请填写风格说明
+    save: 保存
   cache:
     title: 翻译缓存
     counting: 正在统计…

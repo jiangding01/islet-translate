@@ -1,6 +1,6 @@
 // Test-only: defaults for the fields appended after M0, so older fixtures stay short.
 export const EXTRA_DEFAULTS = {
-  translation: { engine: 'google' },
+  translation: { engine: 'google', style: 'general' },
   page: { style: 'faded', mode: 'bilingual', isleDock: 'right', holdKey: 'ctrl' },
   selection: { showDot: true },
   providers: {
@@ -14,4 +14,5 @@ export const EXTRA_DEFAULTS = {
     gemini: { model: '', thinking: false },
   },
   customProviders: {},
+  customStyles: {},
 } as const;

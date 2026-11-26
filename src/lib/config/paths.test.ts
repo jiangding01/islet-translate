@@ -60,6 +60,7 @@ describe('whitelist', () => {
       'language.target',
       'language.source',
       'translation.engine',
+      'translation.style',
       'page.style',
       'page.mode',
       'page.isleDock',
@@ -74,6 +75,7 @@ describe('whitelist', () => {
       'providers.gemini.model',
       'providers.gemini.thinking',
       'customProviders',
+      'customStyles',
     ] as const satisfies readonly ConfigPath[];
     // Type side: every ConfigPath is listed (and `satisfies` checks the reverse).
     expectTypeOf<Exclude<ConfigPath, (typeof expected)[number]>>().toEqualTypeOf<never>();

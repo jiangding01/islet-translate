@@ -68,6 +68,84 @@ describe('settings page', () => {
     },
   );
 
+  it('chooses a translation style, and adds and deletes a custom one', async () => {
+    const page = await (await start('en')).extPage('options.html');
+    const text = (selector: string) =>
+      page.evaluate<string>(
+        `document.querySelector(${JSON.stringify(selector)})?.textContent ?? ''`,
+      );
+    const checkedStyle = () =>
+      page.evaluate<string>(
+        `document.querySelector('input[name="translation-style"]:checked')?.value ?? ''`,
+      );
+    const storedStyle = () =>
+      page.evaluate<string>(
+        `chrome.storage.local.get('config').then((r) => r.config?.data?.translation?.style ?? '')`,
+      );
+    const clickButton = (label: string) =>
+      page.evaluate(
+        `[...document.querySelectorAll('button')].find((b) => b.textContent === ${JSON.stringify(label)} || b.getAttribute('aria-label') === ${JSON.stringify(label)}).click()`,
+      );
+    /** Types into a React-controlled field (the native setter, then an input event). */
+    const fill = (selector: string, value: string) =>
+      page.evaluate(`(() => {
+        const field = document.querySelector(${JSON.stringify(selector)});
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value').set;
+        setter.call(field, ${JSON.stringify(value)});
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+
+    await waitFor(async () => (await text('h1')) === 'General', { message: 'the general page' });
+    await page.evaluate(`document.querySelector('nav a[href="#styles"]').click()`);
+    await waitFor(async () => (await text('h1')) === 'Translation styles', {
+      message: 'the styles page',
+    });
+    expect(await checkedStyle()).toBe('general');
+
+    // A preset survives a reload of the page.
+    await page.evaluate(`document.querySelector('input[value="tech"]').click()`);
+    await waitFor(async () => (await storedStyle()) === 'tech', { message: 'the stored style' });
+    await page.evaluate('setTimeout(() => location.reload(), 0), true');
+    await waitFor(
+      async () => (await text('h1')) === 'Translation styles' && (await checkedStyle()) === 'tech',
+      { message: 'the chosen style after a reload' },
+    );
+
+    // A custom style: add it, choose it, delete it, and the choice falls back to General.
+    await clickButton('Add style');
+    await waitFor(() => page.evaluate<boolean>(`!!document.querySelector('dialog[open]')`), {
+      message: 'the add style dialog',
+    });
+    await fill('dialog input', 'Short');
+    await fill('dialog textarea', 'Use short sentences.');
+    await clickButton('Save');
+    await waitFor(
+      () =>
+        page.evaluate<boolean>(
+          `[...document.querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === ${JSON.stringify('Edit "Short"')})`,
+        ),
+      { message: 'the new custom style card' },
+    );
+    const id = await page.evaluate<string>(
+      `[...document.querySelectorAll('input[name="translation-style"]')].at(-1).value`,
+    );
+    expect(id).toMatch(/^style-[a-z0-9]{8}$/);
+    await page.evaluate(`document.querySelector('input[value="${id}"]').click()`);
+    await waitFor(async () => (await storedStyle()) === id, { message: 'the custom style chosen' });
+    expect(await checkedStyle()).toBe(id);
+
+    await clickButton('Delete "Short"');
+    await clickButton('Delete');
+    await waitFor(async () => (await checkedStyle()) === 'general', {
+      message: 'the general style after deleting the chosen one',
+    });
+    expect(await storedStyle()).toBe('general');
+    expect(await page.evaluate<boolean>(`!!document.querySelector('input[value="${id}"]')`)).toBe(
+      false,
+    );
+    h?.assertNoErrors();
+  });
+
   it('tests the Google connection and shows the mock translation', async () => {
     // `#services`: how the popup's "去设置" next to an engine problem opens it.
     const page = await (await start('en')).extPage('options.html#services');

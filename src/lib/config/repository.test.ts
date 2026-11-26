@@ -3,7 +3,13 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { createLocalStore } from './local-store';
 import { createConfigRepository, type KeyValueStore } from './repository';
 import { EXTRA_DEFAULTS } from './test-fixtures';
-import { type ConfigChange, type CustomProviderId, MAX_CUSTOM_PROVIDERS } from './types';
+import {
+  type ConfigChange,
+  type CustomProviderId,
+  type CustomStyleId,
+  MAX_CUSTOM_PROVIDERS,
+  MAX_CUSTOM_STYLES,
+} from './types';
 
 const uiLanguage = 'en-US';
 
@@ -395,5 +401,194 @@ describe('ConfigRepository: custom providers', () => {
     expect(snapshot.data.providers.gemini.thinking).toBe(true);
     const cleared = await repo.patch([{ path: 'providers.openai.extraBody', value: '{}' }]);
     expect(cleared.data.providers.openai.extraBody).toBe('{}');
+  });
+});
+
+describe('ConfigRepository: custom styles (M4-B)', () => {
+  const style = (name: string) => ({ name, description: `Write like ${name}.` });
+  const add = (key: CustomStyleId, name: string): ConfigChange => ({
+    path: 'customStyles',
+    key,
+    add: style(name),
+  });
+  const update = (key: CustomStyleId, fields: Record<string, unknown>): ConfigChange =>
+    ({ path: 'customStyles', key, update: fields }) as ConfigChange;
+  const remove = (key: CustomStyleId): ConfigChange => ({
+    path: 'customStyles',
+    key,
+    remove: true,
+  });
+  const choose = (value: string): ConfigChange =>
+    ({ path: 'translation.style', value }) as ConfigChange;
+  const setup = () => createConfigRepository({ store: memoryStore(), uiLanguage });
+
+  it('adds, updates in place and removes single entries, keeping their order', async () => {
+    const repo = setup();
+    await repo.patch([add('style-aaaaaaaa', 'a')]);
+    await repo.patch([add('style-bbbbbbbb', 'b')]);
+    const updated = await repo.patch([update('style-aaaaaaaa', { name: 'a2' })]);
+    expect(Object.keys(updated.data.customStyles)).toEqual(['style-aaaaaaaa', 'style-bbbbbbbb']);
+    expect(updated.data.customStyles['style-aaaaaaaa']).toEqual({ ...style('a'), name: 'a2' });
+    const described = await repo.patch([update('style-aaaaaaaa', { description: 'Terse.' })]);
+    expect(described.data.customStyles['style-aaaaaaaa']).toEqual({
+      name: 'a2',
+      description: 'Terse.',
+    });
+    const removed = await repo.patch([remove('style-aaaaaaaa')]);
+    expect(Object.keys(removed.data.customStyles)).toEqual(['style-bbbbbbbb']);
+  });
+
+  it('trims the name and the description before storing them', async () => {
+    const snapshot = await setup().patch([
+      { path: 'customStyles', key: 'style-aaaaaaaa', add: { name: ' a ', description: '\n d \t' } },
+    ]);
+    expect(snapshot.data.customStyles['style-aaaaaaaa']).toEqual({ name: 'a', description: 'd' });
+  });
+
+  it('stores only the name and the description of an added style', async () => {
+    const snapshot = await setup().patch([
+      {
+        path: 'customStyles',
+        key: 'style-aaaaaaaa',
+        add: { ...style('a'), prompt: 'x', extra: 1 },
+      } as unknown as ConfigChange,
+    ]);
+    expect(snapshot.data.customStyles['style-aaaaaaaa']).toEqual(style('a'));
+    const updated = await setup().patch([
+      add('style-aaaaaaaa', 'a'),
+      update('style-aaaaaaaa', { name: 'b', prompt: 'x' }),
+    ]);
+    expect(updated.data.customStyles['style-aaaaaaaa']).toEqual({ ...style('a'), name: 'b' });
+  });
+
+  it(`stops adding at ${MAX_CUSTOM_STYLES} entries but still allows updates`, async () => {
+    const repo = setup();
+    const ids = Array.from(
+      { length: MAX_CUSTOM_STYLES },
+      (_, index) => `style-${String(index).padStart(8, '0')}` as CustomStyleId,
+    );
+    await repo.patch(ids.map((id) => add(id, id.slice(-8))));
+    await expect(repo.patch([add('style-zzzzzzzz', 'z')])).rejects.toMatchObject({
+      code: 'config/style-limit',
+    });
+    await expect(
+      repo.patch([update(ids[0] as CustomStyleId, { name: 'again' })]),
+    ).resolves.toBeDefined();
+  });
+
+  it('never brings back a style that was removed', async () => {
+    const repo = setup();
+    await repo.patch([add('style-aaaaaaaa', 'a')]);
+    await repo.patch([remove('style-aaaaaaaa')]);
+    await expect(repo.patch([update('style-aaaaaaaa', { name: 'late' })])).rejects.toMatchObject({
+      code: 'config/style-missing',
+    });
+    expect((await repo.load()).data.customStyles).toEqual({});
+  });
+
+  it('chooses a preset or an existing custom style, and refuses a missing one', async () => {
+    const repo = setup();
+    expect((await repo.patch([choose('tech')])).data.translation.style).toBe('tech');
+    const both = await repo.patch([add('style-aaaaaaaa', 'a'), choose('style-aaaaaaaa')]);
+    expect(both.data.translation.style).toBe('style-aaaaaaaa');
+    await expect(repo.patch([choose('style-zzzzzzzz')])).rejects.toMatchObject({
+      code: 'config/style-missing',
+    });
+    await expect(repo.patch([choose('formal')])).rejects.toMatchObject({
+      code: 'config/invalid-value',
+    });
+    expect((await repo.load()).data.translation.style).toBe('style-aaaaaaaa');
+  });
+
+  it('falls back to general in the same write when the chosen style is removed', async () => {
+    const repo = setup();
+    await repo.patch([add('style-aaaaaaaa', 'a'), add('style-bbbbbbbb', 'b')]);
+    await repo.patch([choose('style-aaaaaaaa')]);
+    const other = await repo.patch([remove('style-bbbbbbbb')]);
+    expect(other.data.translation.style).toBe('style-aaaaaaaa');
+    const removed = await repo.patch([remove('style-aaaaaaaa')]);
+    expect(removed.data.translation.style).toBe('general');
+  });
+
+  it('falls back to general when the custom styles are reset, or everything is', async () => {
+    const repo = setup();
+    await repo.patch([add('style-aaaaaaaa', 'a'), choose('style-aaaaaaaa')]);
+    const styles = await repo.reset(['customStyles']);
+    expect(styles.data.customStyles).toEqual({});
+    expect(styles.data.translation.style).toBe('general');
+    await repo.patch([add('style-aaaaaaaa', 'a'), choose('style-aaaaaaaa')]);
+    const all = await repo.reset();
+    expect(all.data.customStyles).toEqual({});
+    expect(all.data.translation.style).toBe('general');
+  });
+
+  it('refuses blank or overlong fields and stores nothing', async () => {
+    const store = memoryStore();
+    const repo = createConfigRepository({ store, uiLanguage });
+    await repo.patch([add('style-aaaaaaaa', 'a')]);
+    const before = structuredClone(store.data.get('config'));
+    const refused: ConfigChange[] = [
+      { path: 'customStyles', key: 'style-bbbbbbbb', add: { name: '  ', description: 'd' } },
+      { path: 'customStyles', key: 'style-bbbbbbbb', add: { name: 'n', description: ' \n ' } },
+      { path: 'customStyles', key: 'style-bbbbbbbb', add: { name: 'n' } as never },
+      {
+        path: 'customStyles',
+        key: 'style-bbbbbbbb',
+        add: { name: 'x'.repeat(21), description: 'd' },
+      },
+      {
+        path: 'customStyles',
+        key: 'style-bbbbbbbb',
+        add: { name: 'n', description: 'x'.repeat(501) },
+      },
+      update('style-aaaaaaaa', { name: '' }),
+      update('style-aaaaaaaa', { description: '   ' }),
+      update('style-aaaaaaaa', { name: 42 }),
+      update('style-aaaaaaaa', { description: 'x'.repeat(501) }),
+    ];
+    for (const change of refused) {
+      await expect(repo.patch([change])).rejects.toMatchObject({ code: 'config/invalid-value' });
+    }
+    expect(store.data.get('config')).toEqual(before);
+    // The limits count UTF-16 units, as the settings page does.
+    const longest = await repo.patch([
+      update('style-aaaaaaaa', { name: '名'.repeat(20), description: '说'.repeat(500) }),
+    ]);
+    expect(longest.data.customStyles['style-aaaaaaaa']?.name).toHaveLength(20);
+  });
+
+  it('rejects malformed ids, a taken id and replacing the whole record', async () => {
+    const store = memoryStore();
+    const repo = createConfigRepository({ store, uiLanguage });
+    const badId = {
+      path: 'customStyles',
+      key: 'custom-aaaaaaaa',
+      add: style('a'),
+    } as unknown as ConfigChange;
+    await expect(repo.patch([badId])).rejects.toMatchObject({ code: 'config/invalid-value' });
+    const whole = { path: 'customStyles', value: {} } as unknown as ConfigChange;
+    await expect(repo.patch([whole])).rejects.toMatchObject({ code: 'config/unknown-path' });
+    expect(store.data.has('config')).toBe(false);
+    await repo.patch([add('style-aaaaaaaa', 'a')]);
+    await expect(repo.patch([add('style-aaaaaaaa', 'b')])).rejects.toMatchObject({
+      code: 'config/invalid-value',
+    });
+  });
+
+  it('keeps custom providers and custom styles apart', async () => {
+    const repo = setup();
+    const snapshot = await repo.patch([
+      add('style-aaaaaaaa', 'a'),
+      {
+        path: 'customProviders',
+        key: 'custom-aaaaaaaa',
+        add: { name: 'p', baseURL: 'https://p.example.com/v1', model: 'm' },
+      },
+    ]);
+    expect(Object.keys(snapshot.data.customStyles)).toEqual(['style-aaaaaaaa']);
+    expect(Object.keys(snapshot.data.customProviders)).toEqual(['custom-aaaaaaaa']);
+    await expect(
+      repo.patch([{ path: 'translation.engine', value: 'custom-zzzzzzzz' }]),
+    ).rejects.toMatchObject({ code: 'config/provider-missing' });
   });
 });

@@ -20,6 +20,7 @@ import { abortedError } from './providers/errors';
 import { getAdapter as registryAdapter, resolveProviderSettings } from './providers/registry';
 import { createScheduler, type Scheduler } from './scheduler';
 import type { SecretStore } from './secrets';
+import { resolveStyle } from './styles';
 import type { ProviderAdapter } from './types';
 
 export interface TranslateServiceDeps {
@@ -290,10 +291,16 @@ export function createTranslateService(deps: TranslateServiceDeps): TranslateSer
     }
 
     // 3. Cache lookup.
-    // Stream requests use the plain-text prompt; its digest keeps their cache apart.
+    // Stream requests use the plain-text prompt; its digest keeps their cache apart. The
+    // style is read per request and only by AI engines; its line is part of the digest.
     const prompt =
       adapter.kind === 'llm'
-        ? buildPrompt({ source, target, format: request.stream ? 'text' : 'batch' })
+        ? buildPrompt({
+            source,
+            target,
+            format: request.stream ? 'text' : 'batch',
+            style: resolveStyle(config),
+          })
         : undefined;
     const digest = prompt ? await promptDigest(prompt) : '';
     // '' by default, as before M4-A: only params that change the request key it apart.

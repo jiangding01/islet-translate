@@ -4,14 +4,19 @@ import {
   type ConfigV1,
   CUSTOM_PROVIDER_ID_PATTERN,
   CUSTOM_PROVIDER_LIMITS,
+  CUSTOM_STYLE_ID_PATTERN,
+  CUSTOM_STYLE_LIMITS,
   type Engine,
   HOLD_KEYS,
   ISLE_DOCKS,
   isBuiltinEngine,
+  isCustomStyleId,
   isEngineId,
+  isTranslationStyleId,
   PAGE_MODES,
   PAGE_STYLES,
   THEMES,
+  type TranslationStyleId,
 } from './types';
 
 const LIMITS = CUSTOM_PROVIDER_LIMITS;
@@ -24,6 +29,13 @@ const customProviderSchema = z.looseObject({
   // time (an invalid field here would drop the whole provider); writes are checked in the
   // repository.
   extraBody: z.string().max(LIMITS.extraBody).optional(),
+});
+
+// No minimum length: a blank description (only a hand-edited store has one) is skipped at
+// request time; writes are checked in the repository.
+const customStyleSchema = z.looseObject({
+  name: z.string().max(CUSTOM_STYLE_LIMITS.name),
+  description: z.string().max(CUSTOM_STYLE_LIMITS.description),
 });
 
 // Background-only: the client never imports zod.
@@ -39,6 +51,7 @@ export const configSchema = z
     }),
     translation: z.looseObject({
       engine: z.custom<Engine>(isEngineId, { message: 'Unknown engine' }),
+      style: z.custom<TranslationStyleId>(isTranslationStyleId, { message: 'Unknown style' }),
     }),
     page: z.looseObject({
       style: z.enum(PAGE_STYLES),
@@ -65,15 +78,24 @@ export const configSchema = z
     // The 10-entry limit is enforced when adding (repository), not here: a stored
     // record over the limit (a newer build) must not lose every entry on repair.
     customProviders: z.record(z.string().regex(CUSTOM_PROVIDER_ID_PATTERN), customProviderSchema),
+    // Same as customProviders: the 10-entry limit is enforced when adding.
+    customStyles: z.record(z.string().regex(CUSTOM_STYLE_ID_PATTERN), customStyleSchema),
   })
-  // Runs only once the shape is valid: the default engine must exist.
+  // Runs only once the shape is valid: the default engine and the chosen style must exist.
   .superRefine((config, ctx) => {
-    const { engine } = config.translation;
+    const { engine, style } = config.translation;
     if (!isBuiltinEngine(engine) && !Object.hasOwn(config.customProviders, engine)) {
       ctx.addIssue({
         code: 'custom',
         path: ['translation', 'engine'],
         message: 'Engine refers to a missing custom provider',
+      });
+    }
+    if (isCustomStyleId(style) && !Object.hasOwn(config.customStyles, style)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['translation', 'style'],
+        message: 'Style refers to a missing custom style',
       });
     }
   });

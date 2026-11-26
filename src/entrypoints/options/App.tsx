@@ -8,22 +8,33 @@ import { GeneralPage } from './GeneralPage';
 import { NoticeLine, NoticeProvider, useNoticeState } from './notice';
 import styles from './options.module.css';
 import { ServicesPage } from './ServicesPage';
+import { StylesPage } from './StylesPage';
 
-type Page = 'general' | 'services';
+type Page = 'general' | 'services' | 'styles';
 
 // Key table only: the copy is looked up at render (tests switch the UI language per case).
 const PAGES = [
   { id: 'general', title: 'options.nav.general', sub: 'options.nav.generalSub' },
   { id: 'services', title: 'options.nav.services', sub: 'options.nav.servicesSub' },
+  { id: 'styles', title: 'options.nav.styles', sub: 'options.nav.stylesSub' },
 ] as const satisfies { id: Page; title: string; sub: string }[];
 
 /**
- * Opens on the general page; `#services` only when the caller came for the engines (the
- * popup's "去设置" next to an engine problem). Exported for tests.
+ * Opens on the general page; `#services` when the caller came for the engines (the popup's
+ * "去设置" next to an engine problem), `#styles` for the translation styles (the sidebar
+ * links switch pages through the hash too). Exported for tests.
  */
 export function pageFromHash(hash = location.hash): Page {
-  return hash === '#services' ? 'services' : 'general';
+  if (hash === '#services') return 'services';
+  if (hash === '#styles') return 'styles';
+  return 'general';
 }
+
+const NAV_ICONS = {
+  general: GearIcon,
+  services: TranslateIcon,
+  styles: PaletteIcon,
+} as const satisfies Record<Page, () => React.JSX.Element>;
 
 export function App() {
   const { state } = useConfig();
@@ -50,17 +61,20 @@ export function App() {
           </div>
           <div className={styles.navList} style={{ '--index': index } as React.CSSProperties}>
             <span aria-hidden="true" className={styles.navThumb} />
-            {PAGES.map((item) => (
-              <a
-                key={item.id}
-                href={`#${item.id}`}
-                className={styles.navItem}
-                aria-current={item.id === page ? 'page' : undefined}
-              >
-                {item.id === 'general' ? <GearIcon /> : <TranslateIcon />}
-                {i18n.t(item.title)}
-              </a>
-            ))}
+            {PAGES.map(({ id, ...item }) => {
+              const Icon = NAV_ICONS[id];
+              return (
+                <a
+                  key={id}
+                  href={`#${id}`}
+                  className={styles.navItem}
+                  aria-current={id === page ? 'page' : undefined}
+                >
+                  <Icon />
+                  {i18n.t(item.title)}
+                </a>
+              );
+            })}
           </div>
           <div className={styles.navFooter}>
             <span>v{browser.runtime.getManifest().version}</span>
@@ -85,12 +99,15 @@ export function App() {
                 {describeError(state.error, i18n.t('errors.config.readFailed'))}
               </p>
             )}
-            {state.status === 'ready' &&
-              (page === 'general' ? (
-                <GeneralPage config={state.snapshot.data} />
-              ) : (
-                <ServicesPage config={state.snapshot.data} />
-              ))}
+            {state.status === 'ready' && page === 'general' && (
+              <GeneralPage config={state.snapshot.data} />
+            )}
+            {state.status === 'ready' && page === 'services' && (
+              <ServicesPage config={state.snapshot.data} />
+            )}
+            {state.status === 'ready' && page === 'styles' && (
+              <StylesPage config={state.snapshot.data} />
+            )}
           </div>
         </main>
       </div>
@@ -128,6 +145,25 @@ function TranslateIcon() {
     >
       <path d="M2 3.5h6M5 2v1.5M3.2 3.5c.6 2.4 2.2 4.2 4.3 5.2M6.8 3.5c-.5 2.2-2 4.2-4.3 5.4" />
       <path d="M8.5 14l2.8-6.5L14 14M9.4 12h3.8" />
+    </svg>
+  );
+}
+
+function PaletteIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
+      <path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c1 0 1.5-.6 1.5-1.3 0-.9-.8-1.2-.8-2 0-.8.6-1.3 1.5-1.3h1.6c1.7 0 2.4-1.2 2.4-2.6C14.2 4.3 11.4 1.8 8 1.8z" />
+      <circle cx="4.9" cy="7.4" r=".8" />
+      <circle cx="7" cy="4.7" r=".8" />
+      <circle cx="10.3" cy="5" r=".8" />
     </svg>
   );
 }

@@ -32,6 +32,8 @@ errors:
     permissionMissing: The extension doesn't have access to this API URL yet. Click "Grant access" in Settings, then try again.
     providerLimit: You can add up to 10 custom services. Delete one you don't use, then try again.
     providerMissing: Couldn't find this custom service. It may have been deleted. Choose a default engine again in Settings.
+    styleLimit: You can add up to 10 styles.
+    styleMissing: This style has been deleted.
     invalidValue: Invalid value, so it wasn't saved. Check it and try again.
     invalidExtraBody: 'Needs to be a JSON object, for example {"key": "value"}.'
   network:
@@ -163,6 +165,8 @@ options:
     generalSub: Language, appearance and translation style. Changes apply immediately.
     services: Translation services
     servicesSub: Google is free. AI engines and custom services need your own API key.
+    styles: Translation styles
+    stylesSub: Choose a style for AI translation, or add your own.
     loading: Loading settings…
   notice:
     saved: Saved
@@ -290,6 +294,40 @@ options:
     submit: Add
     adding: Adding…
     keyNotSaved: Service added, but the API key wasn't saved. Paste it again in the service's details.
+  # The translation styles page (M4-B).
+  styles:
+    # $1: the Google engine's name (engine.googleName).
+    googleNote: Your default engine is $1. Styles only apply when you use an AI engine.
+    general: General
+    generalNote: Balances accuracy and fluency. Suits most web pages.
+    tech: Technical docs
+    techNote: Precise terminology. Code, commands, variable names and paths stay as written; interface text uses established translations.
+    academic: Academic papers
+    academicNote: Rigorous wording. Formulas, data and citations stay as written, and claims keep their original strength.
+    casual: Casual
+    casualNote: Natural and relaxed, the way a native speaker talks. Suits forums, social media and comments.
+    literary: Literary
+    literaryNote: Conveys tone, emotion and what is left unsaid rather than the literal wording. Suits fiction, essays and prose.
+    add: Add style
+    # $1: the maximum number of custom styles.
+    limitReached: You can add up to $1 custom styles
+    # $1: the style's name.
+    editAria: Edit "$1"
+    # $1: the style's name.
+    deleteAria: Delete "$1"
+    # $1: the "General" style's name (options.styles.general). The other note reuses options.engine.deleteNote.
+    deleteNoteCurrent: This is the style in use. After deleting, "$1" is used.
+    cancel: Cancel
+    confirmDelete: Delete
+    addTitle: Add style
+    editTitle: Edit style
+    name: Name
+    namePlaceholder: "For example: Short and concise"
+    description: Style description
+    descriptionPlaceholder: "For example: Keep it concise with short sentences; keep English abbreviations"
+    nameRequired: Enter a name
+    descriptionRequired: Enter a style description
+    save: Save
   cache:
     title: Translation cache
     counting: Counting…

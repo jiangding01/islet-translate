@@ -24,6 +24,8 @@ const MESSAGES: Record<string, ErrorKey> = {
   'config/permission-missing': 'errors.config.permissionMissing',
   'config/provider-limit': 'errors.config.providerLimit',
   'config/provider-missing': 'errors.config.providerMissing',
+  'config/style-limit': 'errors.config.styleLimit',
+  'config/style-missing': 'errors.config.styleMissing',
   'config/invalid-value': 'errors.config.invalidValue',
   'config/invalid-extra-body': 'errors.config.invalidExtraBody',
   'provider/unauthorized': 'errors.provider.unauthorized',

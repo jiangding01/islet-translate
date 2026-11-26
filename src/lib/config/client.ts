@@ -56,9 +56,10 @@ export function normalizeConfig(raw: unknown, uiLanguage: string): ConfigSnapsho
   const defaults = createDefaultSnapshot(uiLanguage);
   if (!isPlainObject(raw) || raw.schemaVersion !== CONFIG_SCHEMA_VERSION) return defaults;
 
-  // `providers` is kept as merged (defaults filled), unchecked: the background validates it.
+  // `providers` and `customStyles` are kept as merged (defaults filled), unchecked: the
+  // background validates them.
   const merged = mergeDefaults(defaults.data, raw.data) as Record<string, unknown> &
-    Pick<ConfigV1, 'providers'>;
+    Pick<ConfigV1, 'providers' | 'customStyles'>;
   if (!isPlainObject(merged)) return defaults;
   const ui = isPlainObject(merged.ui) ? merged.ui : {};
   const language = isPlainObject(merged.language) ? merged.language : {};
@@ -98,10 +99,12 @@ export function normalizeConfig(raw: unknown, uiLanguage: string): ConfigSnapsho
             ? selection.showDot
             : defaults.data.selection.showDot,
       },
+      // `style` passes through as merged too: only AI requests in the background read it,
+      // and the settings page skips malformed custom styles.
       translation: {
         ...translation,
         engine: engineOk ? engine : defaults.data.translation.engine,
-      },
+      } as ConfigV1['translation'],
     },
   };
 }
