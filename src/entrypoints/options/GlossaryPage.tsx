@@ -348,7 +348,6 @@ function GlossaryForm({ editing, defaultLang, onDone }: FormProps) {
               setTouched(true);
               edited();
             }}
-            onBlur={() => setTouched(true)}
             aria-invalid={sourceError !== undefined}
             aria-describedby={sourceError ? `${id}-source-error` : undefined}
             required

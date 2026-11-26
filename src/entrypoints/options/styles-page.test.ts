@@ -187,6 +187,23 @@ describe('StylesPage: the dialog', () => {
   const nameInput = () => dialog()?.querySelector('input') as HTMLInputElement;
   const descriptionInput = () => dialog()?.querySelector('textarea') as HTMLTextAreaElement;
 
+  it('shows no empty hint when a field is only left, so one click on Cancel closes', async () => {
+    render(configWith());
+    await click(button('添加风格'));
+    // Leaving the empty fields must not add lines that push Cancel down under the pointer.
+    await act(async () => {
+      nameInput().focus();
+      descriptionInput().focus();
+      descriptionInput().blur();
+    });
+    expect(dialog()?.textContent).not.toContain('请填写');
+    const cancel = [...(dialog()?.querySelectorAll('button') ?? [])].find(
+      (item) => item.textContent === '取消',
+    );
+    await click(cancel);
+    expect(dialog()?.open).toBe(false);
+  });
+
   it('keeps saving disabled until both fields have text, and counts the description', async () => {
     render(configWith());
     await click(button('添加风格'));

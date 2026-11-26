@@ -155,6 +155,21 @@ describe('GlossaryPage: list', () => {
 });
 
 describe('GlossaryPage: the form', () => {
+  it('shows no empty hint when the source is only left, so one click on Cancel closes', async () => {
+    await render();
+    await click(button('添加术语'));
+    // The source field is focused on open; leaving it untouched must not add a line that
+    // pushes the buttons down under the pointer.
+    await act(async () => {
+      sourceInput().focus();
+      sourceInput().blur();
+    });
+    expect(form()?.textContent).not.toContain('请填写原文');
+    expect(sourceInput().getAttribute('aria-invalid')).toBe('false');
+    await click(button('取消'));
+    expect(form()).toBeNull();
+  });
+
   it('adds a keep-as-is entry: no language without a translation', async () => {
     await render();
     await click(button('添加术语'));
