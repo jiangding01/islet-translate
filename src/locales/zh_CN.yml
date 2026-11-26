@@ -295,8 +295,9 @@ options:
     keyNotSaved: 服务已添加，但密钥没有保存，请在详情里重新粘贴。
   # 翻译风格页（M4-B）。
   styles:
+    section: 风格
     # $1：Google 引擎的名称（engine.googleName）。
-    googleNote: 当前默认引擎是 $1，风格只在使用 AI 引擎时生效。
+    sectionHint: 只对 AI 引擎生效，$1不受影响
     general: 通用
     generalNote: 准确与通顺兼顾，适合大多数网页。
     tech: 技术文档
@@ -328,7 +329,12 @@ options:
     descriptionRequired: 请填写风格说明
     save: 保存
   glossary:
+    section: 术语
+    # $1：已有的术语条数；$2：术语条数上限。
+    count: $1 / $2
     add: 添加术语
+    addTitle: 添加术语
+    editTitle: 编辑术语
     save: 保存
     cancel: 取消
     confirmDelete: 确认删除

@@ -302,8 +302,9 @@ options:
     keyNotSaved: Service added, but the API key wasn't saved. Paste it again in the service's details.
   # The translation styles page (M4-B).
   styles:
+    section: Styles
     # $1: the Google engine's name (engine.googleName).
-    googleNote: Your default engine is $1. Styles only apply when you use an AI engine.
+    sectionHint: Applies to AI engines only; $1 is not affected
     general: General
     generalNote: Balances accuracy and fluency. Suits most web pages.
     tech: Technical docs
@@ -335,7 +336,12 @@ options:
     descriptionRequired: Enter a style description
     save: Save
   glossary:
+    section: Terms
+    # $1: the number of terms; $2: the maximum number of terms.
+    count: $1 / $2
     add: Add term
+    addTitle: Add term
+    editTitle: Edit term
     save: Save
     cancel: Cancel
     confirmDelete: Delete

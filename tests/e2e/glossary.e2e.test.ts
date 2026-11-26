@@ -189,12 +189,15 @@ describe('settings page', () => {
       message: 'the empty glossary',
     });
     await page.evaluate(clickButton('Add term'));
-    await waitFor(() => page.evaluate(`!!document.querySelector('form input')`), {
-      message: 'the form',
+    await waitFor(() => page.evaluate(`!!document.querySelector('dialog[open]')`), {
+      message: 'the add term dialog',
     });
-    await page.evaluate(typeInto('form input', 'Sonnet'));
-    await page.evaluate(`document.querySelector('form input[type="checkbox"]').click()`);
+    await page.evaluate(typeInto('dialog input', 'Sonnet'));
+    await page.evaluate(`document.querySelector('dialog input[type="checkbox"]').click()`);
     await page.evaluate(clickButton('Save'));
+    await waitFor(() => page.evaluate(`!document.querySelector('dialog[open]')`), {
+      message: 'the dialog to close',
+    });
     await waitFor(async () => (await rows(page)).some((row) => row.includes('Sonnet')), {
       message: 'the new row',
     });
@@ -211,6 +214,29 @@ describe('settings page', () => {
     expect(row).toContain('Sonnet');
     expect(row).toContain('Keep as is');
     expect(row).toContain('Aa');
+
+    // The background refuses a duplicate on save: the dialog stays open and says so under the
+    // source field.
+    await page.evaluate(clickButton('Add term'));
+    await waitFor(() => page.evaluate(`!!document.querySelector('dialog[open]')`), {
+      message: 'the add term dialog again',
+    });
+    await page.evaluate(typeInto('dialog input', 'sonnet'));
+    await page.evaluate(clickButton('Save'));
+    const duplicate = await waitFor(
+      () =>
+        page.evaluate<string>(`(() => {
+          const id = document.querySelector('dialog input').getAttribute('aria-describedby');
+          return id ? document.getElementById(id).textContent : '';
+        })()`),
+      { message: 'the duplicate refusal' },
+    );
+    expect(duplicate).toBe('A term with the same source already exists.');
+    expect(await page.evaluate<boolean>(`!!document.querySelector('dialog[open]')`)).toBe(true);
+    await page.evaluate(clickButton('Cancel'));
+    await waitFor(() => page.evaluate(`!document.querySelector('dialog[open]')`), {
+      message: 'the dialog to close after cancelling',
+    });
 
     await page.evaluate(
       `[...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Delete "Sonnet"').click()`,

@@ -1,12 +1,15 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '@/lib/config/defaults';
 import { type ConfigV1, MAX_CUSTOM_STYLES } from '@/lib/config/types';
+import styles from './options.module.css';
 import { customStyleEntries, StylesPage } from './StylesPage';
 
-// The translation styles page (M4-B), with config writes stubbed.
+// The translation styles page (M4-B, redesigned in M4), with config writes stubbed.
 
 const { patch } = vi.hoisted(() => ({
   patch: vi.fn(async (_changes: unknown[]) => ({ ok: true as const, data: null })),
@@ -18,7 +21,7 @@ vi.mock('@/lib/config/use-config', () => ({
 vi.mock('./notice', () => ({ useNotice: () => ({ saved: vi.fn(), failed: vi.fn() }) }));
 
 const PRESET_NAMES = ['通用', '技术文档', '学术论文', '口语化', '文学意译'];
-const GOOGLE_NOTE = '当前默认引擎是 Google 翻译，风格只在使用 AI 引擎时生效';
+const SECTION_HINT = '只对 AI 引擎生效，Google 翻译不受影响';
 
 let root: ReturnType<typeof createRoot> | undefined;
 let host: HTMLElement;
@@ -34,7 +37,10 @@ function render(config: ConfigV1) {
 }
 
 const radios = () => [...host.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
-const cardNames = () => radios().map((radio) => radio.parentElement?.children[1]?.textContent);
+const cardNames = () =>
+  radios().map(
+    (radio) => radio.closest('label')?.querySelector(`.${styles.styleCardName}`)?.textContent,
+  );
 const checked = () => radios().find((radio) => radio.checked)?.value;
 const button = (text: string) =>
   [...host.querySelectorAll('button')].find((item) => item.textContent === text);
@@ -122,15 +128,59 @@ describe('StylesPage: cards', () => {
     expect(customStyleEntries(configWith())).toEqual([]);
   });
 
-  it('shows the Google note only while Google is the default engine', () => {
+  it('titles the section and always says styles only apply to AI engines', () => {
     render(configWith());
-    expect(host.textContent).toContain(GOOGLE_NOTE);
+    expect(host.querySelector('h2')?.textContent).toBe('风格');
+    expect(host.textContent).toContain(SECTION_HINT);
     render(
       configWith((config) => {
         config.translation.engine = 'openai';
       }),
     );
-    expect(host.textContent).not.toContain(GOOGLE_NOTE);
+    expect(host.textContent).toContain(SECTION_HINT);
+    // Not the head hint class that narrow windows hide: this one carries meaning.
+    const hint = [...host.querySelectorAll('span')].find(
+      (item) => item.textContent === SECTION_HINT,
+    );
+    expect(hint?.className).toBe(styles.headHintKeep);
+    const css = readFileSync(
+      resolve(process.cwd(), 'src/entrypoints/options/options.module.css'),
+      'utf8',
+    );
+    expect(css).not.toMatch(/@media[^{]*\{[^@]*\.headHintKeep\s*\{\s*display:\s*none/);
+  });
+
+  it('marks General as the default, and draws a dot in every card for its radio', () => {
+    render(
+      configWith((config) => {
+        config.customStyles['style-aaaaaaaa'] = { name: '简洁', description: '多用短句' };
+      }),
+    );
+    const badges = [...host.querySelectorAll(`.${styles.defaultTag}`)];
+    expect(badges.map((badge) => badge.closest('label')?.querySelector('input')?.value)).toEqual([
+      'general',
+    ]);
+    expect(badges[0]?.textContent).toBe('默认');
+    for (const radio of radios()) {
+      const dot = radio.closest('label')?.querySelector(`.${styles.styleDot}`);
+      expect(dot?.getAttribute('aria-hidden')).toBe('true');
+      // The native radio stays (hidden, still focusable) for the keyboard and screen readers.
+      expect(radio.className).toBe(styles.radioInput);
+    }
+  });
+
+  it('keeps long names to one line and custom descriptions to three, beside the card buttons', () => {
+    const css = readFileSync(
+      resolve(process.cwd(), 'src/entrypoints/options/options.module.css'),
+      'utf8',
+    );
+    const rule = (selector: string) =>
+      css.match(new RegExp(`\\n${selector.replace(/\./g, '\\.')} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.styleCardName')).toContain('text-overflow: ellipsis;');
+    expect(rule('.styleCardName')).toContain('white-space: nowrap;');
+    expect(rule('.styleCardCustom .styleCardHead')).toContain('padding-right: 56px;');
+    expect(rule('.styleCardCustom .styleCardNote')).toContain('-webkit-line-clamp: 3;');
+    expect(rule('.styleCardNote')).toContain('overflow-wrap: anywhere;');
   });
 
   it(`disables adding at ${MAX_CUSTOM_STYLES} custom styles and says why`, () => {
@@ -171,6 +221,17 @@ describe('StylesPage: deleting', () => {
     expect(patch).toHaveBeenCalledWith([
       { path: 'customStyles', key: 'style-aaaaaaaa', remove: true },
     ]);
+  });
+
+  it('gives the focus back to the add button after deleting, or to the delete button on cancel', async () => {
+    render(withCustom(false));
+    await click(byLabel('删除「简洁」'));
+    await click(button('取消'));
+    expect(document.activeElement).toBe(byLabel('删除「简洁」'));
+    await click(byLabel('删除「简洁」'));
+    await click(button('确认删除'));
+    render(configWith());
+    expect(document.activeElement).toBe(button('添加风格'));
   });
 
   it('says the current style falls back to general', async () => {
@@ -274,6 +335,38 @@ describe('StylesPage: the dialog', () => {
         .map((id) => document.getElementById(id)?.textContent);
     expect(describedBy(nameInput())).toEqual(['请填写名称']);
     expect(describedBy(descriptionInput())).toEqual(['请填写风格说明', '1 / 500']);
+  });
+
+  it('gives the focus back to the button that opened it', async () => {
+    render(
+      configWith((config) => {
+        config.customStyles['style-aaaaaaaa'] = { name: '简洁', description: '多用短句' };
+      }),
+    );
+    const cancel = () =>
+      [...(dialog()?.querySelectorAll('button') ?? [])].find((item) => item.textContent === '取消');
+    await click(button('添加风格'));
+    expect(document.activeElement).toBe(nameInput());
+    await click(cancel());
+    expect(document.activeElement).toBe(button('添加风格'));
+    await click(byLabel('编辑「简洁」'));
+    await click(cancel());
+    expect(document.activeElement).toBe(byLabel('编辑「简洁」'));
+  });
+
+  it('puts its fields on one grid whose label column fits every language', () => {
+    render(configWith());
+    const rows = [...(dialog()?.querySelectorAll(`.${styles.formRow}`) ?? [])];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.parentElement?.className).toBe(styles.formGrid);
+    const css = readFileSync(
+      resolve(process.cwd(), 'src/entrypoints/options/options.module.css'),
+      'utf8',
+    );
+    expect(css).toMatch(
+      /\n\.formGrid \{[^}]*grid-template-columns: minmax\(76px, max-content\) minmax\(0, 1fr\);/,
+    );
+    expect(css).toMatch(/\n\.formRow \{[^}]*grid-template-columns: subgrid;/);
   });
 
   it('stays open and shows the error when the style was removed elsewhere', async () => {

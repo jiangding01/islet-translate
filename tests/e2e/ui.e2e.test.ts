@@ -101,6 +101,11 @@ describe('settings page', () => {
       message: 'the styles page',
     });
     expect(await checkedStyle()).toBe('general');
+    // The section note is always there, whichever engine is the default.
+    expect(await text('h2')).toBe('Styles');
+    expect(await page.evaluate<string>('document.body.innerText')).toContain(
+      'Applies to AI engines only; Google Translate is not affected',
+    );
 
     // A preset survives a reload of the page.
     await page.evaluate(`document.querySelector('input[value="tech"]').click()`);
