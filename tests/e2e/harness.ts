@@ -99,6 +99,8 @@ export interface ExtPage {
   evaluate<T = unknown>(expression: string): Promise<T>;
   /** runtime.sendMessage in webext-core format; resolves to the handler's Result. */
   send<T = unknown>(type: string, data?: unknown): Promise<T>;
+  /** A raw trusted input event in this page (CDP `Input.dispatchMouseEvent` / `KeyEvent`). */
+  input(method: 'Input.dispatchKeyEvent' | 'Input.dispatchMouseEvent', params: Json): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -659,6 +661,9 @@ async function start(
       evaluate: run,
       send: async <T>(type: string, data?: unknown) =>
         unwrap<T>(await run<Json>(`chrome.runtime.sendMessage(${message(type, data)})`)),
+      input: async (method, params) => {
+        await cdp.send(method, params, sessionId);
+      },
       close: async () => {
         // The page may have closed itself (the panel does once translation starts).
         await cdp.send('Target.closeTarget', { targetId }).catch((error: unknown) => {

@@ -12,6 +12,7 @@ import { AddServiceDialog } from './AddServiceDialog';
 import { CacheSection } from './CacheSection';
 import { EngineItem } from './EngineItem';
 import { useSecretStatuses } from './hooks';
+import { PlusIcon } from './icons';
 import { useNotice } from './notice';
 import styles from './options.module.css';
 
@@ -75,17 +76,7 @@ export function ServicesPage({ config }: { config: ConfigV1 }) {
                 : i18n.t('options.services.addTooltip')
             }
           >
-            <svg
-              aria-hidden="true"
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-            >
-              <path d="M6 2v8M2 6h8" />
-            </svg>
+            <PlusIcon />
             {i18n.t('options.services.addService')}
           </button>
         </div>

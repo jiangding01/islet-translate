@@ -424,16 +424,11 @@
 
 /* ---------------------------------------------------------------- fields */
 
-.field,
-.dialogField {
+.field {
   display: grid;
   grid-template-columns: 88px minmax(0, 1fr);
   align-items: start;
   gap: 14px;
-}
-.dialogField {
-  grid-template-columns: 76px minmax(0, 1fr);
-  gap: 12px;
 }
 .label {
   color: var(--et-color-muted);
@@ -934,12 +929,6 @@
   font-size: var(--et-fs-caption);
   color: var(--et-color-muted);
 }
-.dialogBody {
-  padding: 14px 24px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
 .chips {
   display: flex;
   flex-wrap: wrap; /* one row at 640px; wraps only in narrow windows */
@@ -986,8 +975,12 @@
   align-items: center;
   gap: 10px;
 }
-.dialogFooter > span {
+/* The error (always mounted, announced) above the hint; only one of them has text. */
+.dialogStatus {
   flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 .dialogError {
   font-size: var(--et-fs-page-xs);
@@ -1361,9 +1354,9 @@ fieldset.chips {
   }
 }
 
-/* ---------------------------------------------------------- 风格与术语对话框 */
+/* ---------------------------------------------------------- 对话框表单 */
 
-/* The fields share one grid: the label column fits the longest label in every interface
+/* The fields of every dialog share one grid: the label column fits the longest label in every interface
    language, and every input starts on the same line. */
 .formGrid {
   padding: 14px 24px 0;
@@ -1376,6 +1369,10 @@ fieldset.chips {
   display: grid;
   grid-template-columns: subgrid;
   align-items: start;
+}
+/* A block across both columns, such as the preset chips. */
+.formWide {
+  grid-column: 1 / -1;
 }
 .checkbox {
   display: inline-flex;
