@@ -155,6 +155,21 @@ describe('GlossaryPage: list', () => {
 });
 
 describe('GlossaryPage: the form', () => {
+  it('shows no empty hint when the source is only left, so one click on Cancel closes', async () => {
+    await render();
+    await click(button('添加术语'));
+    // The source field is focused on open; leaving it untouched must not add a line that
+    // pushes the buttons down under the pointer.
+    await act(async () => {
+      sourceInput().focus();
+      sourceInput().blur();
+    });
+    expect(form()?.textContent).not.toContain('请填写原文');
+    expect(sourceInput().getAttribute('aria-invalid')).toBe('false');
+    await click(button('取消'));
+    expect(form()).toBeNull();
+  });
+
   it('adds a keep-as-is entry: no language without a translation', async () => {
     await render();
     await click(button('添加术语'));
@@ -225,7 +240,7 @@ describe('GlossaryPage: the form', () => {
       error: { kind: 'config', code: 'config/glossary-duplicate', message: 'm', retryable: false },
     } as never);
     await click(save());
-    expect(describedError(sourceInput())).toBe('已有相同原文的术语');
+    expect(describedError(sourceInput())).toBe('已有相同原文的术语。');
     expect(form()).not.toBeNull();
 
     client.change.mockResolvedValueOnce({
@@ -234,7 +249,7 @@ describe('GlossaryPage: the form', () => {
     } as never);
     await type(sourceInput(), 'Opus');
     await click(save());
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe('这条术语已被删除');
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('这条术语已被删除。');
   });
 });
 

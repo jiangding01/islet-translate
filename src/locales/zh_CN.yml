@@ -26,14 +26,14 @@ errors:
     permissionMissing: 尚未授权访问该接口地址。请在设置页点击「授权访问」后重试。
     providerLimit: 自定义服务已达 10 个上限。请先删除不用的服务。
     providerMissing: 找不到这个自定义服务，可能已被删除。请在设置页重新选择默认引擎。
-    styleLimit: 最多只能添加 10 个风格
-    styleMissing: 这个风格已被删除
+    styleLimit: 最多只能添加 10 个风格。
+    styleMissing: 这个风格已被删除。
     invalidValue: 设置值不正确，没有保存。请检查后重试。
     invalidExtraBody: '需要是一个 JSON 对象，例如 {"key": "value"}。'
-    glossaryLimit: 最多 500 条术语
-    glossaryDuplicate: 已有相同原文的术语
-    glossaryMissing: 这条术语已被删除
-    glossaryNewerVersion: 术语库由更新版本的扩展写入，当前版本不能修改
+    glossaryLimit: 最多 500 条术语。
+    glossaryDuplicate: 已有相同原文的术语。
+    glossaryMissing: 这条术语已被删除。
+    glossaryNewerVersion: 术语库由更新版本的扩展写入，当前版本不能修改。
   network:
     extensionUnreachable: 无法连接扩展后台，请重新加载扩展后重试。
     pageUnreachable: 无法连接页面，请刷新网页后重试。Chrome 商店等受限页面无法使用。
@@ -163,9 +163,9 @@ options:
     services: 翻译服务
     servicesSub: Google 免费可用；AI 引擎和自定义服务需要你自己的密钥。
     styles: 翻译风格
-    stylesSub: 选择 AI 翻译的风格，也可以添加自己的风格
+    stylesSub: 选择 AI 翻译的风格，也可以添加自己的风格。
     glossary: 术语库
-    glossarySub: 指定词语的译法，或让专有名词保持原样；对所有翻译引擎生效
+    glossarySub: 指定词语的译法，或让专有名词保持原样；对所有翻译引擎生效。
     loading: 正在加载设置…
   notice:
     saved: 已保存
@@ -296,7 +296,7 @@ options:
   # 翻译风格页（M4-B）。
   styles:
     # $1：Google 引擎的名称（engine.googleName）。
-    googleNote: 当前默认引擎是 $1，风格只在使用 AI 引擎时生效
+    googleNote: 当前默认引擎是 $1，风格只在使用 AI 引擎时生效。
     general: 通用
     generalNote: 准确与通顺兼顾，适合大多数网页。
     tech: 技术文档

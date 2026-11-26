@@ -37,7 +37,9 @@ export function StyleDialog({ open, origin, editing, existingIds, onClose }: Pro
   const notice = useNotice();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  // A field's empty hint shows once it has been typed in or left, not on a fresh dialog.
+  // A field's empty hint shows once it has been typed in, never on leaving it: a hint that
+  // appears on blur moves the buttons below it, so the click that caused the blur (Cancel)
+  // would miss.
   const [touched, setTouched] = useState({ name: false, description: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -158,7 +160,6 @@ export function StyleDialog({ open, origin, editing, existingIds, onClose }: Pro
                   setTouched((current) => ({ ...current, name: true }));
                   setError(undefined);
                 }}
-                onBlur={() => setTouched((current) => ({ ...current, name: true }))}
                 placeholder={i18n.t('options.styles.namePlaceholder')}
                 aria-invalid={touched.name && nameEmpty}
                 aria-describedby={touched.name && nameEmpty ? `${titleId}-name-error` : undefined}
@@ -190,7 +191,6 @@ export function StyleDialog({ open, origin, editing, existingIds, onClose }: Pro
                   setTouched((current) => ({ ...current, description: true }));
                   setError(undefined);
                 }}
-                onBlur={() => setTouched((current) => ({ ...current, description: true }))}
                 placeholder={i18n.t('options.styles.descriptionPlaceholder')}
                 aria-invalid={touched.description && descriptionEmpty}
                 aria-describedby={
