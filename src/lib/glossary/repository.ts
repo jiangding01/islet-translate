@@ -118,11 +118,18 @@ export function createGlossaryRepository(deps: GlossaryRepositoryDeps): Glossary
     }
   }
 
-  /** `term-` and 8 random letters or digits (a slight bias is fine for an id), unique. */
+  /**
+   * `term-` and 8 random letters or digits, unique. Bytes from 252 up would wrap onto the first
+   * characters: they are skipped, so every character is equally likely (as in options/providers).
+   */
   function newId(taken: ReadonlySet<string>): string {
     for (;;) {
       let id = 'term-';
-      for (const byte of random(new Uint8Array(8))) id += ID_ALPHABET[byte % 36];
+      while (id.length < 13) {
+        for (const byte of random(new Uint8Array(8))) {
+          if (byte < 252 && id.length < 13) id += ID_ALPHABET[byte % 36];
+        }
+      }
       if (!taken.has(id)) return id;
     }
   }

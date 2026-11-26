@@ -377,10 +377,12 @@ check 第 1 轮（Opus，Deep）结论「需修复后再审」，逐条处理如
 | 必须 2：`version > 1` 只读可被绕过（`{version:2, entries:{}}`、`{version:2}`、`version:"2"` 被当成可写，回滚后首次写入会清空词库） | 只要存储值是普通对象，先判版本：不是数字或大于 1 一律只读，再解析 entries；没有 version 的对象同样只读 | `glossary/repository.ts` 的 `parseStoredGlossary`；`repository.test.ts` 4 种情况只读、写入报 `config/glossary-newer-version`、存储原样不动 |
 | 补空格规则误伤拉丁原词（`multiple <g0>API</g0>s` → `multiple API s`） | 只在原词靠这一侧的字符是中日韩字符、外侧相邻是字母或数字时补空格；拉丁原词两侧交给 Google 自己的空格 | `translate/terms.ts` 的 `termPart`、`joinParts`；`terms.test.ts`：`API` 不补、`通义千问 → Qwen` 补、`豆包 → Doubao` 补 |
 | 设置页保存、取消、确认删除后焦点掉到 body | 渲染后把焦点还给页顶「添加术语」按钮；按钮被禁用（满额）时还给术语库 section（`tabIndex=-1`，聚焦时不画框）；另外删除确认里点「取消」时还给这一行的删除按钮（同类问题一并修） | `GlossaryPage.tsx` 的 `refocus`；`options.module.css` 的 `.glossarySection`；`glossary-page.test.ts` 3 条焦点用例 |
-| 体积精简（不改行为） | 内部错误 message 缩短、去掉读失败的 `console.warn`；`terms.ts` 改用 `match.ts` 导出的 `charBefore`、`charAt`、`isWordChar`；`localTerms` 改为 `restoreTerms(markTerms(…))`（原文本身像标记时返回 undefined，service 此时按普通段落处理）；`cleanDraft` 去首尾空白后复用 `isGlossaryEntry`；`newId` 直接 `byte % 36`；复用并导出 `config/repository.ts` 的 `describe`；`UNSPACED` 只留 zh、ja、ko；去掉 `prompt.ts` 里多余的映射 | 原有用例全部通过 |
+| 体积精简（不改行为） | 内部错误 message 缩短、去掉读失败的 `console.warn`；`terms.ts` 改用 `match.ts` 导出的 `charBefore`、`charAt`、`isWordChar`；`localTerms` 改为 `restoreTerms(markTerms(…))`（原文本身像标记时返回 undefined，service 此时按普通段落处理）；`cleanDraft` 去首尾空白后复用 `isGlossaryEntry`；`newId` 曾改为直接 `byte % 36`（已撤回，见文末 CodeQL 一条）；复用并导出 `config/repository.ts` 的 `describe`；`UNSPACED` 只留 zh、ja、ko；去掉 `prompt.ts` 里多余的映射 | 原有用例全部通过 |
 | 文档 | known-issues 第 7 节补 3 条（span 总丢的段每次多一次请求、原文写着 `<g0>`、回滚后旧版删掉不认识语言的词条与升 version 的要求）；README 中英「下一步」删掉「卡片多引擎对比」、补上 E2 润色；HANDOFF 的 selection-runtime 改为 18.21，并更新测试数与体积；本记录的体积与测试数 | — |
 
 
 第 2 轮（主会话，只审修复增量）：Google 带术语批次的回退分支、glossary 只读判断、补空格新规则、焦点归还逐处核对，没有新发现；完整 `npm run check`（单测 2610）与 e2e（91 通过、2 跳过）退出码均为 0，background 65.11 / 66 KB。
 
 体积：background 65.11 / 66 KB（较分支起点 +3.44 KB，超出方案预估 +2.5 KB），2026-11-26 用户已批准；预算 66 KB 不变，E2、F 若放不下再报批调整。
+
+CodeQL（PR #95，2026-11-26）：`newId` 的 `byte % 36` 被标为「用取模从安全随机数生成有偏差的结果」。已改回与 `options/providers.ts` 相同的拒绝采样（跳过 252–255），并加单测断言这些字节被跳过；id 格式不变。

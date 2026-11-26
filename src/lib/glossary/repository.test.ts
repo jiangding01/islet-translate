@@ -55,6 +55,22 @@ function setup(initial?: unknown) {
 }
 
 describe('glossary repository: changes', () => {
+  it('skips the random bytes that would make some id characters more likely', async () => {
+    const store = memoryStore();
+    // 252–255 would wrap onto a–d; the next batch fills the rest: 26 + k is digit k.
+    const batches = [
+      [252, 26, 253, 27, 254, 28, 255, 29],
+      [30, 31, 32, 33, 34, 35, 26, 27],
+    ];
+    const random = (bytes: Uint8Array<ArrayBuffer>) => {
+      bytes.set(batches.shift() ?? []);
+      return bytes;
+    };
+    const repo = createGlossaryRepository({ store, random });
+    const [entry] = await repo.change({ type: 'add', entry: draft('Sonnet') });
+    expect(entry?.id).toBe('term-01234567');
+  });
+
   it('adds, updates and removes entries, trimmed, in order', async () => {
     const { store, repo } = setup();
     const added = await repo.change({
